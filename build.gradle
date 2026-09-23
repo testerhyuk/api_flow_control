@@ -1,0 +1,46 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '4.1.1' apply false
+}
+
+allprojects {
+    group = 'com.hyuk'
+    version = '0.0.1-SNAPSHOT'
+
+    ext {
+        springBootVersion = '4.1.1'
+    }
+
+    repositories {
+        mavenCentral()
+    }
+}
+
+subprojects {
+    apply plugin: 'java'
+
+    java {
+        toolchain {
+            languageVersion = JavaLanguageVersion.of(21)
+        }
+    }
+
+    dependencies {
+        implementation platform("org.springframework.boot:spring-boot-dependencies:${springBootVersion}")
+        annotationProcessor platform("org.springframework.boot:spring-boot-dependencies:${springBootVersion}")
+        testImplementation platform("org.springframework.boot:spring-boot-dependencies:${springBootVersion}")
+        testAnnotationProcessor platform("org.springframework.boot:spring-boot-dependencies:${springBootVersion}")
+
+        testImplementation 'org.junit.jupiter:junit-jupiter'
+        testImplementation 'org.assertj:assertj-core'
+        testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    }
+
+    tasks.withType(JavaCompile).configureEach {
+        options.encoding = 'UTF-8'
+    }
+
+    tasks.named('test') {
+        useJUnitPlatform()
+    }
+}

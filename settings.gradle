@@ -1,0 +1,5 @@
+rootProject.name = 'flow-control'
+
+include 'app'
+include 'mock-target-system'
+include 'record-ingestor'
