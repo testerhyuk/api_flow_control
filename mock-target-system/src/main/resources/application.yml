@@ -1,0 +1,17 @@
+mock-target:
+  systems:
+    bank-a:
+      max-concurrency: 50
+      queue-capacity: 500
+      base-processing-millis: 60
+      max-tps: 200
+    bank-b:
+      max-concurrency: 10
+      queue-capacity: 100
+      base-processing-millis: 150
+      max-tps: 40
+    bank-c:
+      max-concurrency: 25
+      queue-capacity: 250
+      base-processing-millis: 100
+      max-tps: 100
