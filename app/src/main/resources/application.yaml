@@ -1,3 +1,18 @@
 spring:
   application:
     name: flow-control
+
+flow-control:
+  target-systems:
+    target-a:
+      url: http://localhost:9001
+      connect-timeout: 1s
+      read-timeout: 3s
+    target-b:
+      url: http://localhost:9002
+      connect-timeout: 1s
+      read-timeout: 3s
+    target-c:
+      url: http://localhost:9003
+      connect-timeout: 1s
+      read-timeout: 3s
