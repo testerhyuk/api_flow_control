@@ -18,7 +18,11 @@ public record TargetSystemProperties(
     public record TargetSystem(
             String url,
             Duration connectTimeout,
-            Duration readTimeout
+            Duration readTimeout,
+            int maxTps,
+            Duration baselineRtt,
+            double safetyMargin,
+            Duration burstWindow
     ) {
         public TargetSystem {
             if (url == null || url.isBlank()) {
@@ -29,6 +33,18 @@ public record TargetSystemProperties(
             }
             if (readTimeout == null || !readTimeout.isPositive()) {
                 throw new IllegalArgumentException("read-timeout 은 0보다 커야 합니다");
+            }
+            if (maxTps <= 0) {
+                throw new IllegalArgumentException("max-tps는 0보다 커야 합니다");
+            }
+            if (baselineRtt == null || !baselineRtt.isPositive()) {
+                throw new IllegalArgumentException("baseline-rtt는 0보다 커야 합니다");
+            }
+            if (safetyMargin <= 0 || safetyMargin > 1) {
+                throw new IllegalArgumentException("safety-margin 은 0보다 크고 1 이하여야 합니다");
+            }
+            if (burstWindow == null || !burstWindow.isPositive()) {
+                throw new IllegalArgumentException("burst-window 는 0보다 커야 합니다");
             }
         }
     }

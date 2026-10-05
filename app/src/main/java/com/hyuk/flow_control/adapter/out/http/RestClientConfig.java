@@ -1,5 +1,6 @@
-package com.hyuk.flow_control.config;
+package com.hyuk.flow_control.adapter.out.http;
 
+import com.hyuk.flow_control.config.TargetSystemProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpHeaders;
