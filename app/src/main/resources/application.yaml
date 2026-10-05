@@ -8,11 +8,23 @@ flow-control:
       url: http://localhost:9001
       connect-timeout: 1s
       read-timeout: 3s
+      max-tps: 100
+      baseline-rtt: 100ms
+      safety-margin: 0.95
+      burst-window: 10ms
     target-b:
       url: http://localhost:9002
       connect-timeout: 1s
       read-timeout: 3s
+      max-tps: 50
+      baseline-rtt: 300ms
+      safety-margin: 0.95
+      burst-window: 10ms
     target-c:
       url: http://localhost:9003
       connect-timeout: 1s
       read-timeout: 3s
+      max-tps: 20
+      baseline-rtt: 1s
+      safety-margin: 0.95
+      burst-window: 10ms

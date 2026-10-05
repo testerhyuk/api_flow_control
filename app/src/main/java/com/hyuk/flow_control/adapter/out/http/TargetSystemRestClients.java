@@ -1,4 +1,4 @@
-package com.hyuk.flow_control.config;
+package com.hyuk.flow_control.adapter.out.http;
 
 import org.springframework.web.client.RestClient;
 

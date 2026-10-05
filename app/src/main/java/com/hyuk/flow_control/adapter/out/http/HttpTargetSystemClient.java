@@ -1,7 +1,6 @@
 package com.hyuk.flow_control.adapter.out.http;
 
 import com.hyuk.flow_control.application.port.out.TargetSystemClient;
-import com.hyuk.flow_control.config.TargetSystemRestClients;
 import com.hyuk.flow_control.domain.request.OutboundRequest;
 import com.hyuk.flow_control.domain.request.OutboundResult;
 import com.hyuk.flow_control.domain.request.OutcomeKind;
@@ -12,6 +11,9 @@ import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
+import java.net.ConnectException;
+import java.net.http.HttpConnectTimeoutException;
+import java.net.http.HttpTimeoutException;
 import java.time.Duration;
 import java.time.Instant;
 
@@ -45,7 +47,7 @@ public class HttpTargetSystemClient implements TargetSystemClient {
                     bodyOf(response)
             );
         } catch (ResourceAccessException e) {
-            return new OutboundResult(OutcomeKind.TIMEOUT, elapsedSince(startedAt), null, null);
+            return new OutboundResult(fromFailureCause(e.getCause()), elapsedSince(startedAt), null, null);
         } catch (RestClientException e) {
             return new OutboundResult(OutcomeKind.SERVER_ERROR, elapsedSince(startedAt), null, null);
         }
@@ -73,7 +75,7 @@ public class HttpTargetSystemClient implements TargetSystemClient {
             case "TOO_MANY_REQUESTS" -> OutcomeKind.TOO_MANY_REQUESTS;
             case "MAINTENANCE" -> OutcomeKind.UNDER_MAINTENANCE;
             case "SERVER_ERROR", "OVERLOADED" -> OutcomeKind.SERVER_ERROR;
-            default -> fromHttpStatus(response.getStatusCode().value());
+            default -> OutcomeKind.UNEXPECTED_RESPONSE;
         };
     }
 
@@ -81,7 +83,17 @@ public class HttpTargetSystemClient implements TargetSystemClient {
         if (statusCode == 429) return OutcomeKind.TOO_MANY_REQUESTS;
         if (statusCode == 400) return OutcomeKind.INVALID_REQUEST;
         if (statusCode >= 500) return OutcomeKind.SERVER_ERROR;
-        return OutcomeKind.SUCCESS;
+        return OutcomeKind.UNEXPECTED_RESPONSE;
+    }
+
+    private OutcomeKind fromFailureCause(Throwable cause) {
+        if (cause instanceof ConnectException || cause instanceof HttpConnectTimeoutException) {
+            return OutcomeKind.CONNECTION_FAILED;
+        }
+        if (cause instanceof HttpTimeoutException) {
+            return OutcomeKind.TIMEOUT;
+        }
+        return OutcomeKind.NETWORK_ERROR;
     }
 
     private Instant parseRetryAfter(ResponseEntity<TargetSystemResponse> response) {
