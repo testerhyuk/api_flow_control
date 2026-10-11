@@ -14,14 +14,17 @@ public class OutboundCallService implements OutboundCallUseCase {
     private final TargetSystemClient client;
     private final TargetSystemSemaphore semaphore;
     private final TargetSystemRateLimiter rateLimiter;
+    private final TargetSystemOutcomeRecorder recorder;
 
     public OutboundCallService(
             TargetSystemClient client,
             TargetSystemSemaphore semaphore,
-            TargetSystemRateLimiter rateLimiter) {
+            TargetSystemRateLimiter rateLimiter,
+            TargetSystemOutcomeRecorder recorder) {
         this.client = client;
         this.semaphore = semaphore;
         this.rateLimiter = rateLimiter;
+        this.recorder = recorder;
     }
 
     @Override
@@ -40,6 +43,8 @@ public class OutboundCallService implements OutboundCallUseCase {
             }
 
             OutboundResult result = client.call(request);
+
+            recorder.record(targetSystemId, result.kind(), result.latency());
 
             return new CallAttempt.Called(result);
         } finally {

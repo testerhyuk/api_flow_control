@@ -3,6 +3,14 @@ spring:
     name: flow-control
 
 flow-control:
+  health:
+    window: 10s
+    evaluation-interval: 1s
+    minimum-calls: 50
+    degraded-failure-rate: 0.10
+    critical-failure-rate: 0.50
+    degraded-latency-multiplier: 2.0
+    recovery-duration: 30s
   target-systems:
     target-a:
       url: http://localhost:9001
