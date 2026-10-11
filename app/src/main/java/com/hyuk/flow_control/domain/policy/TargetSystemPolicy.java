@@ -23,20 +23,41 @@ public record TargetSystemPolicy(
         }
     }
 
-    public int concurrencyLimit() {
-        return atLeastOne(effectiveRate() * toSeconds(baselineRtt));
-    }
-
     public double effectiveRate() {
         return maxTps * safetyMargin;
     }
 
+    public int concurrencyLimit() {
+        return concurrencyLimitAt(effectiveRate());
+    }
+
     public int burstCapacity() {
-        return atLeastOne(effectiveRate() * toSeconds(burstWindow));
+        return burstCapacityAt(effectiveRate());
     }
 
     public Duration refillInterval() {
-        return Duration.ofNanos(Math.round(1_000_000_000.0 / effectiveRate()));
+        return refillIntervalAt(effectiveRate());
+    }
+
+    public int concurrencyLimitAt(double rate) {
+        requirePositive(rate);
+        return atLeastOne(rate * toSeconds(baselineRtt));
+    }
+
+    public int burstCapacityAt(double rate) {
+        requirePositive(rate);
+        return atLeastOne(rate * toSeconds(burstWindow));
+    }
+
+    public Duration refillIntervalAt(double rate) {
+        requirePositive(rate);
+        return Duration.ofNanos(Math.round(1_000_000_000.0 / rate));
+    }
+
+    private static void requirePositive(double rate) {
+        if (rate <= 0) {
+            throw new IllegalArgumentException("rate는 0보다 커야 합니다");
+        }
     }
 
     private static double toSeconds(Duration duration) {
