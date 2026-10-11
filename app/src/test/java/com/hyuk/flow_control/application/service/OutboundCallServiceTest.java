@@ -32,6 +32,7 @@ class OutboundCallServiceTest {
     private TargetSystemRateLimiter rateLimiter;
     private TargetSystemClient client;
     private OutboundCallService service;
+    private TargetSystemOutcomeRecorder recorder;
 
     @BeforeEach
     void setUp() {
@@ -43,7 +44,8 @@ class OutboundCallServiceTest {
         semaphore = new TargetSystemSemaphore(policyReader);
         rateLimiter = mock(TargetSystemRateLimiter.class);
         client = mock(TargetSystemClient.class);
-        service = new OutboundCallService(client, semaphore, rateLimiter);
+        recorder = mock(TargetSystemOutcomeRecorder.class);
+        service = new OutboundCallService(client, semaphore, rateLimiter, recorder);
     }
 
     @Test
@@ -55,6 +57,7 @@ class OutboundCallServiceTest {
         CallAttempt attempt = service.send(REQUEST);
 
         assertThat(attempt).isEqualTo(new CallAttempt.Called(RESULT));
+        verify(recorder).record(TARGET, OutcomeKind.SUCCESS, Duration.ofMillis(120));
     }
 
     @Test
@@ -65,7 +68,7 @@ class OutboundCallServiceTest {
         CallAttempt attempt = service.send(REQUEST);
 
         assertThat(attempt).isEqualTo(new CallAttempt.BlockedBySemaphore());
-        verifyNoInteractions(rateLimiter, client);
+        verifyNoInteractions(rateLimiter, client, recorder);
     }
 
     @Test
@@ -76,7 +79,7 @@ class OutboundCallServiceTest {
         CallAttempt attempt = service.send(REQUEST);
 
         assertThat(attempt).isEqualTo(new CallAttempt.BlockedByTokenBucket(Duration.ofMillis(10)));
-        verifyNoInteractions(client);
+        verifyNoInteractions(client, recorder);
     }
 
     @Test
@@ -136,6 +139,7 @@ class OutboundCallServiceTest {
         CallAttempt attempt = service.send(REQUEST);
 
         assertThat(attempt).isEqualTo(new CallAttempt.Called(failed));
+        verify(recorder).record(TARGET, OutcomeKind.SERVER_ERROR, Duration.ofMillis(50));
     }
 
     @Test
