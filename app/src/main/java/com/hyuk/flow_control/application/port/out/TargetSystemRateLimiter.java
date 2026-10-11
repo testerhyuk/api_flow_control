@@ -4,4 +4,6 @@ import com.hyuk.flow_control.domain.token.RateLimitResult;
 
 public interface TargetSystemRateLimiter {
     RateLimitResult tryConsume(String targetSystemId);
+
+    void changeRate(String targetSystemId, double ratePerSecond);
 }

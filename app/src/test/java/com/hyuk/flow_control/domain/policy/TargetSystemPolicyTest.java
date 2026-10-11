@@ -108,4 +108,46 @@ class TargetSystemPolicyTest {
                 100, Duration.ofMillis(100), 0.95, null))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    @DisplayName("주어진 rate 로 허가 개수를 계산한다")
+    void concurrencyLimitAtGivenRate() {
+        assertThat(TARGET_A.concurrencyLimitAt(47.5)).isEqualTo(5);
+        assertThat(TARGET_A.concurrencyLimitAt(5.0)).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("주어진 rate 로 버킷 최대 크기를 계산한다")
+    void burstCapacityAtGivenRate() {
+        TargetSystemPolicy wideBurst = new TargetSystemPolicy(
+                100, Duration.ofMillis(100), 0.95, Duration.ofSeconds(1));
+
+        assertThat(TARGET_A.burstCapacityAt(47.5)).isEqualTo(1);
+        assertThat(wideBurst.burstCapacityAt(47.5)).isEqualTo(48);
+    }
+
+    @Test
+    @DisplayName("주어진 rate 로 충전 간격을 계산한다")
+    void refillIntervalAtGivenRate() {
+        assertThat(TARGET_A.refillIntervalAt(5.0)).isEqualTo(Duration.ofMillis(200));
+    }
+
+    @Test
+    @DisplayName("처음 한도는 실제 Rate 로 계산한 값과 같다")
+    void initialLimitsUseEffectiveRate() {
+        assertThat(TARGET_A.concurrencyLimit()).isEqualTo(TARGET_A.concurrencyLimitAt(TARGET_A.effectiveRate()));
+        assertThat(TARGET_A.burstCapacity()).isEqualTo(TARGET_A.burstCapacityAt(TARGET_A.effectiveRate()));
+        assertThat(TARGET_A.refillInterval()).isEqualTo(TARGET_A.refillIntervalAt(TARGET_A.effectiveRate()));
+    }
+
+    @Test
+    @DisplayName("rate 가 0 이하면 한도를 계산할 수 없다")
+    void rejectsNonPositiveRate() {
+        assertThatThrownBy(() -> TARGET_A.concurrencyLimitAt(0))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> TARGET_A.burstCapacityAt(-1))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> TARGET_A.refillIntervalAt(0))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
 }

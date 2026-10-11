@@ -96,4 +96,63 @@ class Bucket4jTargetSystemRateLimiterTest {
         assertThat(rateLimiter.tryConsume("target-b").allowed()).isTrue();
         assertThat(rateLimiter.tryConsume("target-b").allowed()).isFalse();
     }
+
+    @Test
+    @DisplayName("rate 를 줄이면 다음 토큰까지 더 오래 기다린다")
+    void waitsLongerAfterRateDecrease() {
+        rateLimiter.changeRate("target-b", 1.0);
+
+        assertThat(rateLimiter.tryConsume("target-b").allowed()).isTrue();
+        RateLimitResult rejected = rateLimiter.tryConsume("target-b");
+
+        assertThat(rejected.allowed()).isFalse();
+        assertThat(rejected.retryAfter())
+                .isGreaterThan(Duration.ofMillis(500))
+                .isLessThanOrEqualTo(Duration.ofSeconds(1));
+    }
+
+    @Test
+    @DisplayName("rate 를 바꿔도 남아 있던 토큰은 그대로이고 새로 채워 주지 않는다")
+    void keepsRemainingTokensOnChange() {
+        rateLimiter.changeRate("target-a", 2.0);
+
+        assertThat(rateLimiter.tryConsume("target-a").allowed()).isTrue();
+        assertThat(rateLimiter.tryConsume("target-a").allowed()).isTrue();
+        assertThat(rateLimiter.tryConsume("target-a").allowed()).isTrue();
+        assertThat(rateLimiter.tryConsume("target-a").allowed()).isFalse();
+    }
+
+    @Test
+    @DisplayName("rate 를 늘리면 늘어난 속도로 다시 채워진다")
+    void refillsFasterAfterRateIncrease() {
+        rateLimiter.tryConsume("target-a");
+        rateLimiter.tryConsume("target-a");
+        rateLimiter.tryConsume("target-a");
+
+        rateLimiter.changeRate("target-a", 10.0);
+        RateLimitResult rejected = rateLimiter.tryConsume("target-a");
+
+        assertThat(rejected.allowed()).isFalse();
+        assertThat(rejected.retryAfter()).isLessThanOrEqualTo(Duration.ofMillis(100));
+    }
+
+    @Test
+    @DisplayName("한 대상의 rate 를 바꿔도 다른 대상은 그대로다")
+    void changeRateIsPerTarget() {
+        rateLimiter.changeRate("target-a", 0.1);
+
+        rateLimiter.tryConsume("target-b");
+        RateLimitResult rejected = rateLimiter.tryConsume("target-b");
+
+        assertThat(rejected.retryAfter()).isLessThanOrEqualTo(Duration.ofMillis(100));
+    }
+
+    @Test
+    @DisplayName("설정에 없는 대상이나 0 이하 rate 로는 바꿀 수 없다")
+    void rejectsInvalidChange() {
+        assertThatThrownBy(() -> rateLimiter.changeRate("target-z", 1.0))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> rateLimiter.changeRate("target-a", 0))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
 }
