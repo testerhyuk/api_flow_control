@@ -1,6 +1,13 @@
 spring:
   application:
     name: flow-control
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      group-id: flow-control
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      max-poll-records: 10
 
 management:
   server:
