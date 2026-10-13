@@ -1,4 +1,4 @@
-package com.hyuk.flow_control.adapter.in.kafka;
+package com.hyuk.flow_control.adapter.kafka;
 
 import com.hyuk.flow_control.domain.request.OutboundRequest;
 
@@ -10,6 +10,10 @@ public record RequestMessage(
         String payload,
         Instant createdAt
 ) {
+    public static RequestMessage from(OutboundRequest request) {
+        return new RequestMessage(request.requestId(), request.targetSystemId(), request.payload(), request.createdAt());
+    }
+
     public boolean isValid() {
         return requestId != null && !requestId.isBlank()
                 && targetSystemId != null && !targetSystemId.isBlank()

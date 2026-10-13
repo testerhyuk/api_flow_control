@@ -1,20 +1,23 @@
 package com.hyuk.flow_control.adapter.in.kafka;
 
+import com.hyuk.flow_control.adapter.kafka.FailureHeaders;
 import com.hyuk.flow_control.application.port.in.OutboundCallUseCase;
 import com.hyuk.flow_control.domain.request.CallAttempt;
-import com.hyuk.flow_control.domain.request.OutboundRequest;
 import com.hyuk.flow_control.domain.request.OutboundResult;
 import com.hyuk.flow_control.domain.request.OutcomeKind;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.TopicDescription;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.kafka.test.EmbeddedKafkaBroker;
@@ -23,11 +26,15 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
+import java.util.function.Predicate;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -38,7 +45,7 @@ import static org.mockito.Mockito.when;
 })
 @EmbeddedKafka
 class KafkaRequestIntakeIntegrationTest {
-    private static final OutboundResult RESULT =
+    private static final OutboundResult SUCCESS =
             new OutboundResult(OutcomeKind.SUCCESS, Duration.ofMillis(120), null, null);
 
     @Autowired
@@ -48,60 +55,113 @@ class KafkaRequestIntakeIntegrationTest {
     private OutboundCallUseCase outboundCall;
 
     @Test
-    @DisplayName("앱이 뜨면 대상별 요청 토픽을 처음 concurrency 만큼의 파티션으로 만든다")
-    void createsTopicsWithConcurrencyPartitions() throws Exception {
+    @DisplayName("앱이 뜨면 대상별 요청 토픽과 재시도 토픽 4개는 처음 concurrency 만큼, DLQ 토픽은 1개 파티션으로 만든다")
+    void createsTopics() throws Exception {
         try (AdminClient admin = AdminClient.create(Map.of(
                 AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, broker.getBrokersAsString()))) {
-            Map<String, TopicDescription> topics = admin.describeTopics(List.of(
-                    "flow-control.requests.target-a",
-                    "flow-control.requests.target-b",
-                    "flow-control.requests.target-c")).allTopicNames().get();
+            Map<String, Integer> expected = new HashMap<>();
+            Map.of("target-a", 10, "target-b", 15, "target-c", 19).forEach((target, partitions) -> {
+                expected.put("flow-control.requests." + target, partitions);
+                for (String stage : List.of("1s", "10s", "60s", "300s")) {
+                    expected.put("flow-control.retry-" + stage + "." + target, partitions);
+                }
+                expected.put("flow-control.dlq." + target, 1);
+            });
 
-            assertThat(topics.get("flow-control.requests.target-a").partitions()).hasSize(10);
-            assertThat(topics.get("flow-control.requests.target-b").partitions()).hasSize(15);
-            assertThat(topics.get("flow-control.requests.target-c").partitions()).hasSize(19);
+            Map<String, TopicDescription> topics = admin.describeTopics(expected.keySet()).allTopicNames().get();
+
+            expected.forEach((topic, partitions) ->
+                    assertThat(topics.get(topic).partitions()).as(topic).hasSize(partitions));
         }
     }
 
     @Test
+    @DisplayName("대상별로 요청 토픽과 재시도 토픽마다 처음 concurrency 만큼 읽는 스레드를 둔다")
+    void containerConcurrency(@Autowired KafkaRequestIntakeContainers containers) {
+        Map<String, Integer> concurrency = containers.concurrencyByTopic();
+
+        assertThat(concurrency).hasSize(15);
+        assertThat(concurrency.get("flow-control.requests.target-a")).isEqualTo(10);
+        assertThat(concurrency.get("flow-control.retry-300s.target-c")).isEqualTo(19);
+        assertThat(containers.isRunning()).isTrue();
+    }
+
+    @Test
     @DisplayName("토픽에 넣은 요청을 읽어 외부 호출 서비스로 넘긴다")
-    void consumesRequestFromTopic() {
-        when(outboundCall.send(any())).thenReturn(new CallAttempt.Called(RESULT));
+    void consumesRequest() {
+        String requestId = uniqueId();
+        when(outboundCall.send(argThat(r -> r != null && requestId.equals(r.requestId()))))
+                .thenReturn(new CallAttempt.Called(SUCCESS));
 
-        send("flow-control.requests.target-b", "req-intake-1", """
-                {"requestId":"req-intake-1","targetSystemId":"target-b","payload":"{\\"amount\\":1000}","createdAt":"2026-10-13T09:00:00Z"}
-                """);
+        send("flow-control.requests.target-b", requestId, json(requestId, "target-b"));
 
-        ArgumentCaptor<OutboundRequest> captor = ArgumentCaptor.forClass(OutboundRequest.class);
-        verify(outboundCall, timeout(15000)).send(captor.capture());
-
-        assertThat(captor.getValue()).isEqualTo(new OutboundRequest(
-                "req-intake-1", "target-b", "{\"amount\":1000}", Instant.parse("2026-10-13T09:00:00Z")));
+        verify(outboundCall, timeout(15000)).send(argThat(r -> r != null && requestId.equals(r.requestId())));
     }
 
     @Test
     @DisplayName("한도에 막힌 요청은 통과할 때까지 다시 보낸다")
-    void retriesBlockedRequestFromTopic() {
-        when(outboundCall.send(any())).thenReturn(
+    void retriesBlockedRequest() {
+        String requestId = uniqueId();
+        when(outboundCall.send(argThat(r -> r != null && requestId.equals(r.requestId())))).thenReturn(
                 new CallAttempt.BlockedBySemaphore(),
                 new CallAttempt.BlockedByTokenBucket(Duration.ofMillis(20)),
-                new CallAttempt.Called(RESULT));
+                new CallAttempt.Called(SUCCESS));
 
-        send("flow-control.requests.target-c", "req-intake-2", """
-                {"requestId":"req-intake-2","targetSystemId":"target-c","payload":"{}","createdAt":"2026-10-13T09:00:00Z"}
-                """);
+        send("flow-control.requests.target-c", requestId, json(requestId, "target-c"));
 
-        verify(outboundCall, timeout(15000).times(3)).send(any());
+        verify(outboundCall, timeout(15000).times(3)).send(argThat(r -> r != null && requestId.equals(r.requestId())));
     }
 
     @Test
-    @DisplayName("대상별 읽기 스레드 수는 처음 concurrency 와 같다")
-    void containerConcurrencyMatchesPolicy(@Autowired KafkaRequestIntakeContainers containers) {
-        assertThat(containers.concurrencyByTopic()).containsExactlyInAnyOrderEntriesOf(Map.of(
-                "flow-control.requests.target-a", 10,
-                "flow-control.requests.target-b", 15,
-                "flow-control.requests.target-c", 19));
-        assertThat(containers.isRunning()).isTrue();
+    @DisplayName("TIMEOUT 으로 실패한 요청은 1초 재시도 토픽을 거쳐 다시 보내진다")
+    void retriesFailedRequestThroughRetryTopic() {
+        String requestId = uniqueId();
+        when(outboundCall.send(argThat(r -> r != null && requestId.equals(r.requestId())))).thenReturn(
+                new CallAttempt.Called(new OutboundResult(OutcomeKind.TIMEOUT, Duration.ofSeconds(3), null, null)),
+                new CallAttempt.Called(SUCCESS));
+
+        send("flow-control.requests.target-a", requestId, json(requestId, "target-a"));
+
+        verify(outboundCall, timeout(20000).times(2)).send(argThat(r -> r != null && requestId.equals(r.requestId())));
+    }
+
+    @Test
+    @DisplayName("INVALID_REQUEST 로 실패한 요청은 원래 JSON 과 이유 헤더를 담아 DLQ 로 간다")
+    void deadLettersInvalidRequest() {
+        String requestId = uniqueId();
+        when(outboundCall.send(argThat(r -> r != null && requestId.equals(r.requestId())))).thenReturn(
+                new CallAttempt.Called(new OutboundResult(OutcomeKind.INVALID_REQUEST, Duration.ofMillis(50), null, null)));
+        String value = json(requestId, "target-b");
+
+        send("flow-control.requests.target-b", requestId, value);
+
+        ConsumerRecord<String, String> dead = awaitRecord("flow-control.dlq.target-b", requestId);
+        assertThat(dead.value()).contains("\"requestId\":\"" + requestId + "\"");
+        assertThat(FailureHeaders.read(dead.headers(), FailureHeaders.DEAD_LETTER_REASON)).isEqualTo("dlq_kind");
+        assertThat(FailureHeaders.read(dead.headers(), FailureHeaders.LAST_KIND)).isEqualTo("INVALID_REQUEST");
+        assertThat(FailureHeaders.read(dead.headers(), FailureHeaders.FAILED_ATTEMPTS)).isEqualTo("1");
+        assertThat(FailureHeaders.read(dead.headers(), FailureHeaders.ORIGIN)).startsWith("flow-control.requests.target-b-");
+    }
+
+    @Test
+    @DisplayName("JSON 이 아닌 메시지는 원래 값 그대로 DLQ 로 간다")
+    void deadLettersInvalidMessage() {
+        String marker = "not-json-" + uniqueId();
+
+        send("flow-control.requests.target-c", null, marker);
+
+        ConsumerRecord<String, String> dead = awaitRecordWithValue("flow-control.dlq.target-c", marker);
+        assertThat(FailureHeaders.read(dead.headers(), FailureHeaders.DEAD_LETTER_REASON)).isEqualTo("invalid_message");
+        verify(outboundCall, never()).send(argThat(r -> r != null && marker.equals(r.requestId())));
+    }
+
+    private static String uniqueId() {
+        return UUID.randomUUID().toString();
+    }
+
+    private static String json(String requestId, String target) {
+        return "{\"requestId\":\"" + requestId + "\",\"targetSystemId\":\"" + target
+                + "\",\"payload\":\"{}\",\"createdAt\":\"" + Instant.now() + "\"}";
     }
 
     private void send(String topic, String key, String value) {
@@ -109,8 +169,37 @@ class KafkaRequestIntakeIntegrationTest {
                 ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, broker.getBrokersAsString(),
                 ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class,
                 ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class))) {
-            producer.send(new ProducerRecord<>(topic, key, value.strip()));
+            producer.send(new ProducerRecord<>(topic, key, value));
             producer.flush();
         }
+    }
+
+    private ConsumerRecord<String, String> awaitRecord(String topic, String key) {
+        return await(topic, record -> key.equals(record.key()));
+    }
+
+    private ConsumerRecord<String, String> awaitRecordWithValue(String topic, String value) {
+        return await(topic, record -> value.equals(record.value()));
+    }
+
+    private ConsumerRecord<String, String> await(String topic, Predicate<ConsumerRecord<String, String>> match) {
+        try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(Map.of(
+                ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, broker.getBrokersAsString(),
+                ConsumerConfig.GROUP_ID_CONFIG, "test-" + uniqueId(),
+                ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest",
+                ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class,
+                ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class))) {
+            consumer.subscribe(List.of(topic));
+            long deadline = System.currentTimeMillis() + 20_000;
+
+            while (System.currentTimeMillis() < deadline) {
+                for (ConsumerRecord<String, String> record : consumer.poll(Duration.ofMillis(500))) {
+                    if (match.test(record)) {
+                        return record;
+                    }
+                }
+            }
+        }
+        throw new AssertionError("메시지를 찾지 못했습니다 : " + topic);
     }
 }
