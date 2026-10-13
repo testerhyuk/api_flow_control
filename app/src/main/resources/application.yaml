@@ -2,6 +2,14 @@ spring:
   application:
     name: flow-control
 
+management:
+  server:
+    port: 8081
+  endpoints:
+    web:
+      exposure:
+        include: health, prometheus
+
 flow-control:
   health:
     window: 10s

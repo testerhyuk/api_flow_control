@@ -1,5 +1,6 @@
 package com.hyuk.flow_control.application.service;
 
+import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
 import com.hyuk.flow_control.application.port.out.TargetSystemPolicyReader;
 import com.hyuk.flow_control.config.HealthProperties;
 import com.hyuk.flow_control.domain.health.HealthGrade;
@@ -23,6 +24,7 @@ public class TargetSystemHealthEvaluator {
     private final TargetSystemOutcomeRecorder recorder;
     private final TargetSystemPolicyReader policyReader;
     private final HealthProperties healthProperties;
+    private final FlowControlMetrics metrics;
     private final Map<String, HealthStatus> statuses = new ConcurrentHashMap<>();
     private final Map<String, HealthSnapshot> snapshots = new ConcurrentHashMap<>();
     private final int requiredGoodCount;
@@ -30,10 +32,12 @@ public class TargetSystemHealthEvaluator {
     public TargetSystemHealthEvaluator(
             TargetSystemOutcomeRecorder recorder,
             TargetSystemPolicyReader policyReader,
-            HealthProperties healthProperties) {
+            HealthProperties healthProperties,
+            FlowControlMetrics metrics) {
         this.recorder = recorder;
         this.policyReader = policyReader;
         this.healthProperties = healthProperties;
+        this.metrics = metrics;
 
         policyReader.readAll().keySet().forEach(targetSystemId -> {
             statuses.put(targetSystemId, HealthStatus.initial());
@@ -82,6 +86,7 @@ public class TargetSystemHealthEvaluator {
                 Instant.now()));
 
         if (next.state() != current.state()) {
+            metrics.recordStateTransition(targetSystemId, current.state(), next.state());
             log.info("대상 시스템 상태 변경 : {} {} -> {}", targetSystemId, current.state(), next.state());
         }
     }

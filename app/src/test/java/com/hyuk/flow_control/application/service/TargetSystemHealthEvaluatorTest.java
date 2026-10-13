@@ -1,5 +1,6 @@
 package com.hyuk.flow_control.application.service;
 
+import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
 import com.hyuk.flow_control.application.port.out.TargetSystemPolicyReader;
 import com.hyuk.flow_control.config.HealthProperties;
 import com.hyuk.flow_control.domain.health.HealthSnapshot;
@@ -20,6 +21,8 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class TargetSystemHealthEvaluatorTest {
@@ -31,10 +34,12 @@ class TargetSystemHealthEvaluatorTest {
 
     private TargetSystemOutcomeRecorder recorder;
     private TargetSystemPolicyReader policyReader;
+    private FlowControlMetrics metrics;
 
     @BeforeEach
     void setUp() {
         recorder = mock(TargetSystemOutcomeRecorder.class);
+        metrics = mock(FlowControlMetrics.class);
         policyReader = mock(TargetSystemPolicyReader.class);
 
         TargetSystemPolicy policyA = new TargetSystemPolicy(100, BASELINE_A, 0.95, Duration.ofMillis(10));
@@ -279,10 +284,32 @@ class TargetSystemHealthEvaluatorTest {
         assertThat(evaluator.snapshotOf(TARGET_B).state()).isEqualTo(HealthState.DEGRADED);
     }
 
+    @Test
+    @DisplayName("상태가 바뀌면 바뀐 상태를 지표로 기록한다")
+    void recordsStateTransition() {
+        when(recorder.recentOutcomes(TARGET_A)).thenReturn(critical());
+        TargetSystemHealthEvaluator evaluator = evaluator(Duration.ofSeconds(3));
+
+        evaluator.evaluate(TARGET_A);
+
+        verify(metrics).recordStateTransition(TARGET_A, HealthState.HEALTHY, HealthState.CRITICAL);
+    }
+
+    @Test
+    @DisplayName("상태가 그대로면 지표를 기록하지 않는다")
+    void doesNotRecordWhenStateUnchanged() {
+        when(recorder.recentOutcomes(TARGET_A)).thenReturn(good());
+        TargetSystemHealthEvaluator evaluator = evaluator(Duration.ofSeconds(3));
+
+        evaluator.evaluate(TARGET_A);
+
+        verifyNoInteractions(metrics);
+    }
+
     private TargetSystemHealthEvaluator evaluator(Duration recoveryDuration) {
         HealthProperties properties = new HealthProperties(
                 Duration.ofSeconds(10), Duration.ofSeconds(1), 10, 0.10, 0.50, 2.0, recoveryDuration);
-        return new TargetSystemHealthEvaluator(recorder, policyReader, properties);
+        return new TargetSystemHealthEvaluator(recorder, policyReader, properties, metrics);
     }
 
     private static List<HealthState> statesAfterEvaluations(TargetSystemHealthEvaluator evaluator, int times) {

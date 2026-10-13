@@ -1,5 +1,6 @@
 package com.hyuk.flow_control.application.service;
 
+import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
 import com.hyuk.flow_control.application.port.out.TargetSystemClient;
 import com.hyuk.flow_control.application.port.out.TargetSystemPolicyReader;
 import com.hyuk.flow_control.application.port.out.TargetSystemRateLimiter;
@@ -33,6 +34,7 @@ class OutboundCallServiceTest {
     private TargetSystemClient client;
     private OutboundCallService service;
     private TargetSystemOutcomeRecorder recorder;
+    private FlowControlMetrics metrics;
 
     @BeforeEach
     void setUp() {
@@ -45,7 +47,8 @@ class OutboundCallServiceTest {
         rateLimiter = mock(TargetSystemRateLimiter.class);
         client = mock(TargetSystemClient.class);
         recorder = mock(TargetSystemOutcomeRecorder.class);
-        service = new OutboundCallService(client, semaphore, rateLimiter, recorder);
+        metrics = mock(FlowControlMetrics.class);
+        service = new OutboundCallService(client, semaphore, rateLimiter, recorder, metrics);
     }
 
     @Test
@@ -58,6 +61,8 @@ class OutboundCallServiceTest {
 
         assertThat(attempt).isEqualTo(new CallAttempt.Called(RESULT));
         verify(recorder).record(TARGET, OutcomeKind.SUCCESS, Duration.ofMillis(120));
+        verify(metrics).recordCall(TARGET, OutcomeKind.SUCCESS, Duration.ofMillis(120));
+        verifyNoMoreInteractions(metrics);
     }
 
     @Test
@@ -69,6 +74,8 @@ class OutboundCallServiceTest {
 
         assertThat(attempt).isEqualTo(new CallAttempt.BlockedBySemaphore());
         verifyNoInteractions(rateLimiter, client, recorder);
+        verify(metrics).recordBlockedBySemaphore(TARGET);
+        verifyNoMoreInteractions(metrics);
     }
 
     @Test
@@ -80,6 +87,8 @@ class OutboundCallServiceTest {
 
         assertThat(attempt).isEqualTo(new CallAttempt.BlockedByTokenBucket(Duration.ofMillis(10)));
         verifyNoInteractions(client, recorder);
+        verify(metrics).recordBlockedByTokenBucket(TARGET);
+        verifyNoMoreInteractions(metrics);
     }
 
     @Test
@@ -140,6 +149,7 @@ class OutboundCallServiceTest {
 
         assertThat(attempt).isEqualTo(new CallAttempt.Called(failed));
         verify(recorder).record(TARGET, OutcomeKind.SERVER_ERROR, Duration.ofMillis(50));
+        verify(metrics).recordCall(TARGET, OutcomeKind.SERVER_ERROR, Duration.ofMillis(50));
     }
 
     @Test
@@ -163,6 +173,6 @@ class OutboundCallServiceTest {
         assertThatThrownBy(() -> service.send(unknown))
                 .isInstanceOf(IllegalArgumentException.class);
 
-        verifyNoInteractions(rateLimiter, client);
+        verifyNoInteractions(rateLimiter, client, metrics);
     }
 }
