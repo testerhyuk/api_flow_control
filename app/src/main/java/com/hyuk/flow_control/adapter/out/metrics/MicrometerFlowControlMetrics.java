@@ -3,6 +3,8 @@ package com.hyuk.flow_control.adapter.out.metrics;
 import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
 import com.hyuk.flow_control.domain.health.HealthState;
 import com.hyuk.flow_control.domain.request.OutcomeKind;
+import com.hyuk.flow_control.domain.retry.DeadLetterReason;
+import com.hyuk.flow_control.domain.retry.RetryStage;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
@@ -68,8 +70,45 @@ public class MicrometerFlowControlMetrics implements FlowControlMetrics {
                 .increment();
     }
 
+    @Override
+    public void recordIntakeWait(String targetSystemId, Duration waited) {
+        Timer.builder("flow.control.intake.wait")
+                .tag("target", targetSystemId)
+                .serviceLevelObjectives(LATENCY_BUCKETS)
+                .register(registry)
+                .record(waited);
+    }
+
+    @Override
+    public void recordRetryScheduled(String targetSystemId, RetryStage stage, OutcomeKind kind) {
+        Counter.builder("flow.control.retry.scheduled")
+                .tag("target", targetSystemId)
+                .tag("stage", stage.label())
+                .tag("kind", kind.name())
+                .register(registry)
+                .increment();
+    }
+
+    @Override
+    public void recordRetrySucceeded(String targetSystemId, RetryStage stage) {
+        Counter.builder("flow.control.retry.succeeded")
+                .tag("target", targetSystemId)
+                .tag("stage", stage.label())
+                .register(registry)
+                .increment();
+    }
+
+    @Override
+    public void recordDeadLetter(String targetSystemId, DeadLetterReason reason) {
+        Counter.builder("flow.control.dlq.sent")
+                .tag("target", targetSystemId)
+                .tag("reason", reason.label())
+                .register(registry)
+                .increment();
+    }
+
     private void recordBlocked(String targetSystemId, String reason) {
-        Counter.builder("flow.control.outbound.blocked")
+        Counter.builder("flow.control.outbound.blocked.attempts")
                 .tag("target", targetSystemId)
                 .tag("reason", reason)
                 .register(registry)

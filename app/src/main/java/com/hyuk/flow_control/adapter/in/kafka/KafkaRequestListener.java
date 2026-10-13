@@ -1,58 +1,78 @@
 package com.hyuk.flow_control.adapter.in.kafka;
 
-import com.hyuk.flow_control.application.port.in.RequestIntakeUseCase;
+import com.hyuk.flow_control.adapter.kafka.FailureHeaders;
+import com.hyuk.flow_control.adapter.kafka.RequestMessage;
+import com.hyuk.flow_control.application.port.in.RequestHandlingUseCase;
+import com.hyuk.flow_control.application.service.IntakeInterruptedException;
+import com.hyuk.flow_control.domain.retry.DeliveryContext;
+import com.hyuk.flow_control.domain.retry.RetryStage;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.kafka.listener.MessageListener;
-import org.springframework.stereotype.Component;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;
 
-@Component
-public class KafkaRequestListener implements MessageListener<String, String> {
-    private static final Logger log = LoggerFactory.getLogger(KafkaRequestListener.class);
+import java.time.Duration;
+import java.time.Instant;
 
-    private final RequestIntakeUseCase intake;
+public class KafkaRequestListener implements MessageListener<String, String> {
+    private final String targetSystemId;
+    private final RetryStage stage;
+    private final RequestHandlingUseCase handling;
     private final JsonMapper jsonMapper;
 
-    public KafkaRequestListener(RequestIntakeUseCase intake, JsonMapper jsonMapper) {
-        this.intake = intake;
+    public KafkaRequestListener(String targetSystemId, RetryStage stage,
+                                RequestHandlingUseCase handling, JsonMapper jsonMapper) {
+        this.targetSystemId = targetSystemId;
+        this.stage = stage;
+        this.handling = handling;
         this.jsonMapper = jsonMapper;
     }
 
     @Override
     public void onMessage(ConsumerRecord<String, String> record) {
-        RequestMessage message = parse(record);
+        String origin = record.topic() + "-" + record.partition() + "@" + record.offset();
+        DeliveryContext context = stage == null
+                ? DeliveryContext.first(origin)
+                : FailureHeaders.readContext(record.headers(), stage, origin);
 
-        if (message == null) {
-            return;
+        if (stage != null) {
+            waitUntil(Instant.ofEpochMilli(record.timestamp()).plus(stage.delay()));
         }
 
-        intake.process(message.toOutboundRequest());
-    }
-
-    private RequestMessage parse(ConsumerRecord<String, String> record) {
         RequestMessage message;
-
         try {
             message = jsonMapper.readValue(record.value(), RequestMessage.class);
         } catch (JacksonException | IllegalArgumentException e) {
-            log.warn("읽을 수 없는 요청 메시지를 건너뜁니다 : {}-{}@{}", record.topic(), record.partition(), record.offset(), e);
-            return null;
+            handling.rejectInvalid(targetSystemId, record.value(), context, "JSON 이 아닙니다");
+            return;
         }
 
         if (message == null || !message.isValid()) {
-            log.warn("필수 값이 빠진 요청 메시지를 건너뜁니다 : {}-{}@{}", record.topic(), record.partition(), record.offset());
-            return null;
+            handling.rejectInvalid(targetSystemId, record.value(), context, "필수 값이 빠졌습니다");
+            return;
         }
 
-        if (!message.targetSystemId().equals(RequestTopics.targetOf(record.topic()))) {
-            log.warn("토픽과 대상이 다른 요청 메시지를 건너뜁니다 : {}-{}@{} target={}",
-                    record.topic(), record.partition(), record.offset(), message.targetSystemId());
-            return null;
+        if (!targetSystemId.equals(message.targetSystemId())) {
+            handling.rejectInvalid(targetSystemId, record.value(), context,
+                    "토픽의 대상과 메시지의 대상이 다릅니다 : " + message.targetSystemId());
+            return;
         }
 
-        return message;
+        handling.handle(message.toOutboundRequest(), context);
+    }
+
+    private static void waitUntil(Instant due) {
+        Duration remaining = Duration.between(Instant.now(), due);
+
+        if (remaining.isNegative() || remaining.isZero()) {
+            return;
+        }
+
+        try {
+            Thread.sleep(remaining);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IntakeInterruptedException(e);
+        }
     }
 }

@@ -2,6 +2,8 @@ package com.hyuk.flow_control.adapter.out.metrics;
 
 import com.hyuk.flow_control.domain.health.HealthState;
 import com.hyuk.flow_control.domain.request.OutcomeKind;
+import com.hyuk.flow_control.domain.retry.DeadLetterReason;
+import com.hyuk.flow_control.domain.retry.RetryStage;
 import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.distribution.CountAtBucket;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -74,7 +76,7 @@ class MicrometerFlowControlMetricsTest {
     }
 
     @Test
-    @DisplayName("세마포어와 토큰 버킷에서 막힌 요청을 이유별로 센다")
+    @DisplayName("세마포어와 토큰 버킷에서 막힌 시도를 이유별로 센다")
     void countsBlockedByReason() {
         metrics.recordBlockedBySemaphore("target-a");
         metrics.recordBlockedByTokenBucket("target-a");
@@ -99,6 +101,52 @@ class MicrometerFlowControlMetricsTest {
                 .counter().count()).isEqualTo(1.0);
     }
 
+    @Test
+    @DisplayName("한도 대기 시간을 대상별로 기록한다")
+    void recordsIntakeWait() {
+        metrics.recordIntakeWait("target-a", Duration.ofMillis(250));
+        metrics.recordIntakeWait("target-a", Duration.ZERO);
+
+        Timer timer = registry.get("flow.control.intake.wait").tags("target", "target-a").timer();
+        assertThat(timer.count()).isEqualTo(2);
+        assertThat(timer.totalTime(TimeUnit.MILLISECONDS)).isEqualTo(250.0);
+    }
+
+    @Test
+    @DisplayName("재시도 예약을 대상, 단계, kind 별로 센다")
+    void countsRetryScheduled() {
+        metrics.recordRetryScheduled("target-a", RetryStage.FIRST, OutcomeKind.TIMEOUT);
+        metrics.recordRetryScheduled("target-a", RetryStage.FIRST, OutcomeKind.TIMEOUT);
+        metrics.recordRetryScheduled("target-a", RetryStage.THIRD, OutcomeKind.TOO_MANY_REQUESTS);
+
+        assertThat(registry.get("flow.control.retry.scheduled")
+                .tags("target", "target-a", "stage", "1s", "kind", "TIMEOUT").counter().count()).isEqualTo(2.0);
+        assertThat(registry.get("flow.control.retry.scheduled")
+                .tags("target", "target-a", "stage", "60s", "kind", "TOO_MANY_REQUESTS").counter().count()).isEqualTo(1.0);
+    }
+
+    @Test
+    @DisplayName("재시도 성공을 대상과 단계별로 센다")
+    void countsRetrySucceeded() {
+        metrics.recordRetrySucceeded("target-a", RetryStage.SECOND);
+
+        assertThat(registry.get("flow.control.retry.succeeded")
+                .tags("target", "target-a", "stage", "10s").counter().count()).isEqualTo(1.0);
+    }
+
+    @Test
+    @DisplayName("DLQ 전송을 대상과 이유별로 센다")
+    void countsDeadLetters() {
+        metrics.recordDeadLetter("target-a", DeadLetterReason.RETRY_EXHAUSTED);
+        metrics.recordDeadLetter("target-a", DeadLetterReason.INVALID_MESSAGE);
+        metrics.recordDeadLetter("target-a", DeadLetterReason.INVALID_MESSAGE);
+
+        assertThat(registry.get("flow.control.dlq.sent")
+                .tags("target", "target-a", "reason", "retry_exhausted").counter().count()).isEqualTo(1.0);
+        assertThat(registry.get("flow.control.dlq.sent")
+                .tags("target", "target-a", "reason", "invalid_message").counter().count()).isEqualTo(2.0);
+    }
+
     private double callCount(String target, String kind) {
         return registry.get("flow.control.outbound.calls").tags("target", target, "kind", kind).counter().count();
     }
@@ -108,7 +156,7 @@ class MicrometerFlowControlMetricsTest {
     }
 
     private double blockedCount(String target, String reason) {
-        return registry.get("flow.control.outbound.blocked").tags("target", target, "reason", reason).counter().count();
+        return registry.get("flow.control.outbound.blocked.attempts").tags("target", target, "reason", reason).counter().count();
     }
 
     private static double countAt(CountAtBucket[] buckets, double millis) {

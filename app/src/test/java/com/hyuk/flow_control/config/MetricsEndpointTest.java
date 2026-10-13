@@ -3,6 +3,8 @@ package com.hyuk.flow_control.config;
 import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
 import com.hyuk.flow_control.domain.health.HealthState;
 import com.hyuk.flow_control.domain.request.OutcomeKind;
+import com.hyuk.flow_control.domain.retry.DeadLetterReason;
+import com.hyuk.flow_control.domain.retry.RetryStage;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -62,14 +64,22 @@ class MetricsEndpointTest {
         metrics.recordCall("target-b", OutcomeKind.TIMEOUT, Duration.ofSeconds(3));
         metrics.recordBlockedByTokenBucket("target-b");
         metrics.recordStateTransition("target-b", HealthState.HEALTHY, HealthState.CRITICAL);
+        metrics.recordIntakeWait("target-b", Duration.ofMillis(120));
+        metrics.recordRetryScheduled("target-b", RetryStage.FIRST, OutcomeKind.TIMEOUT);
+        metrics.recordRetrySucceeded("target-b", RetryStage.FIRST);
+        metrics.recordDeadLetter("target-b", DeadLetterReason.RETRY_EXHAUSTED);
 
         String body = get(managementPort, "/actuator/prometheus").body();
 
         assertThat(body)
                 .contains("flow_control_outbound_calls_total{kind=\"TIMEOUT\",target=\"target-b\"}")
                 .contains("flow_control_outbound_latency_seconds_bucket{kind=\"TIMEOUT\",target=\"target-b\",le=\"3.0\"} 1")
-                .contains("flow_control_outbound_blocked_total{reason=\"token_bucket\",target=\"target-b\"}")
-                .contains("flow_control_health_transitions_total{from=\"HEALTHY\",target=\"target-b\",to=\"CRITICAL\"}");
+                .contains("flow_control_outbound_blocked_attempts_total{reason=\"token_bucket\",target=\"target-b\"}")
+                .contains("flow_control_health_transitions_total{from=\"HEALTHY\",target=\"target-b\",to=\"CRITICAL\"}")
+                .contains("flow_control_intake_wait_seconds_bucket{target=\"target-b\",le=\"0.2\"} 1")
+                .contains("flow_control_retry_scheduled_total{kind=\"TIMEOUT\",stage=\"1s\",target=\"target-b\"}")
+                .contains("flow_control_retry_succeeded_total{stage=\"1s\",target=\"target-b\"}")
+                .contains("flow_control_dlq_sent_total{reason=\"retry_exhausted\",target=\"target-b\"}");
     }
 
     @Test
