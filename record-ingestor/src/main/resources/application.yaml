@@ -1,0 +1,15 @@
+spring:
+  application:
+    name: record-ingestor
+  kafka:
+    bootstrap-servers: localhost:9092
+
+record-ingestor:
+  topic-prefix: flow-control.requests.
+  targets:
+    target-a:
+      rate: 100
+    target-b:
+      rate: 50
+    target-c:
+      rate: 20
