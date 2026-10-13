@@ -76,6 +76,22 @@ class TargetSystemSemaphoreTest {
     }
 
     @Test
+    @DisplayName("진행 중인 요청 수는 잡으면 늘고 반납하면 줄어든다")
+    void tracksInFlight() {
+        assertThat(semaphore.inFlightOf("target-a")).isZero();
+
+        semaphore.tryAcquire("target-a");
+        semaphore.tryAcquire("target-a");
+        semaphore.tryAcquire("target-a");
+        assertThat(semaphore.inFlightOf("target-a")).isEqualTo(2);
+
+        semaphore.release("target-a");
+        assertThat(semaphore.inFlightOf("target-a")).isEqualTo(1);
+        assertThatThrownBy(() -> semaphore.inFlightOf("target-z"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     @DisplayName("처음 한도는 설정으로 계산한 허가 개수다")
     void initialLimit() {
         assertThat(semaphore.limitOf("target-a")).isEqualTo(2);

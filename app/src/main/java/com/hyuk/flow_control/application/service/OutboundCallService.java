@@ -1,6 +1,7 @@
 package com.hyuk.flow_control.application.service;
 
 import com.hyuk.flow_control.application.port.in.OutboundCallUseCase;
+import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
 import com.hyuk.flow_control.application.port.out.TargetSystemClient;
 import com.hyuk.flow_control.application.port.out.TargetSystemRateLimiter;
 import com.hyuk.flow_control.domain.request.CallAttempt;
@@ -15,16 +16,19 @@ public class OutboundCallService implements OutboundCallUseCase {
     private final TargetSystemSemaphore semaphore;
     private final TargetSystemRateLimiter rateLimiter;
     private final TargetSystemOutcomeRecorder recorder;
+    private final FlowControlMetrics metrics;
 
     public OutboundCallService(
             TargetSystemClient client,
             TargetSystemSemaphore semaphore,
             TargetSystemRateLimiter rateLimiter,
-            TargetSystemOutcomeRecorder recorder) {
+            TargetSystemOutcomeRecorder recorder,
+            FlowControlMetrics metrics) {
         this.client = client;
         this.semaphore = semaphore;
         this.rateLimiter = rateLimiter;
         this.recorder = recorder;
+        this.metrics = metrics;
     }
 
     @Override
@@ -32,6 +36,7 @@ public class OutboundCallService implements OutboundCallUseCase {
         String targetSystemId = request.targetSystemId();
 
         if (!semaphore.tryAcquire(targetSystemId)) {
+            metrics.recordBlockedBySemaphore(targetSystemId);
             return new CallAttempt.BlockedBySemaphore();
         }
 
@@ -39,12 +44,14 @@ public class OutboundCallService implements OutboundCallUseCase {
             RateLimitResult ratelimit = rateLimiter.tryConsume(targetSystemId);
 
             if (!ratelimit.allowed()) {
+                metrics.recordBlockedByTokenBucket(targetSystemId);
                 return new CallAttempt.BlockedByTokenBucket(ratelimit.retryAfter());
             }
 
             OutboundResult result = client.call(request);
 
             recorder.record(targetSystemId, result.kind(), result.latency());
+            metrics.recordCall(targetSystemId, result.kind(), result.latency());
 
             return new CallAttempt.Called(result);
         } finally {

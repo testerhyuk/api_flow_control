@@ -39,6 +39,10 @@ public class TargetSystemSemaphore {
         return permitsOf(targetSystemId).limit();
     }
 
+    public int inFlightOf(String targetSystemId) {
+        return permitsOf(targetSystemId).inFlight();
+    }
+
     private Permits permitsOf(String targetSystemId) {
         Permits found = permits.get(targetSystemId);
 
@@ -80,6 +84,10 @@ public class TargetSystemSemaphore {
 
         private int limit() {
             return limit;
+        }
+
+        private int inFlight() {
+            return inFlight.get();
         }
     }
 }
