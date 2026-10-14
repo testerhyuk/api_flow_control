@@ -60,6 +60,7 @@ class ShadowEvaluation {
     private volatile double rate;
     private volatile int concurrencyLimit;
     private long transitions;
+    private Duration overlap = Duration.ZERO;
     private Instant lastEvaluatedAt;
 
     ShadowEvaluation(DryRun dryRun, ManagedPolicy base, HealthStatus actualStatus, double actualRate,
@@ -144,7 +145,10 @@ class ShadowEvaluation {
         metrics.recordDryRunWaited(dryRun.targetSystemId());
     }
 
-    synchronized void evaluate(Instant now, long nowNanos) {
+    synchronized void evaluate(Instant now, long nowNanos, int servers) {
+        if (servers > 1) {
+            overlap = overlap.plus(Duration.between(lastEvaluatedAt, now));
+        }
         removeOlderThan(now.minus(window));
 
         OutcomeStatistics current = OutcomeStatistics.from(List.copyOf(outcomes));
@@ -186,6 +190,7 @@ class ShadowEvaluation {
                 observedSince,
                 now,
                 observedCalls.sum(),
+                overlap,
                 new DryRunReport.Limits(
                         actualRate,
                         rate,
@@ -204,6 +209,10 @@ class ShadowEvaluation {
                         current.failureRate(),
                         current.p95()),
                 unknowns());
+    }
+
+    synchronized Duration overlap() {
+        return overlap;
     }
 
     HealthState state() {
@@ -248,6 +257,10 @@ class ShadowEvaluation {
         }
         if (!candidate.connection().connectTimeout().equals(base.connection().connectTimeout())) {
             unknowns.add("connect-timeout 은 연결에 걸린 시간을 따로 재지 않아서 계산하지 않았습니다");
+        }
+        if (overlap.isPositive()) {
+            unknowns.add("다른 서버와 겹친 " + overlap.toSeconds()
+                    + "초 동안은 이 서버가 호출의 일부만 봐서, 막혔을 호출이 적게 세어지고 상태 판정 근거가 적었을 수 있습니다");
         }
 
         return unknowns;

@@ -100,7 +100,7 @@ class DryRunAdminControllerTest {
     @DisplayName("조회하면 이 서버의 계산 결과를 함께 보여준다")
     void getsResult() throws Exception {
         DryRunReport report = new DryRunReport(
-                START, START.plusSeconds(60), 120,
+                START, START.plusSeconds(60), 120, Duration.ofSeconds(15),
                 new DryRunReport.Limits(95.0, 47.5, 8, 2, 30, 5),
                 List.of(new DryRunReport.JudgmentChange(OutcomeKind.BUSINESS_REJECTED, OutcomeKind.SERVER_ERROR, 4)),
                 new DryRunReport.Timeouts(3, 0),
@@ -113,6 +113,7 @@ class DryRunAdminControllerTest {
         mockMvc.perform(get("/admin/policies/target-a/dry-run"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.result.observedCalls").value(120))
+                .andExpect(jsonPath("$.result.overlapMs").value(15000))
                 .andExpect(jsonPath("$.result.limits.wouldBlockByTokenBucket").value(30))
                 .andExpect(jsonPath("$.result.limits.waitedByCurrentLimit").value(5))
                 .andExpect(jsonPath("$.result.judgmentChanges[0].candidate").value("SERVER_ERROR"))

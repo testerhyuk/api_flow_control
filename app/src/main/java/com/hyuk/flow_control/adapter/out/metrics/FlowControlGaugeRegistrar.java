@@ -77,7 +77,11 @@ public class FlowControlGaugeRegistrar implements PolicyChangeListener {
                 () -> toSeconds(policies.read(targetSystemId).baselineRtt()) * degradedLatencyMultiplier);
 
         register("flow.control.limit.rate", targetSystemId, null,
+                () -> adjuster.appliedRateOf(targetSystemId));
+        register("flow.control.limit.rate.proposed", targetSystemId, null,
                 () -> adjuster.rateOf(targetSystemId));
+        register("flow.control.limit.servers", targetSystemId, null,
+                () -> adjuster.serversOf(targetSystemId));
         register("flow.control.limit.rate.max", targetSystemId, null,
                 () -> policies.read(targetSystemId).effectiveRate());
         register("flow.control.limit.concurrency", targetSystemId, null,
@@ -108,6 +112,8 @@ public class FlowControlGaugeRegistrar implements PolicyChangeListener {
                 () -> dryRuns.rateOf(targetSystemId).orElse(Double.NaN));
         register("flow.control.dryrun.limit.concurrency", targetSystemId, null,
                 () -> dryRuns.concurrencyLimitOf(targetSystemId).map(Integer::doubleValue).orElse(Double.NaN));
+        register("flow.control.dryrun.overlap", targetSystemId, "seconds",
+                () -> dryRuns.overlapOf(targetSystemId).map(FlowControlGaugeRegistrar::toSeconds).orElse(Double.NaN));
     }
 
     private void register(String name, String targetSystemId, String baseUnit, Supplier<Number> value) {

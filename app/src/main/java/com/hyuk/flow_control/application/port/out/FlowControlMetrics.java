@@ -1,6 +1,7 @@
 package com.hyuk.flow_control.application.port.out;
 
 import com.hyuk.flow_control.domain.health.HealthState;
+import com.hyuk.flow_control.domain.limit.LimitStore;
 import com.hyuk.flow_control.domain.request.OutcomeKind;
 import com.hyuk.flow_control.domain.retry.DeadLetterReason;
 import com.hyuk.flow_control.domain.retry.RetryStage;
@@ -43,4 +44,10 @@ public interface FlowControlMetrics {
     void recordDryRunUnknownTimeout(String targetSystemId);
 
     void recordDryRunStateTransition(String targetSystemId, HealthState from, HealthState to);
+
+    void recordLimitStoreSwitch(LimitStore to);
+
+    void recordRedisLatency(Duration latency);
+
+    void recordRedisError(String operation, boolean timeout);
 }

@@ -1,5 +1,6 @@
 package com.hyuk.flow_control.application.service;
 
+import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
 import com.hyuk.flow_control.application.port.out.TargetSystemPolicyReader;
 import com.hyuk.flow_control.application.port.out.TargetSystemRateLimiter;
 import com.hyuk.flow_control.config.HealthProperties;
@@ -7,6 +8,7 @@ import com.hyuk.flow_control.config.LimitAdjustmentProperties;
 import com.hyuk.flow_control.domain.health.HealthSnapshot;
 import com.hyuk.flow_control.domain.health.HealthState;
 import com.hyuk.flow_control.domain.policy.TargetSystemPolicy;
+import com.hyuk.flow_control.support.InMemorySharedRateStore;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -19,16 +21,17 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.within;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class TargetSystemLimitAdjusterTest {
@@ -46,6 +49,8 @@ class TargetSystemLimitAdjusterTest {
     private TargetSystemPolicyReader policyReader;
     private TargetSystemRateLimiter rateLimiter;
     private TargetSystemSemaphore semaphore;
+    private InMemorySharedRateStore sharedRates;
+    private FlowControlMetrics metrics;
 
     @BeforeEach
     void setUp() {
@@ -53,6 +58,8 @@ class TargetSystemLimitAdjusterTest {
         policyReader = mock(TargetSystemPolicyReader.class);
         rateLimiter = mock(TargetSystemRateLimiter.class);
         semaphore = mock(TargetSystemSemaphore.class);
+        sharedRates = new InMemorySharedRateStore();
+        metrics = mock(FlowControlMetrics.class);
 
         when(policyReader.readAll()).thenReturn(Map.of(TARGET_A, POLICY_A, LOW, POLICY_LOW, TINY, POLICY_TINY));
         when(policyReader.read(TARGET_A)).thenReturn(POLICY_A);
@@ -69,7 +76,9 @@ class TargetSystemLimitAdjusterTest {
         TargetSystemLimitAdjuster adjuster = adjuster(50);
 
         assertThat(adjuster.rateOf(TARGET_A)).isEqualTo(95.0);
+        assertThat(adjuster.appliedRateOf(TARGET_A)).isEqualTo(95.0);
         assertThat(adjuster.rateOf(LOW)).isEqualTo(9.5);
+        assertThat(adjuster.serversOf(TARGET_A)).isEqualTo(1);
     }
 
     @Test
@@ -77,20 +86,34 @@ class TargetSystemLimitAdjusterTest {
     void throwsForUnknownTarget() {
         TargetSystemLimitAdjuster adjuster = adjuster(50);
 
-        assertThatThrownBy(() -> adjuster.rateOf("target-z"))
-                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> adjuster.rateOf("target-z")).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> adjuster.appliedRateOf("target-z")).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
-    @DisplayName("HEALTHY 이고 이미 100% 면 한도를 바꾸지 않는다")
-    void keepsFullRateWhenHealthy() {
+    @DisplayName("첫 조절에서는 rate 가 그대로여도 한도와 concurrency 를 한 번 맞춘다")
+    void appliesOnFirstAdjustment() {
         when(evaluator.snapshotOf(TARGET_A)).thenReturn(snapshot(HealthState.HEALTHY, 100));
         TargetSystemLimitAdjuster adjuster = adjuster(50);
 
         adjuster.adjust(TARGET_A);
 
-        assertThat(adjuster.rateOf(TARGET_A)).isEqualTo(95.0);
-        verifyNoInteractions(rateLimiter, semaphore);
+        verify(rateLimiter).changeRate(TARGET_A, 95.0);
+        verify(semaphore).changeLimit(TARGET_A, 10);
+    }
+
+    @Test
+    @DisplayName("rate 가 그대로면 concurrency 는 다시 바꾸지 않는다")
+    void keepsConcurrencyWhenRateUnchanged() {
+        when(evaluator.snapshotOf(TARGET_A)).thenReturn(snapshot(HealthState.HEALTHY, 100));
+        TargetSystemLimitAdjuster adjuster = adjuster(50);
+        adjuster.adjust(TARGET_A);
+        clearInvocations(semaphore);
+
+        adjuster.adjust(TARGET_A);
+
+        assertThat(adjuster.appliedRateOf(TARGET_A)).isEqualTo(95.0);
+        verify(semaphore, never()).changeLimit(eq(TARGET_A), anyInt());
     }
 
     @Test
@@ -102,6 +125,7 @@ class TargetSystemLimitAdjusterTest {
         adjuster.adjust(TARGET_A);
 
         assertThat(adjuster.rateOf(TARGET_A)).isEqualTo(5.0);
+        assertThat(adjuster.appliedRateOf(TARGET_A)).isEqualTo(5.0);
         verify(rateLimiter).changeRate(TARGET_A, 5.0);
         verify(semaphore).changeLimit(TARGET_A, 1);
     }
@@ -115,7 +139,6 @@ class TargetSystemLimitAdjusterTest {
         adjuster.adjust(TARGET_A);
 
         assertThat(adjuster.rateOf(TARGET_A)).isEqualTo(10.0);
-        verify(rateLimiter).changeRate(TARGET_A, 10.0);
     }
 
     @Test
@@ -127,7 +150,6 @@ class TargetSystemLimitAdjusterTest {
         adjuster.adjust(TINY);
 
         assertThat(adjuster.rateOf(TINY)).isEqualTo(4.0);
-        verifyNoInteractions(rateLimiter, semaphore);
     }
 
     @Test
@@ -139,7 +161,6 @@ class TargetSystemLimitAdjusterTest {
         adjuster.adjust(TARGET_A);
 
         assertThat(adjuster.rateOf(TARGET_A)).isEqualTo(47.5);
-        verify(rateLimiter).changeRate(TARGET_A, 47.5);
         verify(semaphore).changeLimit(TARGET_A, 5);
     }
 
@@ -152,7 +173,6 @@ class TargetSystemLimitAdjusterTest {
         adjuster.adjust(LOW);
 
         assertThat(adjuster.rateOf(LOW)).isEqualTo(5.0);
-        verify(rateLimiter).changeRate(LOW, 5.0);
     }
 
     @Test
@@ -167,7 +187,6 @@ class TargetSystemLimitAdjusterTest {
         adjuster.adjust(TARGET_A);
 
         assertThat(adjuster.rateOf(TARGET_A)).isEqualTo(5.0);
-        verify(rateLimiter, times(1)).changeRate(eq(TARGET_A), anyDouble());
     }
 
     @Test
@@ -203,7 +222,6 @@ class TargetSystemLimitAdjusterTest {
         adjuster.adjust(TARGET_A);
 
         assertThat(adjuster.rateOf(TARGET_A)).isEqualTo(5.0);
-        verify(rateLimiter, times(1)).changeRate(eq(TARGET_A), anyDouble());
     }
 
     @Test
@@ -219,9 +237,95 @@ class TargetSystemLimitAdjusterTest {
         }
 
         assertThat(adjuster.rateOf(TARGET_A)).isEqualTo(95.0);
-        verify(rateLimiter, times(1)).changeRate(TARGET_A, 95.0);
         verify(rateLimiter, never()).changeRate(eq(TARGET_A), AdditionalMatchers.gt(95.0));
-        verify(semaphore, atLeastOnce()).changeLimit(TARGET_A, 10);
+    }
+
+    @Test
+    @DisplayName("다른 서버가 더 낮은 rate 를 원하면 그 값을 적용하고, 이 서버가 원하는 rate 는 따로 기억한다")
+    void appliesLowestProposal() {
+        when(evaluator.snapshotOf(TARGET_A)).thenReturn(snapshot(HealthState.HEALTHY, 100));
+        sharedRates.proposeFromOtherServer(TARGET_A, "other", 47.5);
+        TargetSystemLimitAdjuster adjuster = adjuster(50);
+
+        adjuster.adjust(TARGET_A);
+
+        assertThat(adjuster.rateOf(TARGET_A)).isEqualTo(95.0);
+        assertThat(adjuster.appliedRateOf(TARGET_A)).isEqualTo(47.5);
+        assertThat(adjuster.serversOf(TARGET_A)).isEqualTo(2);
+        assertThat(sharedRates.storedAppliedRate(TARGET_A)).contains(47.5);
+        verify(rateLimiter).changeRate(TARGET_A, 47.5);
+        verify(semaphore).changeLimit(TARGET_A, 5);
+    }
+
+    @Test
+    @DisplayName("낮은 값을 원하던 서버가 사라지면 이 서버가 원하는 rate 로 돌아간다")
+    void returnsToOwnRateWhenOtherServerExpires() {
+        when(evaluator.snapshotOf(TARGET_A)).thenReturn(snapshot(HealthState.HEALTHY, 100));
+        sharedRates.proposeFromOtherServer(TARGET_A, "other", 47.5);
+        TargetSystemLimitAdjuster adjuster = adjuster(50);
+        adjuster.adjust(TARGET_A);
+
+        sharedRates.expireOtherServer(TARGET_A, "other");
+        adjuster.adjust(TARGET_A);
+
+        assertThat(adjuster.appliedRateOf(TARGET_A)).isEqualTo(95.0);
+        assertThat(adjuster.serversOf(TARGET_A)).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("처음 공용 저장소에 닿으면 적용돼 있던 rate 를 이어받고, 판정이 좋으면 조금씩 올린다")
+    void inheritsAppliedRate() {
+        sharedRates.storeAppliedRate(TARGET_A, 47.5);
+        when(evaluator.snapshotOf(TARGET_A)).thenReturn(snapshot(HealthState.HEALTHY, 10));
+        TargetSystemLimitAdjuster adjuster = adjuster(50);
+
+        adjuster.adjust(TARGET_A);
+        assertThat(adjuster.rateOf(TARGET_A)).isEqualTo(47.5);
+        assertThat(adjuster.appliedRateOf(TARGET_A)).isEqualTo(47.5);
+
+        when(evaluator.snapshotOf(TARGET_A)).thenReturn(snapshot(HealthState.HEALTHY, 100));
+        adjuster.adjust(TARGET_A);
+        assertThat(adjuster.rateOf(TARGET_A)).isCloseTo(52.25, within(1e-9));
+    }
+
+    @Test
+    @DisplayName("이어받을 rate 는 한 번만 읽는다")
+    void inheritsOnlyOnce() {
+        sharedRates.storeAppliedRate(TARGET_A, 47.5);
+        when(evaluator.snapshotOf(TARGET_A)).thenReturn(snapshot(HealthState.HEALTHY, 100));
+        TargetSystemLimitAdjuster adjuster = adjuster(50);
+        adjuster.adjust(TARGET_A);
+
+        sharedRates.storeAppliedRate(TARGET_A, 5.0);
+        adjuster.adjust(TARGET_A);
+
+        assertThat(adjuster.rateOf(TARGET_A)).isGreaterThan(47.5);
+    }
+
+    @Test
+    @DisplayName("공용 저장소를 쓸 수 없으면 이 서버가 원하는 rate 를 그대로 적용하고 오류를 센다")
+    void usesOwnRateWhenStoreUnavailable() {
+        sharedRates.becomeUnavailable(true);
+        when(evaluator.snapshotOf(TARGET_A)).thenReturn(snapshot(HealthState.DEGRADED, 100));
+        TargetSystemLimitAdjuster adjuster = adjuster(50);
+
+        adjuster.adjust(TARGET_A);
+
+        assertThat(adjuster.appliedRateOf(TARGET_A)).isEqualTo(47.5);
+        assertThat(adjuster.serversOf(TARGET_A)).isEqualTo(1);
+        verify(rateLimiter).changeRate(TARGET_A, 47.5);
+        verify(metrics, atLeastOnce()).recordRedisError("proposal", true);
+    }
+
+    @Test
+    @DisplayName("Redis 를 쓸 수 없는 상태라 아예 시도하지 않았으면 오류로 세지 않는다")
+    void doesNotCountSkippedCalls() {
+        sharedRates.becomeUnavailable(false);
+        TargetSystemLimitAdjuster adjuster = adjuster(50);
+
+        adjuster.adjust(TARGET_A);
+
+        verify(metrics, never()).recordRedisError(anyString(), anyBoolean());
     }
 
     @Test
@@ -231,10 +335,10 @@ class TargetSystemLimitAdjusterTest {
         doThrow(new IllegalStateException("예상하지 못한 예외")).when(rateLimiter).changeRate(eq(TARGET_A), anyDouble());
         TargetSystemLimitAdjuster adjuster = adjuster(50);
 
-        assertThatThrownBy(() -> adjuster.adjust(TARGET_A))
-                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> adjuster.adjust(TARGET_A)).isInstanceOf(IllegalStateException.class);
 
         assertThat(adjuster.rateOf(TARGET_A)).isEqualTo(95.0);
+        assertThat(adjuster.appliedRateOf(TARGET_A)).isEqualTo(95.0);
         verify(semaphore, never()).changeLimit(eq(TARGET_A), anyInt());
     }
 
@@ -257,8 +361,8 @@ class TargetSystemLimitAdjusterTest {
                 Duration.ofSeconds(10), Duration.ofSeconds(1), minimumCalls, 0.10, 0.50, 2.0, Duration.ofSeconds(30));
         LimitAdjustmentProperties adjustmentProperties = new LimitAdjustmentProperties(0.5, 0.05);
 
-        return new TargetSystemLimitAdjuster(
-                evaluator, policyReader, rateLimiter, semaphore, adjustmentProperties, healthProperties);
+        return new TargetSystemLimitAdjuster(evaluator, policyReader, rateLimiter, semaphore, sharedRates, metrics,
+                adjustmentProperties, healthProperties);
     }
 
     private static HealthSnapshot snapshot(HealthState state, int sampleCount) {

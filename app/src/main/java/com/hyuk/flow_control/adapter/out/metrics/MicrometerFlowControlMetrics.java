@@ -2,6 +2,7 @@ package com.hyuk.flow_control.adapter.out.metrics;
 
 import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
 import com.hyuk.flow_control.domain.health.HealthState;
+import com.hyuk.flow_control.domain.limit.LimitStore;
 import com.hyuk.flow_control.domain.request.OutcomeKind;
 import com.hyuk.flow_control.domain.retry.DeadLetterReason;
 import com.hyuk.flow_control.domain.retry.RetryStage;
@@ -27,6 +28,9 @@ public class MicrometerFlowControlMetrics implements FlowControlMetrics {
             Duration.ofSeconds(3),
             Duration.ofSeconds(5)
     };
+
+    private static final Duration REDIS_LATENCY_MIN = Duration.ofNanos(100_000);
+    private static final Duration REDIS_LATENCY_MAX = Duration.ofMillis(50);
 
     private final MeterRegistry registry;
 
@@ -178,6 +182,33 @@ public class MicrometerFlowControlMetrics implements FlowControlMetrics {
         dryRunCounter("flow.control.dryrun.health.transitions", targetSystemId)
                 .tag("from", from.name())
                 .tag("to", to.name())
+                .register(registry)
+                .increment();
+    }
+
+    @Override
+    public void recordLimitStoreSwitch(LimitStore to) {
+        Counter.builder("flow.control.limit.store.switches")
+                .tag("to", to.name().toLowerCase())
+                .register(registry)
+                .increment();
+    }
+
+    @Override
+    public void recordRedisLatency(Duration latency) {
+        Timer.builder("flow.control.redis.latency")
+                .publishPercentileHistogram()
+                .minimumExpectedValue(REDIS_LATENCY_MIN)
+                .maximumExpectedValue(REDIS_LATENCY_MAX)
+                .register(registry)
+                .record(latency);
+    }
+
+    @Override
+    public void recordRedisError(String operation, boolean timeout) {
+        Counter.builder("flow.control.redis.errors")
+                .tag("operation", operation)
+                .tag("reason", timeout ? "timeout" : "failure")
                 .register(registry)
                 .increment();
     }

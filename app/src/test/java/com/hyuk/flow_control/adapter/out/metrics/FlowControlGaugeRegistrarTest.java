@@ -56,6 +56,8 @@ class FlowControlGaugeRegistrarTest {
         when(evaluator.snapshotOf(TARGET)).thenReturn(HealthSnapshot.initial());
         when(dryRuns.stateOf(TARGET)).thenReturn(Optional.empty());
         when(dryRuns.rateOf(TARGET)).thenReturn(Optional.empty());
+        when(dryRuns.overlapOf(TARGET)).thenReturn(Optional.empty());
+        when(adjuster.serversOf(TARGET)).thenReturn(1);
         when(dryRuns.concurrencyLimitOf(TARGET)).thenReturn(Optional.empty());
 
         new FlowControlGaugeRegistrar(registry, policies, evaluator, adjuster, semaphore, dryRuns, healthProperties);
@@ -113,7 +115,7 @@ class FlowControlGaugeRegistrarTest {
     @Test
     @DisplayName("지금 rate, concurrency 한도, 진행 중인 요청 수를 낸다")
     void exposesLimits() {
-        when(adjuster.rateOf(TARGET)).thenReturn(5.0);
+        when(adjuster.appliedRateOf(TARGET)).thenReturn(5.0);
         when(semaphore.limitOf(TARGET)).thenReturn(1);
         when(semaphore.inFlightOf(TARGET)).thenReturn(3);
 
@@ -167,6 +169,28 @@ class FlowControlGaugeRegistrarTest {
         assertThat(dryRunState("HEALTHY")).isZero();
         assertThat(gauge("flow.control.dryrun.limit.rate")).isEqualTo(38.0);
         assertThat(gauge("flow.control.dryrun.limit.concurrency")).isEqualTo(4.0);
+    }
+
+    @Test
+    @DisplayName("적용된 rate, 이 서버가 원하는 rate, 원하는 rate 를 남긴 서버 수를 낸다")
+    void exposesSharedLimit() {
+        when(adjuster.appliedRateOf(TARGET)).thenReturn(47.5);
+        when(adjuster.rateOf(TARGET)).thenReturn(95.0);
+        when(adjuster.serversOf(TARGET)).thenReturn(2);
+
+        assertThat(gauge("flow.control.limit.rate")).isEqualTo(47.5);
+        assertThat(gauge("flow.control.limit.rate.proposed")).isEqualTo(95.0);
+        assertThat(gauge("flow.control.limit.servers")).isEqualTo(2.0);
+    }
+
+    @Test
+    @DisplayName("dry-run 중 다른 서버와 겹친 시간을 초 단위로 낸다")
+    void exposesDryRunOverlap() {
+        assertThat(gauge("flow.control.dryrun.overlap")).isNaN();
+
+        when(dryRuns.overlapOf(TARGET)).thenReturn(Optional.of(Duration.ofSeconds(40)));
+
+        assertThat(gauge("flow.control.dryrun.overlap")).isEqualTo(40.0);
     }
 
     private double dryRunState(String state) {

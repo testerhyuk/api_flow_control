@@ -12,6 +12,7 @@ public record DryRunReport(
         Instant observedSince,
         Instant reportedAt,
         long observedCalls,
+        Duration overlap,
         Limits limits,
         List<JudgmentChange> judgmentChanges,
         Timeouts timeouts,
