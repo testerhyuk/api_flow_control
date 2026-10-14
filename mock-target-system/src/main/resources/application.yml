@@ -1,17 +1,63 @@
+spring:
+  application:
+    name: mock-target-system
+  threads:
+    virtual:
+      enabled: true
+
+server:
+  port: ${mock-target.systems.${mock-target.target}.port}
+
+management:
+  server:
+    port: ${mock-target.systems.${mock-target.target}.admin-port}
+  endpoints:
+    web:
+      exposure:
+        include: health, prometheus, faults
+  metrics:
+    tags:
+      target: ${mock-target.target}
+
 mock-target:
+  duplicate-retention: 10m
   systems:
-    bank-a:
+    target-a:
+      port: 9001
+      admin-port: 9101
       max-concurrency: 50
       queue-capacity: 500
-      base-processing-millis: 60
-      max-tps: 200
-    bank-b:
-      max-concurrency: 10
-      queue-capacity: 100
-      base-processing-millis: 150
-      max-tps: 40
-    bank-c:
-      max-concurrency: 25
-      queue-capacity: 250
       base-processing-millis: 100
+      p95-ratio: 1.5
+      full-load-multiplier: 2.6
+      max-tps: 200
+      rate-limit-retry-after: 10s
+      server-error-rate: 0.01
+      business-reject-rate: 0.02
+      response-format: RESULT_CODE
+    target-b:
+      port: 9002
+      admin-port: 9102
+      max-concurrency: 20
+      queue-capacity: 200
+      base-processing-millis: 100
+      p95-ratio: 1.5
+      full-load-multiplier: 2.6
       max-tps: 100
+      rate-limit-retry-after: 10s
+      server-error-rate: 0.01
+      business-reject-rate: 0.02
+      response-format: STATUS_CODE
+    target-c:
+      port: 9003
+      admin-port: 9103
+      max-concurrency: 50
+      queue-capacity: 500
+      base-processing-millis: 100
+      p95-ratio: 1.5
+      full-load-multiplier: 2.6
+      max-tps: 50
+      rate-limit-retry-after: 10s
+      server-error-rate: 0.01
+      business-reject-rate: 0.02
+      response-format: STATUS_CODE
