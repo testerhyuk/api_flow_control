@@ -2,6 +2,7 @@ package com.hyuk.flow_control.adapter.out.policy;
 
 import com.hyuk.flow_control.config.TargetSystemProperties;
 import com.hyuk.flow_control.domain.policy.TargetSystemPolicy;
+import com.hyuk.flow_control.domain.request.OutcomeKind;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -18,6 +19,9 @@ class YamlTargetSystemPolicyReaderTest {
     private static final TargetSystemPolicy POLICY_B =
             new TargetSystemPolicy(50, Duration.ofMillis(300), 0.9, Duration.ofMillis(20));
 
+    private static final TargetSystemProperties.Response RESPONSE = new TargetSystemProperties.Response(
+            Map.of("2xx", OutcomeKind.SUCCESS), null, null);
+
     private YamlTargetSystemPolicyReader policyReader;
 
     @BeforeEach
@@ -25,10 +29,10 @@ class YamlTargetSystemPolicyReaderTest {
         TargetSystemProperties properties = new TargetSystemProperties(Map.of(
                 "target-a", new TargetSystemProperties.TargetSystem(
                         "http://localhost:9001", Duration.ofSeconds(1), Duration.ofSeconds(3),
-                        100, Duration.ofMillis(100), 0.95, Duration.ofMillis(10)),
+                        100, Duration.ofMillis(100), 0.95, Duration.ofMillis(10), RESPONSE),
                 "target-b", new TargetSystemProperties.TargetSystem(
                         "http://localhost:9002", Duration.ofSeconds(1), Duration.ofSeconds(3),
-                        50, Duration.ofMillis(300), 0.9, Duration.ofMillis(20))
+                        50, Duration.ofMillis(300), 0.9, Duration.ofMillis(20), RESPONSE)
         ));
 
         policyReader = new YamlTargetSystemPolicyReader(properties);

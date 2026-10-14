@@ -35,22 +35,49 @@ flow-control:
       connect-timeout: 1s
       read-timeout: 3s
       max-tps: 100
-      baseline-rtt: 100ms
+      baseline-rtt: 150ms
       safety-margin: 0.95
       burst-window: 10ms
+      response:
+        status-codes:
+          "2xx": SUCCESS
+          "400": INVALID_REQUEST
+          "429": TOO_MANY_REQUESTS
+          "5xx": SERVER_ERROR
+        result-field: /resultCode
+        result-codes:
+          "0000": SUCCESS
+          "E100": BUSINESS_REJECTED
+          "E429": TOO_MANY_REQUESTS
+          "E500": SERVER_ERROR
+          "E900": UNDER_MAINTENANCE
     target-b:
       url: http://localhost:9002
       connect-timeout: 1s
       read-timeout: 3s
-      max-tps: 50
-      baseline-rtt: 300ms
+      max-tps: 100
+      baseline-rtt: 150ms
       safety-margin: 0.95
       burst-window: 10ms
+      response:
+        status-codes:
+          "2xx": SUCCESS
+          "400": INVALID_REQUEST
+          "422": BUSINESS_REJECTED
+          "429": TOO_MANY_REQUESTS
+          "5xx": SERVER_ERROR
     target-c:
       url: http://localhost:9003
       connect-timeout: 1s
       read-timeout: 3s
-      max-tps: 20
-      baseline-rtt: 1s
+      max-tps: 100
+      baseline-rtt: 150ms
       safety-margin: 0.95
       burst-window: 10ms
+      response:
+        status-codes:
+          "2xx": SUCCESS
+          "400": INVALID_REQUEST
+          "422": BUSINESS_REJECTED
+          "429": TOO_MANY_REQUESTS
+          "5xx": SERVER_ERROR

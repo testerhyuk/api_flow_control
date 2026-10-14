@@ -7,6 +7,8 @@ public record OutboundResult(
         OutcomeKind kind,
         Duration latency,
         Instant retryAfter,
-        String responseBody
+        String responseBody,
+        Integer statusCode,
+        String resultCode
 ) {
 }

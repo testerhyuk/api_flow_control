@@ -39,4 +39,14 @@ public class RestClientConfig {
 
         return new TargetSystemRestClients(clients);
     }
+
+    @Bean
+    public TargetSystemResponseRules targetSystemResponseRules(TargetSystemProperties properties) {
+        Map<String, ResponseRules> rules = new HashMap<>();
+
+        properties.targetSystems().forEach((systemId, target) ->
+                rules.put(systemId, new ResponseRules(target.response())));
+
+        return new TargetSystemResponseRules(rules);
+    }
 }

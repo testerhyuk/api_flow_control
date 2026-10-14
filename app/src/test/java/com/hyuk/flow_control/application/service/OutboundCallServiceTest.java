@@ -27,7 +27,7 @@ class OutboundCallServiceTest {
     private static final OutboundRequest REQUEST =
             new OutboundRequest("req-1", TARGET, "{}", Instant.now());
     private static final OutboundResult RESULT =
-            new OutboundResult(OutcomeKind.SUCCESS, Duration.ofMillis(120), null, null);
+            new OutboundResult(OutcomeKind.SUCCESS, Duration.ofMillis(120), null, null, null, null);
 
     private TargetSystemSemaphore semaphore;
     private TargetSystemRateLimiter rateLimiter;
@@ -141,7 +141,7 @@ class OutboundCallServiceTest {
     @DisplayName("외부가 실패로 답해도 호출은 한 것이므로 Called 를 돌려준다")
     void returnsCalledEvenWhenTargetFails() {
         OutboundResult failed =
-                new OutboundResult(OutcomeKind.SERVER_ERROR, Duration.ofMillis(50), null, null);
+                new OutboundResult(OutcomeKind.SERVER_ERROR, Duration.ofMillis(50), null, null, null, null);
         when(rateLimiter.tryConsume(TARGET)).thenReturn(RateLimitResult.allow());
         when(client.call(REQUEST)).thenReturn(failed);
 

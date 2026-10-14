@@ -46,7 +46,7 @@ import static org.mockito.Mockito.when;
 @EmbeddedKafka
 class KafkaRequestIntakeIntegrationTest {
     private static final OutboundResult SUCCESS =
-            new OutboundResult(OutcomeKind.SUCCESS, Duration.ofMillis(120), null, null);
+            new OutboundResult(OutcomeKind.SUCCESS, Duration.ofMillis(120), null, null, null, null);
 
     @Autowired
     private EmbeddedKafkaBroker broker;
@@ -60,7 +60,7 @@ class KafkaRequestIntakeIntegrationTest {
         try (AdminClient admin = AdminClient.create(Map.of(
                 AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, broker.getBrokersAsString()))) {
             Map<String, Integer> expected = new HashMap<>();
-            Map.of("target-a", 10, "target-b", 15, "target-c", 19).forEach((target, partitions) -> {
+            Map.of("target-a", 15, "target-b", 15, "target-c", 15).forEach((target, partitions) -> {
                 expected.put("flow-control.requests." + target, partitions);
                 for (String stage : List.of("1s", "10s", "60s", "300s")) {
                     expected.put("flow-control.retry-" + stage + "." + target, partitions);
@@ -81,8 +81,8 @@ class KafkaRequestIntakeIntegrationTest {
         Map<String, Integer> concurrency = containers.concurrencyByTopic();
 
         assertThat(concurrency).hasSize(15);
-        assertThat(concurrency.get("flow-control.requests.target-a")).isEqualTo(10);
-        assertThat(concurrency.get("flow-control.retry-300s.target-c")).isEqualTo(19);
+        assertThat(concurrency.get("flow-control.requests.target-a")).isEqualTo(15);
+        assertThat(concurrency.get("flow-control.retry-300s.target-c")).isEqualTo(15);
         assertThat(containers.isRunning()).isTrue();
     }
 
@@ -117,7 +117,7 @@ class KafkaRequestIntakeIntegrationTest {
     void retriesFailedRequestThroughRetryTopic() {
         String requestId = uniqueId();
         when(outboundCall.send(argThat(r -> r != null && requestId.equals(r.requestId())))).thenReturn(
-                new CallAttempt.Called(new OutboundResult(OutcomeKind.TIMEOUT, Duration.ofSeconds(3), null, null)),
+                new CallAttempt.Called(new OutboundResult(OutcomeKind.TIMEOUT, Duration.ofSeconds(3), null, null, null, null)),
                 new CallAttempt.Called(SUCCESS));
 
         send("flow-control.requests.target-a", requestId, json(requestId, "target-a"));
@@ -130,7 +130,7 @@ class KafkaRequestIntakeIntegrationTest {
     void deadLettersInvalidRequest() {
         String requestId = uniqueId();
         when(outboundCall.send(argThat(r -> r != null && requestId.equals(r.requestId())))).thenReturn(
-                new CallAttempt.Called(new OutboundResult(OutcomeKind.INVALID_REQUEST, Duration.ofMillis(50), null, null)));
+                new CallAttempt.Called(new OutboundResult(OutcomeKind.INVALID_REQUEST, Duration.ofMillis(50), null, null, null, null)));
         String value = json(requestId, "target-b");
 
         send("flow-control.requests.target-b", requestId, value);

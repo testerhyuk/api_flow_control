@@ -2,6 +2,7 @@ package com.hyuk.flow_control.adapter.out.kafka;
 
 import com.hyuk.flow_control.adapter.kafka.FailureHeaders;
 import com.hyuk.flow_control.domain.request.OutboundRequest;
+import com.hyuk.flow_control.domain.request.OutboundResult;
 import com.hyuk.flow_control.domain.request.OutcomeKind;
 import com.hyuk.flow_control.domain.retry.DeadLetterReason;
 import com.hyuk.flow_control.domain.retry.DeliveryContext;
@@ -16,6 +17,7 @@ import org.springframework.kafka.support.SendResult;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.CompletableFuture;
 
@@ -72,7 +74,10 @@ class KafkaFailedRequestPublisherTest {
     void deadLetters() {
         DeliveryContext context = new DeliveryContext(RetryStage.FOURTH, 5, CREATED, FAILED, "origin-0@1");
 
-        publisher.deadLetter(REQUEST, context, DeadLetterReason.RETRY_EXHAUSTED, OutcomeKind.SERVER_ERROR, null);
+        OutboundResult lastResult = new OutboundResult(
+                OutcomeKind.SERVER_ERROR, Duration.ofMillis(100), null, "<html>503</html>", 503, null);
+
+        publisher.deadLetter(REQUEST, context, DeadLetterReason.RETRY_EXHAUSTED, lastResult, null);
 
         ProducerRecord<String, String> sent = captured();
         assertThat(sent.topic()).isEqualTo("flow-control.dlq.target-a");
@@ -82,6 +87,35 @@ class KafkaFailedRequestPublisherTest {
         assertThat(FailureHeaders.read(sent.headers(), FailureHeaders.FAILED_ATTEMPTS)).isEqualTo("5");
         assertThat(FailureHeaders.read(sent.headers(), FailureHeaders.LAST_KIND)).isEqualTo("SERVER_ERROR");
         assertThat(FailureHeaders.read(sent.headers(), FailureHeaders.ORIGIN)).isEqualTo("origin-0@1");
+        assertThat(FailureHeaders.read(sent.headers(), FailureHeaders.STATUS_CODE)).isEqualTo("503");
+        assertThat(sent.headers().lastHeader(FailureHeaders.RESULT_CODE)).isNull();
+    }
+
+    @Test
+    @DisplayName("DLQ 에 외부 기관이 보낸 결과 코드를 남긴다")
+    void deadLetterKeepsResultCode() {
+        OutboundResult lastResult = new OutboundResult(
+                OutcomeKind.UNEXPECTED_RESPONSE, Duration.ofMillis(100), null, "{\"code\":\"E777\"}", 200, "E777");
+
+        publisher.deadLetter(REQUEST, DeliveryContext.first("o").afterFailure(FAILED),
+                DeadLetterReason.DLQ_KIND, lastResult, null);
+
+        ProducerRecord<String, String> sent = captured();
+        assertThat(FailureHeaders.read(sent.headers(), FailureHeaders.LAST_KIND)).isEqualTo("UNEXPECTED_RESPONSE");
+        assertThat(FailureHeaders.read(sent.headers(), FailureHeaders.STATUS_CODE)).isEqualTo("200");
+        assertThat(FailureHeaders.read(sent.headers(), FailureHeaders.RESULT_CODE)).isEqualTo("E777");
+    }
+
+    @Test
+    @DisplayName("외부 호출 결과가 없는 DLQ 는 코드 헤더를 쓰지 않는다")
+    void deadLetterWithoutResult() {
+        publisher.deadLetter(REQUEST, DeliveryContext.first("o").afterFailure(FAILED),
+                DeadLetterReason.PROCESSING_ERROR, null, "IllegalStateException: 오류");
+
+        ProducerRecord<String, String> sent = captured();
+        assertThat(sent.headers().lastHeader(FailureHeaders.LAST_KIND)).isNull();
+        assertThat(sent.headers().lastHeader(FailureHeaders.STATUS_CODE)).isNull();
+        assertThat(sent.headers().lastHeader(FailureHeaders.RESULT_CODE)).isNull();
     }
 
     @Test
@@ -103,7 +137,7 @@ class KafkaFailedRequestPublisherTest {
                 .thenReturn(CompletableFuture.failedFuture(new RuntimeException("브로커 없음")));
 
         assertThatThrownBy(() -> publisher.deadLetter(REQUEST, DeliveryContext.first("o"),
-                DeadLetterReason.DLQ_KIND, OutcomeKind.INVALID_REQUEST, null))
+                DeadLetterReason.DLQ_KIND, null, null))
                 .isInstanceOf(IllegalStateException.class);
     }
 
