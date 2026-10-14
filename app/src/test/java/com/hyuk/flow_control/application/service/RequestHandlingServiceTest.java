@@ -118,12 +118,14 @@ class RequestHandlingServiceTest {
     @DisplayName("마지막 단계에서도 실패하면 재시도 소진으로 DLQ 에 보낸다")
     void deadLettersWhenExhausted() {
         DeliveryContext lastStage = new DeliveryContext(RetryStage.FOURTH, 4, Instant.now(), Instant.now(), "o");
-        when(intake.process(REQUEST)).thenReturn(result(OutcomeKind.SERVER_ERROR, null));
+        OutboundResult failed = new OutboundResult(
+                OutcomeKind.SERVER_ERROR, Duration.ofMillis(100), null, "<html>503</html>", 503, null);
+        when(intake.process(REQUEST)).thenReturn(failed);
 
         assertThat(service.handle(REQUEST, lastStage))
                 .isEqualTo(new HandlingOutcome.DeadLettered(DeadLetterReason.RETRY_EXHAUSTED));
         verify(publisher).deadLetter(eq(REQUEST), any(), eq(DeadLetterReason.RETRY_EXHAUSTED),
-                eq(OutcomeKind.SERVER_ERROR), isNull());
+                eq(failed), isNull());
         verify(publisher, never()).scheduleRetry(any(), any(), any());
         verify(metrics).recordDeadLetter(TARGET, DeadLetterReason.RETRY_EXHAUSTED);
     }
@@ -162,11 +164,12 @@ class RequestHandlingServiceTest {
     @EnumSource(value = OutcomeKind.class, names = {"INVALID_REQUEST", "UNEXPECTED_RESPONSE"})
     @DisplayName("DLQ 대상 kind 는 재시도 없이 바로 DLQ 에 보낸다")
     void deadLettersPermanentFailures(OutcomeKind kind) {
-        when(intake.process(REQUEST)).thenReturn(result(kind, null));
+        OutboundResult failed = new OutboundResult(kind, Duration.ofMillis(100), null, "{}", 200, "E999");
+        when(intake.process(REQUEST)).thenReturn(failed);
 
         assertThat(service.handle(REQUEST, FIRST)).isEqualTo(new HandlingOutcome.DeadLettered(DeadLetterReason.DLQ_KIND));
         ArgumentCaptor<DeliveryContext> context = ArgumentCaptor.forClass(DeliveryContext.class);
-        verify(publisher).deadLetter(eq(REQUEST), context.capture(), eq(DeadLetterReason.DLQ_KIND), eq(kind), isNull());
+        verify(publisher).deadLetter(eq(REQUEST), context.capture(), eq(DeadLetterReason.DLQ_KIND), eq(failed), isNull());
         assertThat(context.getValue().failedAttempts()).isEqualTo(1);
         verify(metrics).recordDeadLetter(TARGET, DeadLetterReason.DLQ_KIND);
     }
@@ -222,6 +225,6 @@ class RequestHandlingServiceTest {
     }
 
     private static OutboundResult result(OutcomeKind kind, Instant retryAfter) {
-        return new OutboundResult(kind, Duration.ofMillis(100), retryAfter, null);
+        return new OutboundResult(kind, Duration.ofMillis(100), retryAfter, null, null, null);
     }
 }

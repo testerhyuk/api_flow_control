@@ -5,6 +5,7 @@ import com.hyuk.flow_control.adapter.kafka.RequestMessage;
 import com.hyuk.flow_control.adapter.kafka.RequestTopics;
 import com.hyuk.flow_control.application.port.out.FailedRequestPublisher;
 import com.hyuk.flow_control.domain.request.OutboundRequest;
+import com.hyuk.flow_control.domain.request.OutboundResult;
 import com.hyuk.flow_control.domain.request.OutcomeKind;
 import com.hyuk.flow_control.domain.retry.DeadLetterReason;
 import com.hyuk.flow_control.domain.retry.DeliveryContext;
@@ -46,13 +47,16 @@ public class KafkaFailedRequestPublisher implements FailedRequestPublisher {
 
     @Override
     public void deadLetter(OutboundRequest request, DeliveryContext context, DeadLetterReason reason,
-                           OutcomeKind lastKind, String error) {
+                           OutboundResult lastResult, String error) {
         ProducerRecord<String, String> record = new ProducerRecord<>(
                 RequestTopics.deadLetter(request.targetSystemId()),
                 request.requestId(),
                 toJson(request));
-        FailureHeaders.writeContext(record.headers(), context, lastKind);
+        FailureHeaders.writeContext(record.headers(), context, lastResult == null ? null : lastResult.kind());
         FailureHeaders.writeDeadLetter(record.headers(), reason, error);
+        if (lastResult != null) {
+            FailureHeaders.writeResponseCodes(record.headers(), lastResult.statusCode(), lastResult.resultCode());
+        }
 
         send(record);
     }

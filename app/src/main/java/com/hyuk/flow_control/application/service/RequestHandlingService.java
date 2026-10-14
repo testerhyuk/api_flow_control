@@ -57,9 +57,9 @@ public class RequestHandlingService implements RequestHandlingUseCase {
         return switch (Disposition.of(kind)) {
             case COMPLETE -> complete(request, context, kind);
             case DISCARD -> discard(request, kind);
-            case RETRY -> retry(request, context.afterFailure(Instant.now()), kind, result.retryAfter());
+            case RETRY -> retry(request, context.afterFailure(Instant.now()), result);
             case DEAD_LETTER -> deadLetter(request, context.afterFailure(Instant.now()),
-                    DeadLetterReason.DLQ_KIND, kind, null);
+                    DeadLetterReason.DLQ_KIND, result, null);
         };
     }
 
@@ -84,11 +84,12 @@ public class RequestHandlingService implements RequestHandlingUseCase {
         return new HandlingOutcome.Discarded(kind);
     }
 
-    private HandlingOutcome retry(OutboundRequest request, DeliveryContext failed, OutcomeKind kind, Instant retryAfter) {
-        Optional<RetryStage> next = RetryStage.firstAfter(failed.stage(), minimumDelay(retryAfter));
+    private HandlingOutcome retry(OutboundRequest request, DeliveryContext failed, OutboundResult result) {
+        OutcomeKind kind = result.kind();
+        Optional<RetryStage> next = RetryStage.firstAfter(failed.stage(), minimumDelay(result.retryAfter()));
 
         if (next.isEmpty()) {
-            return deadLetter(request, failed, DeadLetterReason.RETRY_EXHAUSTED, kind, null);
+            return deadLetter(request, failed, DeadLetterReason.RETRY_EXHAUSTED, result, null);
         }
 
         publisher.scheduleRetry(request, failed.movedTo(next.get()), kind);
@@ -98,8 +99,9 @@ public class RequestHandlingService implements RequestHandlingUseCase {
     }
 
     private HandlingOutcome deadLetter(OutboundRequest request, DeliveryContext failed, DeadLetterReason reason,
-                                       OutcomeKind kind, String error) {
-        publisher.deadLetter(request, failed, reason, kind, error);
+                                       OutboundResult lastResult, String error) {
+        OutcomeKind kind = lastResult == null ? null : lastResult.kind();
+        publisher.deadLetter(request, failed, reason, lastResult, error);
         metrics.recordDeadLetter(request.targetSystemId(), reason);
         log.warn("요청을 DLQ 로 보냈습니다 : {} {} reason={} kind={} attempts={}",
                 request.targetSystemId(), request.requestId(), reason.label(), kind, failed.failedAttempts());

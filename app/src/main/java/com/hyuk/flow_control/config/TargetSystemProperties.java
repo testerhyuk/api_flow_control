@@ -1,9 +1,11 @@
 package com.hyuk.flow_control.config;
 
+import com.hyuk.flow_control.domain.request.OutcomeKind;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.time.Duration;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 @ConfigurationProperties(prefix = "flow-control")
 public record TargetSystemProperties(
@@ -22,7 +24,8 @@ public record TargetSystemProperties(
             int maxTps,
             Duration baselineRtt,
             double safetyMargin,
-            Duration burstWindow
+            Duration burstWindow,
+            Response response
     ) {
         public TargetSystem {
             if (url == null || url.isBlank()) {
@@ -46,6 +49,42 @@ public record TargetSystemProperties(
             if (burstWindow == null || !burstWindow.isPositive()) {
                 throw new IllegalArgumentException("burst-window 는 0보다 커야 합니다");
             }
+            if (response == null) {
+                throw new IllegalArgumentException("response 는 필수입니다");
+            }
+        }
+    }
+
+    public record Response(
+            Map<String, OutcomeKind> statusCodes,
+            String resultField,
+            Map<String, OutcomeKind> resultCodes
+    ) {
+        private static final Pattern STATUS_CODE = Pattern.compile("[1-5](\\d\\d|xx)");
+
+        public Response {
+            if (statusCodes == null || statusCodes.isEmpty()) {
+                throw new IllegalArgumentException("status-codes 는 필수입니다");
+            }
+            for (String code : statusCodes.keySet()) {
+                if (!STATUS_CODE.matcher(code).matches()) {
+                    throw new IllegalArgumentException("status-codes 의 코드 형식이 잘못되었습니다 : " + code);
+                }
+            }
+
+            boolean hasResultField = resultField != null && !resultField.isBlank();
+            boolean hasResultCodes = resultCodes != null && !resultCodes.isEmpty();
+
+            if (hasResultField != hasResultCodes) {
+                throw new IllegalArgumentException("result-field 와 result-codes 는 함께 적어야 합니다");
+            }
+            if (hasResultField && !resultField.startsWith("/")) {
+                throw new IllegalArgumentException("result-field 는 / 로 시작해야 합니다 : " + resultField);
+            }
+
+            statusCodes = Map.copyOf(statusCodes);
+            resultField = hasResultField ? resultField : null;
+            resultCodes = hasResultCodes ? Map.copyOf(resultCodes) : Map.of();
         }
     }
 }

@@ -28,7 +28,7 @@ class RequestIntakeServiceTest {
     private static final OutboundRequest REQUEST =
             new OutboundRequest("req-1", "target-a", "{}", Instant.now());
     private static final OutboundResult RESULT =
-            new OutboundResult(OutcomeKind.SUCCESS, Duration.ofMillis(120), null, null);
+            new OutboundResult(OutcomeKind.SUCCESS, Duration.ofMillis(120), null, null, null, null);
 
     private OutboundCallUseCase outboundCall;
     private FlowControlMetrics metrics;
@@ -53,7 +53,7 @@ class RequestIntakeServiceTest {
     @Test
     @DisplayName("외부 기관이 실패로 답해도 호출은 한 것이므로 다시 보내지 않는다")
     void doesNotRetryFailedResult() {
-        OutboundResult failed = new OutboundResult(OutcomeKind.TIMEOUT, Duration.ofSeconds(3), null, null);
+        OutboundResult failed = new OutboundResult(OutcomeKind.TIMEOUT, Duration.ofSeconds(3), null, null, null, null);
         when(outboundCall.send(REQUEST)).thenReturn(new CallAttempt.Called(failed));
 
         assertThat(service.process(REQUEST)).isEqualTo(failed);

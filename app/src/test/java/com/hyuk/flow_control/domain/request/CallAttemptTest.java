@@ -12,7 +12,7 @@ class CallAttemptTest {
     @Test
     @DisplayName("Called 는 넘겨준 외부 응답을 가진다")
     void calledKeepsResult() {
-        OutboundResult result = new OutboundResult(OutcomeKind.SUCCESS, Duration.ofMillis(120), null, null);
+        OutboundResult result = new OutboundResult(OutcomeKind.SUCCESS, Duration.ofMillis(120), null, null, null, null);
 
         assertThat(new CallAttempt.Called(result).result()).isEqualTo(result);
     }

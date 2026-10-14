@@ -62,16 +62,30 @@ class FailureHeadersTest {
     }
 
     @Test
+    @DisplayName("외부 기관이 보낸 HTTP 상태 코드와 결과 코드를 헤더에 쓴다")
+    void writesResponseCodes() {
+        RecordHeaders headers = new RecordHeaders();
+
+        FailureHeaders.writeResponseCodes(headers, 200, "E777");
+
+        assertThat(FailureHeaders.read(headers, FailureHeaders.STATUS_CODE)).isEqualTo("200");
+        assertThat(FailureHeaders.read(headers, FailureHeaders.RESULT_CODE)).isEqualTo("E777");
+    }
+
+    @Test
     @DisplayName("값이 없는 항목은 헤더를 쓰지 않는다")
     void skipsNullValues() {
         RecordHeaders headers = new RecordHeaders();
 
         FailureHeaders.writeContext(headers, DeliveryContext.first("o"), null);
         FailureHeaders.writeDeadLetter(headers, DeadLetterReason.DLQ_KIND, null);
+        FailureHeaders.writeResponseCodes(headers, null, null);
 
         assertThat(headers.lastHeader(FailureHeaders.FIRST_FAILED_AT)).isNull();
         assertThat(headers.lastHeader(FailureHeaders.LAST_KIND)).isNull();
         assertThat(headers.lastHeader(FailureHeaders.RETRY_STAGE)).isNull();
         assertThat(headers.lastHeader(FailureHeaders.ERROR)).isNull();
+        assertThat(headers.lastHeader(FailureHeaders.STATUS_CODE)).isNull();
+        assertThat(headers.lastHeader(FailureHeaders.RESULT_CODE)).isNull();
     }
 }

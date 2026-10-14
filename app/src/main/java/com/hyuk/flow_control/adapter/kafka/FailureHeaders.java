@@ -19,6 +19,8 @@ public final class FailureHeaders {
     public static final String RETRY_STAGE = "flow-control-retry-stage";
     public static final String DEAD_LETTER_REASON = "flow-control-dlq-reason";
     public static final String ERROR = "flow-control-error";
+    public static final String STATUS_CODE = "flow-control-status-code";
+    public static final String RESULT_CODE = "flow-control-result-code";
 
     private FailureHeaders() {
     }
@@ -35,6 +37,11 @@ public final class FailureHeaders {
     public static void writeDeadLetter(Headers headers, DeadLetterReason reason, String error) {
         put(headers, DEAD_LETTER_REASON, reason.label());
         put(headers, ERROR, error);
+    }
+
+    public static void writeResponseCodes(Headers headers, Integer statusCode, String resultCode) {
+        put(headers, STATUS_CODE, statusCode);
+        put(headers, RESULT_CODE, resultCode);
     }
 
     public static DeliveryContext readContext(Headers headers, RetryStage stage, String fallbackOrigin) {

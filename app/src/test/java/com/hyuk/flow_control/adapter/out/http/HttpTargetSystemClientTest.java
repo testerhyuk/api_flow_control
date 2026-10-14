@@ -11,6 +11,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
 import java.net.InetAddress;
@@ -31,7 +32,25 @@ class HttpTargetSystemClientTest {
     private static final Duration CONNECT_TIMEOUT = Duration.ofMillis(500);
     private static final Duration READ_TIMEOUT = Duration.ofMillis(300);
     private static final String PAYLOAD = "{\"amount\":1000}";
+    private static final String BODY_TARGET = "target-b";
     private static final OutboundRequest REQUEST = new OutboundRequest("req-1", TARGET, PAYLOAD, Instant.now());
+    private static final OutboundRequest BODY_REQUEST = new OutboundRequest("req-2", BODY_TARGET, PAYLOAD, Instant.now());
+    private static final TargetSystemProperties.Response STATUS_ONLY = new TargetSystemProperties.Response(
+            Map.of("2xx", OutcomeKind.SUCCESS,
+                    "400", OutcomeKind.INVALID_REQUEST,
+                    "429", OutcomeKind.TOO_MANY_REQUESTS,
+                    "5xx", OutcomeKind.SERVER_ERROR,
+                    "503", OutcomeKind.UNDER_MAINTENANCE),
+            null, null);
+    private static final TargetSystemProperties.Response WITH_RESULT_CODE = new TargetSystemProperties.Response(
+            Map.of("2xx", OutcomeKind.SUCCESS,
+                    "429", OutcomeKind.TOO_MANY_REQUESTS,
+                    "5xx", OutcomeKind.SERVER_ERROR),
+            "/header/resultCode",
+            Map.of("0000", OutcomeKind.SUCCESS,
+                    "E100", OutcomeKind.BUSINESS_REJECTED,
+                    "100", OutcomeKind.BUSINESS_REJECTED,
+                    "E900", OutcomeKind.TOO_MANY_REQUESTS));
 
     private HttpServer server;
     private ExecutorService serverThreads;
@@ -39,6 +58,7 @@ class HttpTargetSystemClientTest {
 
     private volatile int responseStatus;
     private volatile String responseBody;
+    private volatile String responseContentType;
     private volatile String retryAfterHeader;
     private volatile Duration responseDelay;
 
@@ -52,6 +72,7 @@ class HttpTargetSystemClientTest {
     void setUp() throws IOException {
         responseStatus = 200;
         responseBody = null;
+        responseContentType = "application/json";
         retryAfterHeader = null;
         responseDelay = Duration.ZERO;
 
@@ -81,7 +102,7 @@ class HttpTargetSystemClientTest {
                 exchange.sendResponseHeaders(responseStatus, -1);
             } else {
                 byte[] bytes = responseBody.getBytes(StandardCharsets.UTF_8);
-                exchange.getResponseHeaders().add("Content-Type", "application/json");
+                exchange.getResponseHeaders().add("Content-Type", responseContentType);
                 exchange.sendResponseHeaders(responseStatus, bytes.length);
                 exchange.getResponseBody().write(bytes);
             }
@@ -99,49 +120,45 @@ class HttpTargetSystemClientTest {
         serverThreads.shutdownNow();
     }
 
-    @ParameterizedTest(name = "{0} → {1}")
-    @DisplayName("본문의 status 를 OutcomeKind 로 바꾼다")
-    @CsvSource({
-            "SUCCESS, SUCCESS",
-            "REJECTED, BUSINESS_REJECTED",
-            "INVALID_REQUEST, INVALID_REQUEST",
-            "TOO_MANY_REQUESTS, TOO_MANY_REQUESTS",
-            "MAINTENANCE, UNDER_MAINTENANCE",
-            "SERVER_ERROR, SERVER_ERROR",
-            "OVERLOADED, SERVER_ERROR",
-            "SOMETHING_ELSE, UNEXPECTED_RESPONSE"
-    })
-    void convertsBodyStatus(String status, OutcomeKind expected) {
-        respond(200, json(status));
-
-        OutboundResult result = client.call(REQUEST);
-
-        assertThat(result.kind()).isEqualTo(expected);
-    }
-
     @ParameterizedTest(name = "HTTP {0} → {1}")
-    @DisplayName("본문이 없으면 HTTP 상태 코드로 판단한다")
+    @DisplayName("상태 코드 표대로 판단한다")
     @CsvSource({
-            "429, TOO_MANY_REQUESTS",
+            "200, SUCCESS",
+            "204, SUCCESS",
             "400, INVALID_REQUEST",
+            "429, TOO_MANY_REQUESTS",
             "500, SERVER_ERROR",
-            "503, SERVER_ERROR",
-            "200, UNEXPECTED_RESPONSE",
-            "404, UNEXPECTED_RESPONSE"
+            "502, SERVER_ERROR",
+            "503, UNDER_MAINTENANCE",
+            "404, UNEXPECTED_RESPONSE",
+            "401, UNEXPECTED_RESPONSE"
     })
-    void usesHttpStatusWhenBodyIsEmpty(int httpStatus, OutcomeKind expected) {
+    void judgesByStatusCodeTable(int httpStatus, OutcomeKind expected) {
         respond(httpStatus, null);
 
         OutboundResult result = client.call(REQUEST);
 
         assertThat(result.kind()).isEqualTo(expected);
+        assertThat(result.statusCode()).isEqualTo(httpStatus);
+        assertThat(result.resultCode()).isNull();
         assertThat(result.responseBody()).isNull();
     }
 
     @Test
-    @DisplayName("본문에 status 가 없으면 HTTP 상태 코드로 판단한다")
-    void usesHttpStatusWhenBodyHasNoStatus() {
-        respond(429, "{\"requestId\":\"req-1\"}");
+    @DisplayName("결과 코드 위치가 없는 기관은 본문을 보지 않는다")
+    void ignoresBodyWithoutResultField() {
+        respond(200, "{\"status\":\"FAIL\"}");
+
+        OutboundResult result = client.call(REQUEST);
+
+        assertThat(result.kind()).isEqualTo(OutcomeKind.SUCCESS);
+        assertThat(result.resultCode()).isNull();
+    }
+
+    @Test
+    @DisplayName("본문이 JSON 이 아니어도 상태 코드로 판단한다")
+    void judgesByStatusCodeWhenBodyIsNotJson() {
+        respond(429, "Too Many Requests", "text/plain");
 
         OutboundResult result = client.call(REQUEST);
 
@@ -149,49 +166,96 @@ class HttpTargetSystemClientTest {
     }
 
     @Test
-    @DisplayName("본문의 status 가 HTTP 상태 코드보다 먼저다")
-    void bodyStatusWinsOverHttpStatus() {
-        respond(500, json("MAINTENANCE"));
+    @DisplayName("응답 본문 원문을 그대로 돌려준다")
+    void returnsRawResponseBody() {
+        respond(200, "{\"anything\":\"ok\"}");
 
         OutboundResult result = client.call(REQUEST);
 
-        assertThat(result.kind()).isEqualTo(OutcomeKind.UNDER_MAINTENANCE);
+        assertThat(result.responseBody()).isEqualTo("{\"anything\":\"ok\"}");
+    }
+
+    @ParameterizedTest(name = "{0} → {1}")
+    @DisplayName("결과 코드 위치가 있는 기관은 본문의 결과 코드 표대로 판단한다")
+    @CsvSource({
+            "0000, SUCCESS",
+            "E100, BUSINESS_REJECTED",
+            "E900, TOO_MANY_REQUESTS",
+            "E777, UNEXPECTED_RESPONSE"
+    })
+    void judgesByResultCodeTable(String code, OutcomeKind expected) {
+        respond(200, resultBody("\"" + code + "\""));
+
+        OutboundResult result = client.call(BODY_REQUEST);
+
+        assertThat(result.kind()).isEqualTo(expected);
+        assertThat(result.statusCode()).isEqualTo(200);
+        assertThat(result.resultCode()).isEqualTo(code);
     }
 
     @Test
-    @DisplayName("응답 본문의 body 값을 그대로 돌려준다")
-    void returnsResponseBody() {
-        respond(200, json("SUCCESS"));
+    @DisplayName("본문의 결과 코드가 상태 코드보다 먼저다")
+    void resultCodeWinsOverStatusCode() {
+        respond(400, resultBody("\"E100\""));
 
-        OutboundResult result = client.call(REQUEST);
+        OutboundResult result = client.call(BODY_REQUEST);
 
-        assertThat(result.responseBody()).isEqualTo("ok");
+        assertThat(result.kind()).isEqualTo(OutcomeKind.BUSINESS_REJECTED);
     }
 
     @Test
-    @DisplayName("본문에 모르는 필드가 있어도 읽는다")
-    void ignoresUnknownFields() {
-        respond(200, "{\"requestId\":\"req-1\",\"status\":\"SUCCESS\",\"body\":\"ok\",\"extra\":\"x\"}");
+    @DisplayName("결과 코드가 숫자면 글자로 바꿔서 표와 비교한다")
+    void comparesNumericResultCodeAsText() {
+        respond(200, resultBody("100"));
 
-        OutboundResult result = client.call(REQUEST);
+        OutboundResult result = client.call(BODY_REQUEST);
 
-        assertThat(result.kind()).isEqualTo(OutcomeKind.SUCCESS);
+        assertThat(result.kind()).isEqualTo(OutcomeKind.BUSINESS_REJECTED);
+        assertThat(result.resultCode()).isEqualTo("100");
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @DisplayName("결과 코드를 찾지 못했는데 2xx 면 UNEXPECTED_RESPONSE 다")
+    @CsvSource(delimiter = '|', value = {
+            "{\"header\":{}}",
+            "{\"header\":{\"resultCode\":null}}",
+            "{\"header\":{\"resultCode\":{\"value\":\"0000\"}}}",
+            "not json"
+    })
+    void unexpectedWhenResultCodeMissingOn2xx(String body) {
+        respond(200, body);
+
+        OutboundResult result = client.call(BODY_REQUEST);
+
+        assertThat(result.kind()).isEqualTo(OutcomeKind.UNEXPECTED_RESPONSE);
+        assertThat(result.resultCode()).isNull();
     }
 
     @Test
-    @DisplayName("본문이 JSON 이 아니면 SERVER_ERROR 다")
-    void returnsServerErrorWhenBodyIsNotJson() {
-        respond(200, "not json");
+    @DisplayName("결과 코드를 찾지 못했는데 본문도 없고 2xx 면 UNEXPECTED_RESPONSE 다")
+    void unexpectedWhenBodyIsEmptyOn2xx() {
+        respond(200, null);
 
-        OutboundResult result = client.call(REQUEST);
+        OutboundResult result = client.call(BODY_REQUEST);
+
+        assertThat(result.kind()).isEqualTo(OutcomeKind.UNEXPECTED_RESPONSE);
+    }
+
+    @Test
+    @DisplayName("결과 코드를 찾지 못했는데 2xx 가 아니면 상태 코드로 판단한다")
+    void judgesByStatusCodeWhenResultCodeMissing() {
+        respond(503, "<html>Service Unavailable</html>", "text/html");
+
+        OutboundResult result = client.call(BODY_REQUEST);
 
         assertThat(result.kind()).isEqualTo(OutcomeKind.SERVER_ERROR);
+        assertThat(result.statusCode()).isEqualTo(503);
     }
 
     @Test
     @DisplayName("POST /call 로 요청 ID 헤더와 본문을 보낸다")
     void sendsRequest() {
-        respond(200, json("SUCCESS"));
+        respond(200, null);
 
         client.call(REQUEST);
 
@@ -205,7 +269,7 @@ class HttpTargetSystemClientTest {
     @Test
     @DisplayName("응답 시간을 잰다")
     void measuresLatency() {
-        respond(200, json("SUCCESS"));
+        respond(200, null);
         responseDelay = Duration.ofMillis(150);
 
         OutboundResult result = client.call(REQUEST);
@@ -237,10 +301,21 @@ class HttpTargetSystemClientTest {
     }
 
     @Test
-    @DisplayName("Retry-After 가 숫자가 아니면 retryAfter 는 null 이다")
-    void retryAfterIsNullWhenNotNumeric() {
+    @DisplayName("Retry-After 가 날짜와 시각이면 그 시각을 그대로 쓴다")
+    void parsesRetryAfterDate() {
         respond(429, null);
         retryAfterHeader = "Wed, 21 Oct 2026 07:28:00 GMT";
+
+        OutboundResult result = client.call(REQUEST);
+
+        assertThat(result.retryAfter()).isEqualTo(Instant.parse("2026-10-21T07:28:00Z"));
+    }
+
+    @Test
+    @DisplayName("Retry-After 가 숫자도 날짜도 아니면 retryAfter 는 null 이다")
+    void retryAfterIsNullWhenUnreadable() {
+        respond(429, null);
+        retryAfterHeader = "soon";
 
         OutboundResult result = client.call(REQUEST);
 
@@ -250,7 +325,7 @@ class HttpTargetSystemClientTest {
     @Test
     @DisplayName("읽기 제한 시간을 넘기면 TIMEOUT 이다")
     void returnsTimeoutWhenReadTimesOut() {
-        respond(200, json("SUCCESS"));
+        respond(200, null);
         responseDelay = READ_TIMEOUT.plusMillis(700);
 
         OutboundResult result = client.call(REQUEST);
@@ -259,6 +334,7 @@ class HttpTargetSystemClientTest {
         assertThat(result.latency()).isBetween(READ_TIMEOUT.minusMillis(50), READ_TIMEOUT.plusMillis(500));
         assertThat(result.retryAfter()).isNull();
         assertThat(result.responseBody()).isNull();
+        assertThat(result.statusCode()).isNull();
     }
 
     @Test
@@ -315,12 +391,17 @@ class HttpTargetSystemClientTest {
     }
 
     private void respond(int status, String body) {
-        responseStatus = status;
-        responseBody = body;
+        respond(status, body, "application/json");
     }
 
-    private static String json(String status) {
-        return "{\"requestId\":\"req-1\",\"status\":\"%s\",\"body\":\"ok\"}".formatted(status);
+    private void respond(int status, String body, String contentType) {
+        responseStatus = status;
+        responseBody = body;
+        responseContentType = contentType;
+    }
+
+    private static String resultBody(String code) {
+        return "{\"header\":{\"resultCode\":%s},\"body\":{}}".formatted(code);
     }
 
     private static HttpTargetSystemClient clientFor(String url) {
@@ -331,10 +412,17 @@ class HttpTargetSystemClientTest {
         TargetSystemProperties properties = new TargetSystemProperties(Map.of(
                 TARGET, new TargetSystemProperties.TargetSystem(
                         url, connectTimeout, readTimeout,
-                        100, Duration.ofMillis(100), 0.95, Duration.ofMillis(10))
+                        100, Duration.ofMillis(100), 0.95, Duration.ofMillis(10), STATUS_ONLY),
+                BODY_TARGET, new TargetSystemProperties.TargetSystem(
+                        url, connectTimeout, readTimeout,
+                        100, Duration.ofMillis(100), 0.95, Duration.ofMillis(10), WITH_RESULT_CODE)
         ));
+        RestClientConfig config = new RestClientConfig();
 
-        return new HttpTargetSystemClient(new RestClientConfig().targetSystemRestClients(properties));
+        return new HttpTargetSystemClient(
+                config.targetSystemRestClients(properties),
+                config.targetSystemResponseRules(properties),
+                JsonMapper.builder().build());
     }
 
     private static int closedPort() throws IOException {
