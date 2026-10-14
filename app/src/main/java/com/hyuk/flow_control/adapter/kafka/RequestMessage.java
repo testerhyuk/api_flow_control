@@ -17,7 +17,7 @@ public record RequestMessage(
     public boolean isValid() {
         return requestId != null && !requestId.isBlank()
                 && targetSystemId != null && !targetSystemId.isBlank()
-                && payload != null
+                && payload != null && !payload.isBlank()
                 && createdAt != null;
     }
 
