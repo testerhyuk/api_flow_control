@@ -4,6 +4,10 @@ import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
 import com.hyuk.flow_control.application.port.out.TargetSystemClient;
 import com.hyuk.flow_control.application.port.out.TargetSystemPolicyReader;
 import com.hyuk.flow_control.application.port.out.TargetSystemRateLimiter;
+import com.hyuk.flow_control.config.ControlProperties;
+import com.hyuk.flow_control.domain.health.HealthSnapshot;
+import com.hyuk.flow_control.domain.health.HealthState;
+import com.hyuk.flow_control.domain.limit.ControlMode;
 import com.hyuk.flow_control.domain.policy.TargetSystemPolicy;
 import com.hyuk.flow_control.domain.request.CallAttempt;
 import com.hyuk.flow_control.domain.request.OutboundRequest;
@@ -36,6 +40,9 @@ class OutboundCallServiceTest {
     private TargetSystemOutcomeRecorder recorder;
     private FlowControlMetrics metrics;
     private DryRunMonitor dryRuns;
+    private TargetSystemHealthEvaluator evaluator;
+    private BaselineEstimator baselines;
+    private MaintenanceMonitor maintenance;
 
     @BeforeEach
     void setUp() {
@@ -51,7 +58,16 @@ class OutboundCallServiceTest {
         metrics = mock(FlowControlMetrics.class);
         dryRuns = mock(DryRunMonitor.class);
         when(dryRuns.beforeCall(TARGET)).thenReturn(DryRunMonitor.Observation.NONE);
-        service = new OutboundCallService(client, semaphore, rateLimiter, recorder, metrics, dryRuns);
+        evaluator = mock(TargetSystemHealthEvaluator.class);
+        when(evaluator.snapshotOf(TARGET)).thenReturn(HealthSnapshot.initial());
+        baselines = mock(BaselineEstimator.class);
+        maintenance = mock(MaintenanceMonitor.class);
+        service = service(ControlMode.ADAPTIVE);
+    }
+
+    private OutboundCallService service(ControlMode mode) {
+        return new OutboundCallService(client, semaphore, rateLimiter, recorder, evaluator, baselines, maintenance,
+                metrics, dryRuns, new ControlProperties(mode));
     }
 
     @Test
@@ -76,7 +92,9 @@ class OutboundCallServiceTest {
         CallAttempt attempt = service.send(REQUEST);
 
         assertThat(attempt).isEqualTo(new CallAttempt.BlockedBySemaphore());
-        verifyNoInteractions(rateLimiter, client, recorder);
+        verifyNoInteractions(rateLimiter, client);
+        verify(recorder).recordBlocked(TARGET);
+        verifyNoMoreInteractions(recorder);
         verify(metrics).recordBlockedBySemaphore(TARGET);
         verifyNoMoreInteractions(metrics);
     }
@@ -89,7 +107,9 @@ class OutboundCallServiceTest {
         CallAttempt attempt = service.send(REQUEST);
 
         assertThat(attempt).isEqualTo(new CallAttempt.BlockedByTokenBucket(Duration.ofMillis(10)));
-        verifyNoInteractions(client, recorder);
+        verifyNoInteractions(client);
+        verify(recorder).recordBlocked(TARGET);
+        verifyNoMoreInteractions(recorder);
         verify(metrics).recordBlockedByTokenBucket(TARGET);
         verifyNoMoreInteractions(metrics);
     }
@@ -203,6 +223,79 @@ class OutboundCallServiceTest {
         assertThatThrownBy(() -> service.send(REQUEST)).isInstanceOf(IllegalStateException.class);
 
         verify(observation).finish(null);
+    }
+
+    @Test
+    @DisplayName("제어 없음이면 세마포어와 토큰 버킷을 거치지 않고 바로 호출한다")
+    void bypassesLimitsWithoutControl() {
+        semaphore.tryAcquire(TARGET);
+        when(client.call(REQUEST)).thenReturn(RESULT);
+
+        CallAttempt attempt = service(ControlMode.NONE).send(REQUEST);
+
+        assertThat(attempt).isEqualTo(new CallAttempt.Called(RESULT));
+        verifyNoInteractions(rateLimiter);
+        verify(recorder).record(TARGET, OutcomeKind.SUCCESS, Duration.ofMillis(120));
+    }
+
+    @Test
+    @DisplayName("고정 한도도 세마포어와 토큰 버킷을 거친다")
+    void fixedModeUsesLimits() {
+        semaphore.tryAcquire(TARGET);
+
+        CallAttempt attempt = service(ControlMode.FIXED).send(REQUEST);
+
+        assertThat(attempt).isEqualTo(new CallAttempt.BlockedBySemaphore());
+        verifyNoInteractions(client);
+    }
+
+    @Test
+    @DisplayName("점검으로 본 응답은 판정 기록과 baseline 에 넣지 않고 뺀 횟수를 센다")
+    void excludesMaintenanceResults() {
+        OutboundResult maintenanceResult =
+                new OutboundResult(OutcomeKind.UNDER_MAINTENANCE, Duration.ofMillis(30), null, null, 503, null);
+        when(rateLimiter.tryConsume(TARGET)).thenReturn(RateLimitResult.allow());
+        when(client.call(REQUEST)).thenReturn(maintenanceResult);
+        when(maintenance.excludes(TARGET, OutcomeKind.UNDER_MAINTENANCE)).thenReturn(true);
+
+        CallAttempt attempt = service.send(REQUEST);
+
+        assertThat(attempt).isEqualTo(new CallAttempt.Called(maintenanceResult));
+        verify(maintenance).onResult(TARGET, maintenanceResult);
+        verify(metrics).recordCall(TARGET, OutcomeKind.UNDER_MAINTENANCE, Duration.ofMillis(30));
+        verify(metrics).recordMaintenanceExcluded(TARGET);
+        verifyNoMoreInteractions(recorder);
+        verifyNoInteractions(baselines);
+    }
+
+    @Test
+    @DisplayName("점검으로 본 응답은 dry-run 판정에도 넣지 않는다")
+    void excludesMaintenanceResultsFromDryRun() {
+        DryRunMonitor.Observation observation = mock(DryRunMonitor.Observation.class);
+        when(dryRuns.beforeCall(TARGET)).thenReturn(observation);
+        OutboundResult maintenanceResult =
+                new OutboundResult(OutcomeKind.UNDER_MAINTENANCE, Duration.ofMillis(30), null, null, 503, null);
+        when(rateLimiter.tryConsume(TARGET)).thenReturn(RateLimitResult.allow());
+        when(client.call(REQUEST)).thenReturn(maintenanceResult);
+        when(maintenance.excludes(TARGET, OutcomeKind.UNDER_MAINTENANCE)).thenReturn(true);
+
+        service.send(REQUEST);
+
+        verify(observation).finish(null);
+    }
+
+    @Test
+    @DisplayName("정상 상태일 때의 응답만 baseline 학습에 넘긴다")
+    void observesBaselineOnlyWhenHealthy() {
+        when(rateLimiter.tryConsume(TARGET)).thenReturn(RateLimitResult.allow());
+        when(client.call(REQUEST)).thenReturn(RESULT);
+
+        service.send(REQUEST);
+        verify(baselines).observe(TARGET, OutcomeKind.SUCCESS, Duration.ofMillis(120));
+
+        when(evaluator.snapshotOf(TARGET)).thenReturn(HealthSnapshot.initial().withState(HealthState.DEGRADED));
+        service.send(REQUEST);
+        verifyNoMoreInteractions(baselines);
     }
 
     @Test

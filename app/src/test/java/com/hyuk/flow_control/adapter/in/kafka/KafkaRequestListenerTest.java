@@ -108,8 +108,8 @@ class KafkaRequestListenerTest {
 
         ArgumentCaptor<DeliveryContext> context = ArgumentCaptor.forClass(DeliveryContext.class);
         verify(handling).handle(any(), context.capture());
-        assertThat(context.getValue()).isEqualTo(
-                new DeliveryContext(RetryStage.SECOND, 2, firstFailedAt, firstFailedAt, "flow-control.requests.target-a-1@5"));
+        assertThat(context.getValue()).isEqualTo(new DeliveryContext(RetryStage.SECOND, 2, firstFailedAt, firstFailedAt,
+                "flow-control.requests.target-a-1@5", OutcomeKind.TIMEOUT));
     }
 
     @Test

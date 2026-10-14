@@ -1,7 +1,12 @@
 package com.hyuk.flow_control.application.port.out;
 
+import com.hyuk.flow_control.domain.expiry.ExpiryPoint;
+import com.hyuk.flow_control.domain.health.HealthMode;
 import com.hyuk.flow_control.domain.health.HealthState;
+import com.hyuk.flow_control.domain.health.LowTrafficEvent;
+import com.hyuk.flow_control.domain.health.SuppressedBy;
 import com.hyuk.flow_control.domain.limit.LimitStore;
+import com.hyuk.flow_control.domain.maintenance.MaintenanceSource;
 import com.hyuk.flow_control.domain.request.OutcomeKind;
 import com.hyuk.flow_control.domain.retry.DeadLetterReason;
 import com.hyuk.flow_control.domain.retry.RetryStage;
@@ -50,4 +55,18 @@ public interface FlowControlMetrics {
     void recordRedisLatency(Duration latency);
 
     void recordRedisError(String operation, boolean timeout);
+
+    void recordSuppressed(String targetSystemId, SuppressedBy reason);
+
+    void recordModeTransition(String targetSystemId, HealthMode to);
+
+    void recordLowTrafficEvent(String targetSystemId, LowTrafficEvent event);
+
+    void recordMaintenanceStarted(String targetSystemId, MaintenanceSource source);
+
+    void recordMaintenanceExcluded(String targetSystemId);
+
+    void recordExpired(String targetSystemId, ExpiryPoint where);
+
+    void recordRequestAge(String targetSystemId, Duration age);
 }

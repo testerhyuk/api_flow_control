@@ -5,11 +5,11 @@ import com.hyuk.flow_control.application.port.out.ResponseJudge;
 import com.hyuk.flow_control.domain.dryrun.CountingTokenBucket;
 import com.hyuk.flow_control.domain.dryrun.DryRun;
 import com.hyuk.flow_control.domain.dryrun.DryRunReport;
-import com.hyuk.flow_control.domain.health.HealthGrade;
+import com.hyuk.flow_control.domain.health.HealthRules;
 import com.hyuk.flow_control.domain.health.HealthState;
 import com.hyuk.flow_control.domain.health.HealthStatus;
-import com.hyuk.flow_control.domain.health.HealthThresholds;
 import com.hyuk.flow_control.domain.health.OutcomeStatistics;
+import com.hyuk.flow_control.domain.health.OutcomeWindow;
 import com.hyuk.flow_control.domain.health.RecordedOutcome;
 import com.hyuk.flow_control.domain.limit.RateAdjustmentRule;
 import com.hyuk.flow_control.domain.policy.ManagedPolicy;
@@ -24,7 +24,6 @@ import java.util.Deque;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -35,10 +34,10 @@ class ShadowEvaluation {
     private final ManagedPolicy base;
     private final ManagedPolicy candidate;
     private final ResponseJudge judge;
-    private final HealthThresholds thresholds;
+    private final HealthRules rules;
     private final RateAdjustmentRule rateRule;
-    private final int requiredGoodCount;
     private final Duration window;
+    private final int maxSamples;
     private final FlowControlMetrics metrics;
     private final Instant observedSince;
 
@@ -61,11 +60,12 @@ class ShadowEvaluation {
     private volatile int concurrencyLimit;
     private long transitions;
     private Duration overlap = Duration.ZERO;
+    private Duration lowTraffic = Duration.ZERO;
     private Instant lastEvaluatedAt;
 
     ShadowEvaluation(DryRun dryRun, ManagedPolicy base, HealthStatus actualStatus, double actualRate,
-                     ResponseJudge judge, HealthThresholds thresholds, RateAdjustmentRule rateRule,
-                     int requiredGoodCount, Duration window, FlowControlMetrics metrics,
+                     ResponseJudge judge, HealthRules rules, RateAdjustmentRule rateRule,
+                     Duration window, int maxSamples, Duration baselineRtt, FlowControlMetrics metrics,
                      Instant now, long nowNanos) {
         if (base.version() != dryRun.baseVersion()) {
             throw new IllegalArgumentException("dry-run 기준 버전과 지금 정책 버전이 다릅니다");
@@ -75,10 +75,10 @@ class ShadowEvaluation {
         this.base = base;
         this.candidate = dryRun.candidate();
         this.judge = judge;
-        this.thresholds = thresholds;
+        this.rules = rules;
         this.rateRule = rateRule;
-        this.requiredGoodCount = requiredGoodCount;
         this.window = window;
+        this.maxSamples = maxSamples;
         this.metrics = metrics;
         this.observedSince = now;
         this.lastEvaluatedAt = now;
@@ -86,7 +86,7 @@ class ShadowEvaluation {
         TargetSystemPolicy limits = candidate.limits();
         this.status = actualStatus;
         this.rate = Math.min(actualRate, limits.effectiveRate());
-        this.concurrencyLimit = limits.concurrencyLimitAt(rate);
+        this.concurrencyLimit = limits.concurrencyLimitAt(rate, baselineRtt);
         this.bucket = new CountingTokenBucket(rate, limits.burstCapacityAt(rate), nowNanos);
     }
 
@@ -145,16 +145,31 @@ class ShadowEvaluation {
         metrics.recordDryRunWaited(dryRun.targetSystemId());
     }
 
-    synchronized void evaluate(Instant now, long nowNanos, int servers) {
-        if (servers > 1) {
-            overlap = overlap.plus(Duration.between(lastEvaluatedAt, now));
-        }
-        removeOlderThan(now.minus(window));
+    synchronized void evaluate(Instant now, long nowNanos, int servers, Duration baselineRtt) {
+        evaluate(now, nowNanos, servers, baselineRtt, false, false);
+    }
 
-        OutcomeStatistics current = OutcomeStatistics.from(List.copyOf(outcomes));
-        Optional<HealthGrade> grade = thresholds.gradeOf(current, candidate.limits().baselineRtt());
+    synchronized void evaluate(Instant now, long nowNanos, int servers, Duration baselineRtt,
+                               boolean underMaintenance, boolean actualLowTraffic) {
+        Duration elapsed = Duration.between(lastEvaluatedAt, now);
+        if (servers > 1) {
+            overlap = overlap.plus(elapsed);
+        }
+        if (actualLowTraffic) {
+            lowTraffic = lowTraffic.plus(elapsed);
+        }
+        Instant since = now.minus(window);
+        removeOlderThan(since);
+
+        if (underMaintenance) {
+            timeInState.merge(status.state(), elapsed, Duration::plus);
+            lastEvaluatedAt = now;
+            return;
+        }
+
+        OutcomeStatistics current = OutcomeWindow.latest(outcomes.descendingIterator(), maxSamples, since).statistics();
         HealthStatus before = status;
-        HealthStatus next = grade.isPresent() ? before.next(grade.get(), requiredGoodCount) : before;
+        HealthStatus next = rules.judge(before, current, baselineRtt).next();
 
         timeInState.merge(before.state(), Duration.between(lastEvaluatedAt, now), Duration::plus);
         lastEvaluatedAt = now;
@@ -168,11 +183,12 @@ class ShadowEvaluation {
         statistics = current;
 
         double nextRate = rateRule.next(rate, next.state(), current.sampleCount(), candidate.limits());
+        int nextConcurrency = candidate.limits().concurrencyLimitAt(nextRate, baselineRtt);
         if (nextRate != rate) {
-            rate = nextRate;
-            concurrencyLimit = candidate.limits().concurrencyLimitAt(nextRate);
             bucket.change(nextRate, candidate.limits().burstCapacityAt(nextRate), nowNanos);
         }
+        rate = nextRate;
+        concurrencyLimit = nextConcurrency;
     }
 
     synchronized DryRunReport report(Instant now, HealthState actualState, double actualRate) {
@@ -261,6 +277,13 @@ class ShadowEvaluation {
         if (overlap.isPositive()) {
             unknowns.add("다른 서버와 겹친 " + overlap.toSeconds()
                     + "초 동안은 이 서버가 호출의 일부만 봐서, 막혔을 호출이 적게 세어지고 상태 판정 근거가 적었을 수 있습니다");
+        }
+        if (lowTraffic.isPositive()) {
+            unknowns.add("저트래픽 모드였던 " + lowTraffic.toSeconds()
+                    + "초 동안은 새 값 기준 상태를 계산하지 않았습니다. 그 구간의 새 값 기준 상태는 믿을 수 없습니다");
+        }
+        if (!candidate.maintenance().equals(base.maintenance())) {
+            unknowns.add("점검 시간표를 바꾼 효과는 확인할 수 없습니다");
         }
 
         return unknowns;

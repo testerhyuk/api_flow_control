@@ -24,7 +24,8 @@ class FailureHeadersTest {
 
         FailureHeaders.writeContext(headers, context, OutcomeKind.SERVER_ERROR);
 
-        assertThat(FailureHeaders.readContext(headers, RetryStage.THIRD, "fallback")).isEqualTo(context);
+        assertThat(FailureHeaders.readContext(headers, RetryStage.THIRD, "fallback")).isEqualTo(new DeliveryContext(
+                RetryStage.THIRD, 3, T1, T2, "flow-control.requests.target-a-2@9", OutcomeKind.SERVER_ERROR));
         assertThat(FailureHeaders.read(headers, FailureHeaders.LAST_KIND)).isEqualTo("SERVER_ERROR");
         assertThat(FailureHeaders.read(headers, FailureHeaders.RETRY_STAGE)).isEqualTo("60s");
     }

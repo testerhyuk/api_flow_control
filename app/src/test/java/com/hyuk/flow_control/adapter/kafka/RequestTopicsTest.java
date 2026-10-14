@@ -28,4 +28,10 @@ class RequestTopicsTest {
     void deadLetterTopic() {
         assertThat(RequestTopics.deadLetter("target-a")).isEqualTo("flow-control.dlq.target-a");
     }
+
+    @Test
+    @DisplayName("대상 ID 로 만료 토픽 이름을 만든다")
+    void expiredTopic() {
+        assertThat(RequestTopics.expired("target-a")).isEqualTo("flow-control.expired.target-a");
+    }
 }

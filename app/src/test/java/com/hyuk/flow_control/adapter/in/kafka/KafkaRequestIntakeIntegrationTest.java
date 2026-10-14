@@ -6,6 +6,7 @@ import com.hyuk.flow_control.domain.request.CallAttempt;
 import com.hyuk.flow_control.domain.request.OutboundResult;
 import com.hyuk.flow_control.domain.request.OutcomeKind;
 import com.hyuk.flow_control.support.TestcontainersConfiguration;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.TopicDescription;
@@ -58,7 +59,7 @@ class KafkaRequestIntakeIntegrationTest {
     private OutboundCallUseCase outboundCall;
 
     @Test
-    @DisplayName("앱이 뜨면 대상별 요청 토픽과 재시도 토픽 4개는 처음 concurrency 만큼, DLQ 토픽은 1개 파티션으로 만든다")
+    @DisplayName("앱이 뜨면 대상별 요청 토픽과 재시도 토픽 4개는 처음 concurrency 만큼, DLQ 토픽과 만료 토픽은 1개 파티션으로 만든다")
     void createsTopics() throws Exception {
         try (AdminClient admin = AdminClient.create(Map.of(
                 AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, broker.getBrokersAsString()))) {
@@ -69,6 +70,7 @@ class KafkaRequestIntakeIntegrationTest {
                     expected.put("flow-control.retry-" + stage + "." + target, partitions);
                 }
                 expected.put("flow-control.dlq." + target, 1);
+                expected.put("flow-control.expired." + target, 1);
             });
 
             Map<String, TopicDescription> topics = admin.describeTopics(expected.keySet()).allTopicNames().get();
@@ -144,6 +146,49 @@ class KafkaRequestIntakeIntegrationTest {
         assertThat(FailureHeaders.read(dead.headers(), FailureHeaders.LAST_KIND)).isEqualTo("INVALID_REQUEST");
         assertThat(FailureHeaders.read(dead.headers(), FailureHeaders.FAILED_ATTEMPTS)).isEqualTo("1");
         assertThat(FailureHeaders.read(dead.headers(), FailureHeaders.ORIGIN)).startsWith("flow-control.requests.target-b-");
+    }
+
+    @Test
+    @DisplayName("유효기간이 지난 요청은 호출하지 않고 만료 토픽으로 간다")
+    void expiresOldRequest() {
+        String requestId = uniqueId();
+        String value = "{\"requestId\":\"" + requestId + "\",\"targetSystemId\":\"target-a\""
+                + ",\"payload\":\"{}\",\"createdAt\":\"" + Instant.now().minus(Duration.ofMinutes(11)) + "\"}";
+
+        send("flow-control.requests.target-a", requestId, value);
+
+        ConsumerRecord<String, String> expired = awaitRecord("flow-control.expired.target-a", requestId);
+        assertThat(FailureHeaders.read(expired.headers(), FailureHeaders.EXPIRED_WHERE)).isEqualTo("intake");
+        assertThat(FailureHeaders.read(expired.headers(), FailureHeaders.EXPIRY_REASON)).isEqualTo("ttl_exceeded");
+        verify(outboundCall, never()).send(argThat(r -> r != null && requestId.equals(r.requestId())));
+    }
+
+    @Test
+    @DisplayName("대상별로 요청 토픽과 재시도 토픽 읽기를 함께 멈췄다가 다시 시작한다")
+    void pausesAndResumesTarget(@Autowired KafkaRequestIntakeContainers containers) {
+        containers.pause("target-c");
+        assertThat(containers.isPaused("target-c")).isTrue();
+        assertThat(containers.isPaused("target-b")).isFalse();
+
+        containers.resume("target-c");
+        assertThat(containers.isPaused("target-c")).isFalse();
+    }
+
+    @Test
+    @DisplayName("대상별로 요청 토픽과 재시도 토픽의 컨슈머 랙을 지표로 낸다")
+    void exposesConsumerLag(@Autowired MeterRegistry registry) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + 20_000;
+        double lag = Double.NaN;
+
+        while (Double.isNaN(lag) && System.currentTimeMillis() < deadline) {
+            Thread.sleep(200);
+            lag = registry.find("flow.control.intake.lag").tags("target", "target-a", "stage", "request")
+                    .gauges().stream().findFirst().map(gauge -> gauge.value()).orElse(Double.NaN);
+        }
+
+        assertThat(lag).isNotNaN().isGreaterThanOrEqualTo(0.0);
+        assertThat(registry.find("flow.control.intake.lag").tags("target", "target-a", "stage", "300s").gauge())
+                .isNotNull();
     }
 
     @Test

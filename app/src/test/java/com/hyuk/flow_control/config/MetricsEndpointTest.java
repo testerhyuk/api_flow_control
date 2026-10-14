@@ -19,6 +19,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -64,7 +65,19 @@ class MetricsEndpointTest {
                 .contains("flow_control_limit_rate_proposed{target=\"target-a\"}")
                 .contains("flow_control_limit_servers{target=\"target-a\"}")
                 .contains("flow_control_limit_store 1.0")
-                .contains("flow_control_intake_redeploy_required{target=\"target-a\"} 0.0");
+                .contains("flow_control_intake_redeploy_required{target=\"target-a\"} 0.0")
+                .contains("flow_control_control_mode{mode=\"adaptive\"} 1.0")
+                .contains("flow_control_health_anti_oscillation 1.0")
+                .contains("flow_control_health_baseline_auto 1.0")
+                .contains("flow_control_health_mode{mode=\"adaptive\",target=\"target-a\"} 1.0")
+                .contains("flow_control_health_window_span_seconds{target=\"target-a\"}")
+                .contains("flow_control_health_degraded_streak{target=\"target-a\"}")
+                .contains("flow_control_health_latency_recovery_threshold_seconds{target=\"target-a\"}")
+                .contains("flow_control_health_baseline_policy_seconds{target=\"target-a\"}")
+                .contains("flow_control_health_baseline_learned_seconds{target=\"target-a\"} NaN")
+                .contains("flow_control_health_baseline_samples{target=\"target-a\"}")
+                .contains("flow_control_health_baseline_clamped{bound=\"upper\",target=\"target-a\"} 0.0")
+                .contains("flow_control_maintenance_active{source=\"schedule\",target=\"target-a\"} 0.0");
     }
 
     @Test
@@ -81,15 +94,16 @@ class MetricsEndpointTest {
         metrics.recordDryRunJudgmentChange("target-b", OutcomeKind.BUSINESS_REJECTED, OutcomeKind.SERVER_ERROR);
         metrics.recordRedisLatency(Duration.ofNanos(400_000));
         metrics.recordRedisError("token", true);
+        metrics.recordRequestAge("target-b", Duration.ofSeconds(30));
 
         String body = get(managementPort, "/actuator/prometheus").body();
 
         assertThat(body)
                 .contains("flow_control_outbound_calls_total{kind=\"TIMEOUT\",target=\"target-b\"}")
-                .contains("flow_control_outbound_latency_seconds_bucket{kind=\"TIMEOUT\",target=\"target-b\",le=\"3.0\"} 1")
+                .contains("flow_control_outbound_latency_seconds_count{kind=\"TIMEOUT\",target=\"target-b\"} 1")
                 .contains("flow_control_outbound_blocked_attempts_total{reason=\"token_bucket\",target=\"target-b\"}")
                 .contains("flow_control_health_transitions_total{from=\"HEALTHY\",target=\"target-b\",to=\"CRITICAL\"}")
-                .contains("flow_control_intake_wait_seconds_bucket{target=\"target-b\",le=\"0.2\"} 1")
+                .contains("flow_control_intake_wait_seconds_count{target=\"target-b\"} 1")
                 .contains("flow_control_retry_scheduled_total{kind=\"TIMEOUT\",stage=\"1s\",target=\"target-b\"}")
                 .contains("flow_control_retry_succeeded_total{stage=\"1s\",target=\"target-b\"}")
                 .contains("flow_control_dlq_sent_total{reason=\"retry_exhausted\",target=\"target-b\"}")
@@ -103,6 +117,38 @@ class MetricsEndpointTest {
                 .map(Double::parseDouble))
                 .as("1ms 아래 구간")
                 .anyMatch(le -> le < 0.001);
+    }
+
+    @Test
+    @DisplayName("시간 분포 지표는 정한 범위 안에서 자동으로 나눈 구간을 쓴다")
+    void usesAutomaticBucketsWithinRange() throws Exception {
+        metrics.recordCall("target-c", OutcomeKind.SUCCESS, Duration.ofMillis(120));
+        metrics.recordIntakeWait("target-c", Duration.ofMillis(5));
+        metrics.recordRequestAge("target-c", Duration.ofSeconds(2));
+
+        String body = get(managementPort, "/actuator/prometheus").body();
+
+        List<Double> latency = bounds(body, "flow_control_outbound_latency_seconds_bucket{kind=\"SUCCESS\",target=\"target-c\"");
+        List<Double> wait = bounds(body, "flow_control_intake_wait_seconds_bucket{target=\"target-c\"");
+        List<Double> age = bounds(body, "flow_control_request_age_seconds_bucket{target=\"target-c\"");
+
+        assertThat(latency).hasSizeGreaterThan(11).allMatch(le -> le >= 0.001 && le <= 15);
+        assertThat(latency.getLast()).isGreaterThan(5);
+        assertThat(wait).allMatch(le -> le >= 0.001 && le <= 900);
+        assertThat(wait.getLast()).isGreaterThan(300);
+        assertThat(wait.getFirst()).as("대시보드의 기다린 요청 비율이 쓰는 가장 아래 구간").isEqualTo(0.001);
+        assertThat(age).allMatch(le -> le >= 0.1 && le <= 900);
+        assertThat(age.getLast()).isGreaterThan(300);
+    }
+
+    private static List<Double> bounds(String body, String prefix) {
+        return body.lines()
+                .filter(line -> line.startsWith(prefix + ",le=\""))
+                .map(line -> line.substring(line.indexOf("le=\"") + 4, line.indexOf("\"}")))
+                .filter(le -> !le.equals("+Inf"))
+                .map(Double::parseDouble)
+                .sorted()
+                .toList();
     }
 
     @Test

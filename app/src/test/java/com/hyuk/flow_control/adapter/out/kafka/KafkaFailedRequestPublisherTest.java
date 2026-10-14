@@ -1,6 +1,7 @@
 package com.hyuk.flow_control.adapter.out.kafka;
 
 import com.hyuk.flow_control.adapter.kafka.FailureHeaders;
+import com.hyuk.flow_control.domain.expiry.ExpiryPoint;
 import com.hyuk.flow_control.domain.request.OutboundRequest;
 import com.hyuk.flow_control.domain.request.OutboundResult;
 import com.hyuk.flow_control.domain.request.OutcomeKind;
@@ -57,7 +58,8 @@ class KafkaFailedRequestPublisherTest {
         assertThat(sent.topic()).isEqualTo("flow-control.retry-10s.target-a");
         assertThat(sent.key()).isEqualTo("req-1");
         assertOriginalJson(sent.value());
-        assertThat(FailureHeaders.readContext(sent.headers(), RetryStage.SECOND, "x")).isEqualTo(context);
+        assertThat(FailureHeaders.readContext(sent.headers(), RetryStage.SECOND, "x")).isEqualTo(
+                new DeliveryContext(RetryStage.SECOND, 2, FAILED, FAILED, "origin-0@1", OutcomeKind.TIMEOUT));
         assertThat(FailureHeaders.read(sent.headers(), FailureHeaders.LAST_KIND)).isEqualTo("TIMEOUT");
         assertThat(sent.headers().lastHeader(FailureHeaders.DEAD_LETTER_REASON)).isNull();
     }
@@ -89,6 +91,25 @@ class KafkaFailedRequestPublisherTest {
         assertThat(FailureHeaders.read(sent.headers(), FailureHeaders.ORIGIN)).isEqualTo("origin-0@1");
         assertThat(FailureHeaders.read(sent.headers(), FailureHeaders.STATUS_CODE)).isEqualTo("503");
         assertThat(sent.headers().lastHeader(FailureHeaders.RESULT_CODE)).isNull();
+    }
+
+    @Test
+    @DisplayName("만료는 대상 만료 토픽에 원래 요청 JSON 과 만료 이유, 위치, 경과 시간, 마지막 결과, 실패 횟수를 보낸다")
+    void expires() {
+        DeliveryContext context = new DeliveryContext(RetryStage.THIRD, 3, CREATED, FAILED, "origin-0@1");
+
+        publisher.expire(REQUEST, context, ExpiryPoint.RETRY_SCHEDULE, OutcomeKind.TIMEOUT, Duration.ofSeconds(630));
+
+        ProducerRecord<String, String> sent = captured();
+        assertThat(sent.topic()).isEqualTo("flow-control.expired.target-a");
+        assertThat(sent.key()).isEqualTo("req-1");
+        assertOriginalJson(sent.value());
+        assertThat(FailureHeaders.read(sent.headers(), FailureHeaders.EXPIRY_REASON)).isEqualTo("ttl_exceeded");
+        assertThat(FailureHeaders.read(sent.headers(), FailureHeaders.EXPIRED_WHERE)).isEqualTo("retry_schedule");
+        assertThat(FailureHeaders.read(sent.headers(), FailureHeaders.EXPIRED_AGE_MS)).isEqualTo("630000");
+        assertThat(FailureHeaders.read(sent.headers(), FailureHeaders.LAST_KIND)).isEqualTo("TIMEOUT");
+        assertThat(FailureHeaders.read(sent.headers(), FailureHeaders.FAILED_ATTEMPTS)).isEqualTo("3");
+        assertThat(sent.headers().lastHeader(FailureHeaders.DEAD_LETTER_REASON)).isNull();
     }
 
     @Test

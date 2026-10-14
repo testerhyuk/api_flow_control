@@ -1,5 +1,7 @@
 package com.hyuk.flow_control.domain.retry;
 
+import com.hyuk.flow_control.domain.request.OutcomeKind;
+
 import java.time.Instant;
 
 public record DeliveryContext(
@@ -7,7 +9,8 @@ public record DeliveryContext(
         int failedAttempts,
         Instant firstFailedAt,
         Instant lastFailedAt,
-        String origin
+        String origin,
+        OutcomeKind lastKind
 ) {
     public DeliveryContext {
         if (failedAttempts < 0) {
@@ -18,8 +21,13 @@ public record DeliveryContext(
         }
     }
 
+    public DeliveryContext(RetryStage stage, int failedAttempts, Instant firstFailedAt, Instant lastFailedAt,
+                           String origin) {
+        this(stage, failedAttempts, firstFailedAt, lastFailedAt, origin, null);
+    }
+
     public static DeliveryContext first(String origin) {
-        return new DeliveryContext(null, 0, null, null, origin);
+        return new DeliveryContext(null, 0, null, null, origin, null);
     }
 
     public boolean isRetry() {
@@ -32,10 +40,11 @@ public record DeliveryContext(
                 failedAttempts + 1,
                 firstFailedAt == null ? failedAt : firstFailedAt,
                 failedAt,
-                origin);
+                origin,
+                lastKind);
     }
 
     public DeliveryContext movedTo(RetryStage next) {
-        return new DeliveryContext(next, failedAttempts, firstFailedAt, lastFailedAt, origin);
+        return new DeliveryContext(next, failedAttempts, firstFailedAt, lastFailedAt, origin, lastKind);
     }
 }

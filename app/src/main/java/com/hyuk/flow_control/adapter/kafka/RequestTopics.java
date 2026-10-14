@@ -6,6 +6,7 @@ public final class RequestTopics {
     public static final String REQUEST_PREFIX = "flow-control.requests.";
     public static final String RETRY_PREFIX = "flow-control.retry-";
     public static final String DEAD_LETTER_PREFIX = "flow-control.dlq.";
+    public static final String EXPIRED_PREFIX = "flow-control.expired.";
 
     private RequestTopics() {
     }
@@ -20,5 +21,9 @@ public final class RequestTopics {
 
     public static String deadLetter(String targetSystemId) {
         return DEAD_LETTER_PREFIX + targetSystemId;
+    }
+
+    public static String expired(String targetSystemId) {
+        return EXPIRED_PREFIX + targetSystemId;
     }
 }

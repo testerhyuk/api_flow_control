@@ -40,8 +40,15 @@ public record TargetSystemPolicy(
     }
 
     public int concurrencyLimitAt(double rate) {
+        return concurrencyLimitAt(rate, baselineRtt);
+    }
+
+    public int concurrencyLimitAt(double rate, Duration rtt) {
         requirePositive(rate);
-        return atLeastOne(rate * toSeconds(baselineRtt));
+        if (rtt == null || !rtt.isPositive()) {
+            throw new IllegalArgumentException("rtt는 0보다 커야 합니다");
+        }
+        return atLeastOne(rate * toSeconds(rtt));
     }
 
     public int burstCapacityAt(double rate) {

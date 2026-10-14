@@ -4,6 +4,7 @@ import com.hyuk.flow_control.adapter.kafka.FailureHeaders;
 import com.hyuk.flow_control.adapter.kafka.RequestMessage;
 import com.hyuk.flow_control.adapter.kafka.RequestTopics;
 import com.hyuk.flow_control.application.port.out.FailedRequestPublisher;
+import com.hyuk.flow_control.domain.expiry.ExpiryPoint;
 import com.hyuk.flow_control.domain.request.OutboundRequest;
 import com.hyuk.flow_control.domain.request.OutboundResult;
 import com.hyuk.flow_control.domain.request.OutcomeKind;
@@ -14,6 +15,7 @@ import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.time.Duration;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -69,6 +71,19 @@ public class KafkaFailedRequestPublisher implements FailedRequestPublisher {
                 rawValue);
         FailureHeaders.writeContext(record.headers(), context, null);
         FailureHeaders.writeDeadLetter(record.headers(), DeadLetterReason.INVALID_MESSAGE, error);
+
+        send(record);
+    }
+
+    @Override
+    public void expire(OutboundRequest request, DeliveryContext context, ExpiryPoint where, OutcomeKind lastKind,
+                       Duration age) {
+        ProducerRecord<String, String> record = new ProducerRecord<>(
+                RequestTopics.expired(request.targetSystemId()),
+                request.requestId(),
+                toJson(request));
+        FailureHeaders.writeContext(record.headers(), context, lastKind);
+        FailureHeaders.writeExpiry(record.headers(), where, age);
 
         send(record);
     }

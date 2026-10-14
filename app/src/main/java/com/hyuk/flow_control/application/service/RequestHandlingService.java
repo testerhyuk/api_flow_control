@@ -4,6 +4,9 @@ import com.hyuk.flow_control.application.port.in.RequestHandlingUseCase;
 import com.hyuk.flow_control.application.port.in.RequestIntakeUseCase;
 import com.hyuk.flow_control.application.port.out.FailedRequestPublisher;
 import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
+import com.hyuk.flow_control.config.IntakeProperties;
+import com.hyuk.flow_control.domain.expiry.ExpiryPoint;
+import com.hyuk.flow_control.domain.expiry.RequestTtl;
 import com.hyuk.flow_control.domain.request.OutboundRequest;
 import com.hyuk.flow_control.domain.request.OutboundResult;
 import com.hyuk.flow_control.domain.request.OutcomeKind;
@@ -27,18 +30,31 @@ public class RequestHandlingService implements RequestHandlingUseCase {
     private final RequestIntakeUseCase intake;
     private final FailedRequestPublisher publisher;
     private final FlowControlMetrics metrics;
+    private final RequestTtl ttl;
 
     public RequestHandlingService(
             RequestIntakeUseCase intake,
             FailedRequestPublisher publisher,
-            FlowControlMetrics metrics) {
+            FlowControlMetrics metrics,
+            IntakeProperties intakeProperties) {
         this.intake = intake;
         this.publisher = publisher;
         this.metrics = metrics;
+        this.ttl = new RequestTtl(intakeProperties.requestTtl());
     }
 
     @Override
     public HandlingOutcome handle(OutboundRequest request, DeliveryContext context) {
+        Instant takenAt = Instant.now();
+
+        if (request.createdAt() != null) {
+            metrics.recordRequestAge(request.targetSystemId(), RequestTtl.ageAt(request.createdAt(), takenAt));
+
+            if (ttl.isExpiredAt(request.createdAt(), takenAt)) {
+                return expire(request, context, ExpiryPoint.INTAKE, context.lastKind(), takenAt);
+            }
+        }
+
         OutboundResult result;
 
         try {
@@ -92,6 +108,11 @@ public class RequestHandlingService implements RequestHandlingUseCase {
             return deadLetter(request, failed, DeadLetterReason.RETRY_EXHAUSTED, result, null);
         }
 
+        Instant now = Instant.now();
+        if (request.createdAt() != null && ttl.isExpiredAt(request.createdAt(), now.plus(next.get().delay()))) {
+            return expire(request, failed, ExpiryPoint.RETRY_SCHEDULE, kind, now);
+        }
+
         publisher.scheduleRetry(request, failed.movedTo(next.get()), kind);
         metrics.recordRetryScheduled(request.targetSystemId(), next.get(), kind);
 
@@ -107,6 +128,17 @@ public class RequestHandlingService implements RequestHandlingUseCase {
                 request.targetSystemId(), request.requestId(), reason.label(), kind, failed.failedAttempts());
 
         return new HandlingOutcome.DeadLettered(reason);
+    }
+
+    private HandlingOutcome expire(OutboundRequest request, DeliveryContext context, ExpiryPoint where,
+                                   OutcomeKind lastKind, Instant at) {
+        Duration age = RequestTtl.ageAt(request.createdAt(), at);
+        publisher.expire(request, context, where, lastKind, age);
+        metrics.recordExpired(request.targetSystemId(), where);
+        log.debug("유효기간이 지난 요청을 만료 토픽으로 보냈습니다 : {} {} where={} age={}s attempts={}",
+                request.targetSystemId(), request.requestId(), where.label(), age.toSeconds(), context.failedAttempts());
+
+        return new HandlingOutcome.Expired(where);
     }
 
     private static Duration minimumDelay(Instant retryAfter) {

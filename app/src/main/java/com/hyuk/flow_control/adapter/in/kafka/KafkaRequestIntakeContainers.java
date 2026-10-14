@@ -4,6 +4,7 @@ import com.hyuk.flow_control.adapter.kafka.RequestTopicDefinitions;
 import com.hyuk.flow_control.adapter.kafka.RequestTopics;
 import com.hyuk.flow_control.application.port.in.RequestHandlingUseCase;
 import com.hyuk.flow_control.application.port.out.PolicyChangeListener;
+import com.hyuk.flow_control.application.port.out.RequestIntakeControl;
 import com.hyuk.flow_control.application.service.PolicyRegistry;
 import com.hyuk.flow_control.domain.policy.ManagedPolicy;
 import com.hyuk.flow_control.domain.retry.RetryStage;
@@ -36,7 +37,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 @Component
 @Order(Ordered.LOWEST_PRECEDENCE)
-public class KafkaRequestIntakeContainers implements SmartLifecycle, PolicyChangeListener {
+public class KafkaRequestIntakeContainers implements SmartLifecycle, PolicyChangeListener, RequestIntakeControl {
     private static final Logger log = LoggerFactory.getLogger(KafkaRequestIntakeContainers.class);
 
     static final String REQUEST_GROUP_ID = "flow-control";
@@ -118,6 +119,27 @@ public class KafkaRequestIntakeContainers implements SmartLifecycle, PolicyChang
         targets.values().forEach(target -> target.containers.forEach(container ->
                 result.put(container.getContainerProperties().getTopics()[0], container.getConcurrency())));
         return Map.copyOf(result);
+    }
+
+    @Override
+    public void pause(String targetSystemId) {
+        TargetContainers target = targets.get(targetSystemId);
+        if (target != null) {
+            target.pause();
+        }
+    }
+
+    @Override
+    public void resume(String targetSystemId) {
+        TargetContainers target = targets.get(targetSystemId);
+        if (target != null) {
+            target.resume();
+        }
+    }
+
+    public boolean isPaused(String targetSystemId) {
+        TargetContainers target = targets.get(targetSystemId);
+        return target != null && target.containers.stream().allMatch(ConcurrentMessageListenerContainer::isPauseRequested);
     }
 
     public boolean isConsuming(String targetSystemId) {
@@ -244,6 +266,22 @@ public class KafkaRequestIntakeContainers implements SmartLifecycle, PolicyChang
             containers.forEach(container -> {
                 if (container.isRunning()) {
                     container.stop();
+                }
+            });
+        }
+
+        private void pause() {
+            containers.forEach(container -> {
+                if (!container.isPauseRequested()) {
+                    container.pause();
+                }
+            });
+        }
+
+        private void resume() {
+            containers.forEach(container -> {
+                if (container.isPauseRequested()) {
+                    container.resume();
                 }
             });
         }

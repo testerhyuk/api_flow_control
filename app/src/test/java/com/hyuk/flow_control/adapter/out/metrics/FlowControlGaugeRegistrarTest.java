@@ -1,13 +1,19 @@
 package com.hyuk.flow_control.adapter.out.metrics;
 
+import com.hyuk.flow_control.application.service.BaselineEstimator;
 import com.hyuk.flow_control.application.service.DryRunMonitor;
+import com.hyuk.flow_control.application.service.MaintenanceMonitor;
 import com.hyuk.flow_control.application.service.PolicyRegistry;
 import com.hyuk.flow_control.application.service.TargetSystemHealthEvaluator;
 import com.hyuk.flow_control.application.service.TargetSystemLimitAdjuster;
 import com.hyuk.flow_control.application.service.TargetSystemSemaphore;
+import com.hyuk.flow_control.config.ControlProperties;
 import com.hyuk.flow_control.config.HealthProperties;
+import com.hyuk.flow_control.domain.health.HealthMode;
 import com.hyuk.flow_control.domain.health.HealthSnapshot;
 import com.hyuk.flow_control.domain.health.HealthState;
+import com.hyuk.flow_control.domain.limit.ControlMode;
+import com.hyuk.flow_control.domain.maintenance.MaintenanceSource;
 import com.hyuk.flow_control.domain.policy.ManagedPolicy;
 import com.hyuk.flow_control.domain.policy.TargetSystemPolicy;
 import com.hyuk.flow_control.support.Policies;
@@ -37,6 +43,8 @@ class FlowControlGaugeRegistrarTest {
     private TargetSystemSemaphore semaphore;
     private PolicyRegistry policies;
     private DryRunMonitor dryRuns;
+    private BaselineEstimator baselines;
+    private MaintenanceMonitor maintenance;
 
     @BeforeEach
     void setUp() {
@@ -46,8 +54,14 @@ class FlowControlGaugeRegistrarTest {
         evaluator = mock(TargetSystemHealthEvaluator.class);
         adjuster = mock(TargetSystemLimitAdjuster.class);
         semaphore = mock(TargetSystemSemaphore.class);
+        baselines = mock(BaselineEstimator.class);
+        maintenance = mock(MaintenanceMonitor.class);
         HealthProperties healthProperties = new HealthProperties(
                 Duration.ofSeconds(10), Duration.ofSeconds(1), 50, 0.10, 0.50, 2.0, Duration.ofSeconds(30));
+        when(evaluator.rules()).thenReturn(healthProperties.rules());
+        when(baselines.effective(TARGET)).thenAnswer(invocation -> policies.read(TARGET).baselineRtt());
+        when(baselines.learned(TARGET)).thenReturn(Optional.empty());
+        when(baselines.clampedBound(TARGET)).thenReturn(Optional.empty());
 
         ManagedPolicy policy = Policies.withLimits(Policies.policy(TARGET, 3), POLICY);
         when(policies.readAll()).thenReturn(Map.of(TARGET, POLICY));
@@ -60,7 +74,79 @@ class FlowControlGaugeRegistrarTest {
         when(adjuster.serversOf(TARGET)).thenReturn(1);
         when(dryRuns.concurrencyLimitOf(TARGET)).thenReturn(Optional.empty());
 
-        new FlowControlGaugeRegistrar(registry, policies, evaluator, adjuster, semaphore, dryRuns, healthProperties);
+        new FlowControlGaugeRegistrar(registry, policies, evaluator, adjuster, semaphore, dryRuns, baselines,
+                maintenance, healthProperties, new ControlProperties(ControlMode.FIXED));
+    }
+
+    @Test
+    @DisplayName("제어 방식은 지금 방식만 1 이고, 진동 방지와 baseline 자동 조정이 켜져 있는지 낸다")
+    void exposesRunConditions() {
+        assertThat(registry.get("flow.control.control.mode").tags("mode", "fixed").gauge().value()).isEqualTo(1.0);
+        assertThat(registry.get("flow.control.control.mode").tags("mode", "adaptive").gauge().value()).isZero();
+        assertThat(registry.get("flow.control.health.anti.oscillation").gauge().value()).isEqualTo(1.0);
+        assertThat(registry.get("flow.control.health.baseline.auto").gauge().value()).isEqualTo(1.0);
+    }
+
+    @Test
+    @DisplayName("지금 판정 모드, 윈도우 시간 범위, 악화 연속 횟수를 낸다")
+    void exposesJudgmentDetails() {
+        assertThat(mode("adaptive")).isEqualTo(1.0);
+        assertThat(gauge("flow.control.health.window.span")).isNaN();
+
+        when(evaluator.snapshotOf(TARGET)).thenReturn(new HealthSnapshot(HealthState.HEALTHY, 3, 0.0, null,
+                Instant.now(), HealthMode.LOW_TRAFFIC, Duration.ofSeconds(7), 2, Duration.ofMillis(100)));
+
+        assertThat(mode("low_traffic")).isEqualTo(1.0);
+        assertThat(mode("adaptive")).isZero();
+        assertThat(gauge("flow.control.health.window.span")).isEqualTo(7.0);
+        assertThat(gauge("flow.control.health.degraded.streak")).isEqualTo(2.0);
+    }
+
+    @Test
+    @DisplayName("latency 복귀 기준선은 지금 쓰는 baseline 에 복귀 배수를 곱한 값이다")
+    void exposesRecoveryThreshold() {
+        when(baselines.effective(TARGET)).thenReturn(Duration.ofMillis(120));
+
+        assertThat(gauge("flow.control.health.baseline.rtt")).isCloseTo(0.12, within(1e-9));
+        assertThat(gauge("flow.control.health.latency.threshold")).isCloseTo(0.24, within(1e-9));
+        assertThat(gauge("flow.control.health.latency.recovery.threshold")).isCloseTo(0.18, within(1e-9));
+        assertThat(gauge("flow.control.health.baseline.policy")).isCloseTo(0.1, within(1e-9));
+    }
+
+    @Test
+    @DisplayName("배운 baseline 이 없으면 값이 없음(NaN)이고, 있으면 그 값과 한계에 닿았는지를 낸다")
+    void exposesLearnedBaseline() {
+        assertThat(gauge("flow.control.health.baseline.learned")).isNaN();
+        assertThat(clamped("upper")).isZero();
+
+        when(baselines.learned(TARGET)).thenReturn(Optional.of(Duration.ofMillis(400)));
+        when(baselines.clampedBound(TARGET)).thenReturn(Optional.of(BaselineEstimator.Bound.UPPER));
+        when(baselines.sampleCount(TARGET)).thenReturn(150);
+
+        assertThat(gauge("flow.control.health.baseline.learned")).isCloseTo(0.4, within(1e-9));
+        assertThat(gauge("flow.control.health.baseline.samples")).isEqualTo(150.0);
+        assertThat(clamped("upper")).isEqualTo(1.0);
+        assertThat(clamped("lower")).isZero();
+    }
+
+    @Test
+    @DisplayName("점검 중인지 어떻게 알았는지별로 낸다")
+    void exposesMaintenance() {
+        when(maintenance.isActive(TARGET, MaintenanceSource.RESPONSE)).thenReturn(true);
+
+        assertThat(registry.get("flow.control.maintenance.active").tags("target", TARGET, "source", "response")
+                .gauge().value()).isEqualTo(1.0);
+        assertThat(registry.get("flow.control.maintenance.active").tags("target", TARGET, "source", "schedule")
+                .gauge().value()).isZero();
+    }
+
+    private double mode(String mode) {
+        return registry.get("flow.control.health.mode").tags("target", TARGET, "mode", mode).gauge().value();
+    }
+
+    private double clamped(String bound) {
+        return registry.get("flow.control.health.baseline.clamped").tags("target", TARGET, "bound", bound)
+                .gauge().value();
     }
 
     @Test
