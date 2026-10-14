@@ -6,8 +6,11 @@ import com.hyuk.flow_control.domain.dryrun.DryRun;
 import com.hyuk.flow_control.domain.dryrun.DryRunReport;
 import com.hyuk.flow_control.domain.health.HealthState;
 import com.hyuk.flow_control.domain.health.HealthStatus;
+import com.hyuk.flow_control.domain.health.HealthRules;
 import com.hyuk.flow_control.domain.health.HealthThresholds;
 import com.hyuk.flow_control.domain.limit.RateAdjustmentRule;
+import com.hyuk.flow_control.domain.maintenance.MaintenanceSchedule;
+import com.hyuk.flow_control.domain.maintenance.OneTimeMaintenance;
 import com.hyuk.flow_control.domain.policy.ChangeNote;
 import com.hyuk.flow_control.domain.policy.ConnectionSettings;
 import com.hyuk.flow_control.domain.policy.ManagedPolicy;
@@ -22,6 +25,8 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -40,6 +45,7 @@ class ShadowEvaluationTest {
     private static final Instant NOW = Instant.parse("2026-10-14T00:00:00Z");
     private static final ManagedPolicy BASE = Policies.policy(TARGET, 1);
     private static final HealthThresholds THRESHOLDS = new HealthThresholds(10, 0.1, 0.5, 2.0);
+    private static final HealthRules RULES = new HealthRules(THRESHOLDS, 3, 1, false);
     private static final RateAdjustmentRule RATE_RULE = new RateAdjustmentRule(0.5, 0.05, 10, 1.0);
 
     private ResponseJudge judge;
@@ -179,7 +185,7 @@ class ShadowEvaluationTest {
             evaluation.complete(response(OutcomeKind.SUCCESS, 200, 150), NOW);
         }
 
-        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1);
+        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1, baselineOf(evaluation));
 
         DryRunReport report = evaluation.report(NOW.plusSeconds(1), HealthState.HEALTHY, 95.0);
         assertThat(report.health().state()).isEqualTo(HealthState.DEGRADED);
@@ -190,6 +196,20 @@ class ShadowEvaluationTest {
     }
 
     @Test
+    @DisplayName("배운 baseline 을 넘겨받으면 새 정책 값 대신 그 값으로 판정한다")
+    void usesGivenBaseline() {
+        ShadowEvaluation evaluation = evaluation(limits(100, 50), 95.0);
+        for (int i = 0; i < 10; i++) {
+            evaluation.complete(response(OutcomeKind.SUCCESS, 200, 150), NOW);
+        }
+
+        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1, Duration.ofMillis(100));
+
+        assertThat(evaluation.state()).isEqualTo(HealthState.HEALTHY);
+        assertThat(evaluation.concurrencyLimit()).isEqualTo(10);
+    }
+
+    @Test
     @DisplayName("같은 호출이라도 지금 baseline-rtt 면 HEALTHY 로 남는다")
     void staysHealthyWithCurrentBaseline() {
         ShadowEvaluation evaluation = evaluation(limits(100, 150), 95.0);
@@ -197,7 +217,7 @@ class ShadowEvaluationTest {
             evaluation.complete(response(OutcomeKind.SUCCESS, 200, 150), NOW);
         }
 
-        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1);
+        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1, baselineOf(evaluation));
 
         assertThat(evaluation.state()).isEqualTo(HealthState.HEALTHY);
     }
@@ -210,7 +230,7 @@ class ShadowEvaluationTest {
             evaluation.complete(response(OutcomeKind.SUCCESS, 200, 150), NOW);
         }
 
-        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1);
+        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1, baselineOf(evaluation));
 
         assertThat(evaluation.state()).isEqualTo(HealthState.CRITICAL);
     }
@@ -223,7 +243,7 @@ class ShadowEvaluationTest {
             evaluation.complete(response(OutcomeKind.SUCCESS, 200, 150), NOW);
         }
 
-        evaluation.evaluate(NOW.plusSeconds(11), 11_000_000_000L, 1);
+        evaluation.evaluate(NOW.plusSeconds(11), 11_000_000_000L, 1, baselineOf(evaluation));
 
         assertThat(evaluation.state()).isEqualTo(HealthState.HEALTHY);
         assertThat(evaluation.report(NOW.plusSeconds(11), HealthState.HEALTHY, 95.0).health().sampleCount()).isZero();
@@ -237,7 +257,7 @@ class ShadowEvaluationTest {
             evaluation.complete(response(OutcomeKind.SUCCESS, 200, 150), NOW);
         }
 
-        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1);
+        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1, baselineOf(evaluation));
         DryRunReport report = evaluation.report(NOW.plusSeconds(4), HealthState.HEALTHY, 95.0);
 
         assertThat(report.health().timeInState())
@@ -259,6 +279,45 @@ class ShadowEvaluationTest {
     }
 
     @Test
+    @DisplayName("점검 중에는 새 값 기준 상태를 판정하지 않는다")
+    void skipsJudgmentDuringMaintenance() {
+        ShadowEvaluation evaluation = evaluation(limits(100, 50), 95.0);
+        for (int i = 0; i < 10; i++) {
+            evaluation.complete(response(OutcomeKind.SUCCESS, 200, 150), NOW);
+        }
+
+        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1, baselineOf(evaluation), true, false);
+
+        assertThat(evaluation.state()).isEqualTo(HealthState.HEALTHY);
+        assertThat(evaluation.report(NOW.plusSeconds(1), HealthState.HEALTHY, 95.0).health().timeInState())
+                .containsEntry(HealthState.HEALTHY, Duration.ofSeconds(1));
+    }
+
+    @Test
+    @DisplayName("실제 판정이 저트래픽 모드였던 시간을 알 수 없는 부분에 적는다")
+    void listsLowTrafficTime() {
+        ShadowEvaluation evaluation = evaluation(limits(80, 150), 95.0);
+
+        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1, baselineOf(evaluation), false, true);
+        evaluation.evaluate(NOW.plusSeconds(3), 3_000_000_000L, 1, baselineOf(evaluation), false, true);
+
+        assertThat(evaluation.report(NOW.plusSeconds(3), HealthState.HEALTHY, 95.0).unknowns())
+                .anyMatch(text -> text.contains("저트래픽 모드였던 3초"));
+    }
+
+    @Test
+    @DisplayName("점검 시간표를 바꾸면 그 효과는 확인할 수 없다고 적는다")
+    void listsMaintenanceScheduleChange() {
+        ManagedPolicy changed = BASE.withVersion(2);
+        ManagedPolicy candidate = new ManagedPolicy(changed.targetSystemId(), changed.version(), changed.enabled(),
+                changed.connection(), changed.limits(), changed.response(), new MaintenanceSchedule(List.of(),
+                List.of(new OneTimeMaintenance(LocalDateTime.of(2026, 10, 20, 1, 0), LocalDateTime.of(2026, 10, 20, 5, 0)))));
+
+        assertThat(evaluation(candidate, 95.0).report(NOW, HealthState.HEALTHY, 95.0).unknowns())
+                .containsExactly("점검 시간표를 바꾼 효과는 확인할 수 없습니다");
+    }
+
+    @Test
     @DisplayName("한도를 낮추기만 하면 알 수 없는 부분이 없다")
     void noUnknownsWhenLowering() {
         assertThat(evaluation(limits(80, 150), 95.0).report(NOW, HealthState.HEALTHY, 95.0).unknowns()).isEmpty();
@@ -269,9 +328,9 @@ class ShadowEvaluationTest {
     void accumulatesOverlap() {
         ShadowEvaluation evaluation = evaluation(limits(80, 150), 95.0);
 
-        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 2);
-        evaluation.evaluate(NOW.plusSeconds(2), 2_000_000_000L, 1);
-        evaluation.evaluate(NOW.plusSeconds(3), 3_000_000_000L, 2);
+        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 2, baselineOf(evaluation));
+        evaluation.evaluate(NOW.plusSeconds(2), 2_000_000_000L, 1, baselineOf(evaluation));
+        evaluation.evaluate(NOW.plusSeconds(3), 3_000_000_000L, 2, baselineOf(evaluation));
 
         DryRunReport report = evaluation.report(NOW.plusSeconds(3), HealthState.HEALTHY, 95.0);
         assertThat(report.overlap()).isEqualTo(Duration.ofSeconds(2));
@@ -283,7 +342,7 @@ class ShadowEvaluationTest {
     void noOverlapWhenAlone() {
         ShadowEvaluation evaluation = evaluation(limits(80, 150), 95.0);
 
-        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1);
+        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1, baselineOf(evaluation));
 
         DryRunReport report = evaluation.report(NOW.plusSeconds(1), HealthState.HEALTHY, 95.0);
         assertThat(report.overlap()).isZero();
@@ -292,8 +351,12 @@ class ShadowEvaluationTest {
 
     private ShadowEvaluation evaluation(ManagedPolicy candidate, double actualRate) {
         DryRun dryRun = new DryRun(candidate, 1, NOW, NOW.plus(Duration.ofMinutes(30)), new ChangeNote("hyuk", "test"));
-        return new ShadowEvaluation(dryRun, BASE, HealthStatus.initial(), actualRate, judge, THRESHOLDS, RATE_RULE,
-                3, Duration.ofSeconds(10), metrics, NOW, 0L);
+        return new ShadowEvaluation(dryRun, BASE, HealthStatus.initial(), actualRate, judge, RULES, RATE_RULE,
+                Duration.ofSeconds(10), 10, candidate.limits().baselineRtt(), metrics, NOW, 0L);
+    }
+
+    private static Duration baselineOf(ShadowEvaluation evaluation) {
+        return evaluation.dryRun().candidate().limits().baselineRtt();
     }
 
     private static ManagedPolicy limits(int maxTps, long baselineMillis) {

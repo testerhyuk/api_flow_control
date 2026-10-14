@@ -1,5 +1,8 @@
 package com.hyuk.flow_control.adapter.out.persistence;
 
+import com.hyuk.flow_control.domain.maintenance.MaintenanceSchedule;
+import com.hyuk.flow_control.domain.maintenance.OneTimeMaintenance;
+import com.hyuk.flow_control.domain.maintenance.RecurringMaintenance;
 import com.hyuk.flow_control.domain.policy.ChangeNote;
 import com.hyuk.flow_control.domain.policy.LoadedPolicy;
 import com.hyuk.flow_control.domain.policy.ManagedPolicy;
@@ -17,10 +20,14 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import tools.jackson.databind.json.JsonMapper;
 
 import javax.sql.DataSource;
+import java.time.DayOfWeek;
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -52,6 +59,7 @@ class JdbcPolicyRepositoryTest {
         assertThat(targetA.version()).isEqualTo(1);
         assertThat(targetA.limits().concurrencyLimit()).isEqualTo(15);
         assertThat(targetA.response().resultField()).isEqualTo("/resultCode");
+        assertThat(targetA.maintenance()).isEqualTo(MaintenanceSchedule.none());
         assertThat(repository.history("target-a")).hasSize(1);
     }
 
@@ -115,6 +123,33 @@ class JdbcPolicyRepositoryTest {
     @DisplayName("이력에 없는 버전은 찾지 못한다")
     void findsMissingVersion() {
         assertThat(repository.findVersion("target-a", 9)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("점검 시간표가 있는 정책도 그대로 저장하고 읽고, 이력에도 남긴다")
+    void storesMaintenanceSchedule() {
+        MaintenanceSchedule schedule = new MaintenanceSchedule(
+                List.of(new RecurringMaintenance(Set.of(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY),
+                        LocalTime.of(23, 50), LocalTime.of(0, 10))),
+                List.of(new OneTimeMaintenance(LocalDateTime.of(2026, 10, 20, 1, 0),
+                        LocalDateTime.of(2026, 10, 20, 5, 0))));
+        ManagedPolicy base = Policies.policy("target-d");
+        ManagedPolicy policy = new ManagedPolicy(base.targetSystemId(), base.version(), base.enabled(),
+                base.connection(), base.limits(), base.response(), schedule);
+
+        repository.insert(policy, NOTE, AT);
+
+        assertThat(repository.load("target-d")).contains(new LoadedPolicy.Valid(policy));
+        assertThat(repository.history("target-d").getFirst().policy().maintenance()).isEqualTo(schedule);
+    }
+
+    @Test
+    @DisplayName("점검 시간표가 잘못 저장돼 있으면 Invalid 로 읽는다")
+    void loadsBrokenMaintenanceAsInvalid() {
+        jdbcClient.sql("update target_policy set maintenance = cast('{\"recurring\":[{\"days\":[\"MONDAY\"],\"start\":\"25:00\",\"end\":\"01:00\"}],\"oneTime\":[]}' as jsonb) where target_system_id = 'target-b'")
+                .update();
+
+        assertThat(repository.load("target-b").orElseThrow()).isInstanceOf(LoadedPolicy.Invalid.class);
     }
 
     @Test

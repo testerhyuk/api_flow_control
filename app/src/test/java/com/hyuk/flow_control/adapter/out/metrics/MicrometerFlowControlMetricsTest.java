@@ -1,19 +1,22 @@
 package com.hyuk.flow_control.adapter.out.metrics;
 
+import com.hyuk.flow_control.domain.expiry.ExpiryPoint;
+import com.hyuk.flow_control.domain.health.HealthMode;
 import com.hyuk.flow_control.domain.health.HealthState;
+import com.hyuk.flow_control.domain.health.LowTrafficEvent;
+import com.hyuk.flow_control.domain.health.SuppressedBy;
 import com.hyuk.flow_control.domain.limit.LimitStore;
+import com.hyuk.flow_control.domain.maintenance.MaintenanceSource;
 import com.hyuk.flow_control.domain.request.OutcomeKind;
 import com.hyuk.flow_control.domain.retry.DeadLetterReason;
 import com.hyuk.flow_control.domain.retry.RetryStage;
 import io.micrometer.core.instrument.Timer;
-import io.micrometer.core.instrument.distribution.CountAtBucket;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
-import java.util.Arrays;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -51,29 +54,6 @@ class MicrometerFlowControlMetricsTest {
 
         assertThat(timer.count()).isEqualTo(2);
         assertThat(timer.totalTime(TimeUnit.MILLISECONDS)).isEqualTo(200.0);
-    }
-
-    @Test
-    @DisplayName("latency 구간 경계는 10ms 부터 5s 까지 11 개다")
-    void latencyHasElevenBuckets() {
-        metrics.recordCall("target-a", OutcomeKind.SUCCESS, Duration.ofMillis(120));
-
-        CountAtBucket[] buckets = latencyTimer("target-a", "SUCCESS").takeSnapshot().histogramCounts();
-
-        assertThat(Arrays.stream(buckets).mapToDouble(bucket -> bucket.bucket(TimeUnit.MILLISECONDS)))
-                .containsExactly(10.0, 25.0, 50.0, 100.0, 200.0, 300.0, 500.0, 1000.0, 2000.0, 3000.0, 5000.0);
-    }
-
-    @Test
-    @DisplayName("latency 는 자기 값 이상인 구간에만 들어간다")
-    void latencyFallsIntoUpperBuckets() {
-        metrics.recordCall("target-a", OutcomeKind.SUCCESS, Duration.ofMillis(120));
-
-        CountAtBucket[] buckets = latencyTimer("target-a", "SUCCESS").takeSnapshot().histogramCounts();
-
-        assertThat(countAt(buckets, 100)).isZero();
-        assertThat(countAt(buckets, 200)).isEqualTo(1.0);
-        assertThat(countAt(buckets, 5000)).isEqualTo(1.0);
     }
 
     @Test
@@ -231,6 +211,57 @@ class MicrometerFlowControlMetricsTest {
                 .counter().count()).isEqualTo(1.0);
     }
 
+    @Test
+    @DisplayName("진동 방지가 막은 횟수를 이유별로 센다")
+    void countsSuppressed() {
+        metrics.recordSuppressed("target-a", SuppressedBy.HYSTERESIS);
+        metrics.recordSuppressed("target-a", SuppressedBy.CONSECUTIVE);
+        metrics.recordSuppressed("target-a", SuppressedBy.CONSECUTIVE);
+
+        assertThat(registry.get("flow.control.health.suppressed").tags("target", "target-a", "reason", "hysteresis")
+                .counter().count()).isEqualTo(1.0);
+        assertThat(registry.get("flow.control.health.suppressed").tags("target", "target-a", "reason", "consecutive")
+                .counter().count()).isEqualTo(2.0);
+    }
+
+    @Test
+    @DisplayName("판정 모드 전환과 저트래픽 사건을 센다")
+    void countsLowTraffic() {
+        metrics.recordModeTransition("target-a", HealthMode.LOW_TRAFFIC);
+        metrics.recordLowTrafficEvent("target-a", LowTrafficEvent.TOO_MANY_REQUESTS);
+
+        assertThat(registry.get("flow.control.health.mode.transitions").tags("target", "target-a", "to", "low_traffic")
+                .counter().count()).isEqualTo(1.0);
+        assertThat(registry.get("flow.control.health.low.traffic.events")
+                .tags("target", "target-a", "event", "too_many_requests").counter().count()).isEqualTo(1.0);
+    }
+
+    @Test
+    @DisplayName("점검 시작 횟수와 판정에서 뺀 응답 수를 센다")
+    void countsMaintenance() {
+        metrics.recordMaintenanceStarted("target-a", MaintenanceSource.SCHEDULE);
+        metrics.recordMaintenanceExcluded("target-a");
+        metrics.recordMaintenanceExcluded("target-a");
+
+        assertThat(registry.get("flow.control.maintenance.started").tags("target", "target-a", "source", "schedule")
+                .counter().count()).isEqualTo(1.0);
+        assertThat(registry.get("flow.control.maintenance.excluded").tags("target", "target-a")
+                .counter().count()).isEqualTo(2.0);
+    }
+
+    @Test
+    @DisplayName("만료 횟수를 어디서 만료됐는지별로 세고, 꺼낸 요청의 나이를 기록한다")
+    void recordsExpiry() {
+        metrics.recordExpired("target-a", ExpiryPoint.RETRY_SCHEDULE);
+        metrics.recordRequestAge("target-a", Duration.ofSeconds(30));
+
+        assertThat(registry.get("flow.control.expired").tags("target", "target-a", "where", "retry_schedule")
+                .counter().count()).isEqualTo(1.0);
+        Timer age = registry.get("flow.control.request.age").tags("target", "target-a").timer();
+        assertThat(age.count()).isEqualTo(1);
+        assertThat(age.totalTime(TimeUnit.SECONDS)).isEqualTo(30.0);
+    }
+
     private double dryRunCount(String name) {
         return registry.get(name).tags("target", "target-a").counter().count();
     }
@@ -245,13 +276,5 @@ class MicrometerFlowControlMetricsTest {
 
     private double blockedCount(String target, String reason) {
         return registry.get("flow.control.outbound.blocked.attempts").tags("target", target, "reason", reason).counter().count();
-    }
-
-    private static double countAt(CountAtBucket[] buckets, double millis) {
-        return Arrays.stream(buckets)
-                .filter(bucket -> bucket.bucket(TimeUnit.MILLISECONDS) == millis)
-                .findFirst()
-                .orElseThrow()
-                .count();
     }
 }

@@ -9,6 +9,7 @@ import java.util.List;
 
 public final class RequestTopicDefinitions {
     private static final int DEAD_LETTER_PARTITIONS = 1;
+    private static final int EXPIRED_PARTITIONS = 1;
     private static final int REPLICAS = 1;
 
     private RequestTopicDefinitions() {
@@ -22,6 +23,7 @@ public final class RequestTopicDefinitions {
             topics.add(topic(RequestTopics.retry(stage, targetSystemId), partitions));
         }
         topics.add(topic(RequestTopics.deadLetter(targetSystemId), DEAD_LETTER_PARTITIONS));
+        topics.add(topic(RequestTopics.expired(targetSystemId), EXPIRED_PARTITIONS));
 
         return topics;
     }

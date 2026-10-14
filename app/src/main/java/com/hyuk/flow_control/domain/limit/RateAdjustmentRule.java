@@ -11,7 +11,7 @@ public record RateAdjustmentRule(
 ) {
     public double next(double current, HealthState state, int sampleCount, TargetSystemPolicy policy) {
         double effectiveRate = policy.effectiveRate();
-        double floor = Math.min(criticalRate, effectiveRate);
+        double floor = floor(policy);
 
         double next = switch (state) {
             case CRITICAL -> floor;
@@ -22,5 +22,13 @@ public record RateAdjustmentRule(
         };
 
         return Math.min(effectiveRate, Math.max(floor, next));
+    }
+
+    public double floor(TargetSystemPolicy policy) {
+        return Math.min(criticalRate, policy.effectiveRate());
+    }
+
+    public double bounded(double rate, TargetSystemPolicy policy) {
+        return Math.min(policy.effectiveRate(), Math.max(floor(policy), rate));
     }
 }

@@ -3,6 +3,8 @@ package com.hyuk.flow_control.application.service;
 import com.hyuk.flow_control.application.port.in.RequestIntakeUseCase;
 import com.hyuk.flow_control.application.port.out.FailedRequestPublisher;
 import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
+import com.hyuk.flow_control.config.IntakeProperties;
+import com.hyuk.flow_control.domain.expiry.ExpiryPoint;
 import com.hyuk.flow_control.domain.request.OutboundRequest;
 import com.hyuk.flow_control.domain.request.OutboundResult;
 import com.hyuk.flow_control.domain.request.OutcomeKind;
@@ -30,12 +32,14 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 class RequestHandlingServiceTest {
     private static final String TARGET = "target-a";
     private static final OutboundRequest REQUEST = new OutboundRequest("req-1", TARGET, "{}", Instant.now());
     private static final DeliveryContext FIRST = DeliveryContext.first("flow-control.requests.target-a-0@7");
+    private static final Duration TTL = Duration.ofMinutes(10);
 
     private RequestIntakeUseCase intake;
     private FailedRequestPublisher publisher;
@@ -47,7 +51,13 @@ class RequestHandlingServiceTest {
         intake = mock(RequestIntakeUseCase.class);
         publisher = mock(FailedRequestPublisher.class);
         metrics = mock(FlowControlMetrics.class);
-        service = new RequestHandlingService(intake, publisher, metrics);
+        service = new RequestHandlingService(intake, publisher, metrics,
+                new IntakeProperties(TTL, Duration.ofSeconds(5)));
+    }
+
+    private void verifyOnlyAgeRecorded() {
+        verify(metrics).recordRequestAge(eq(TARGET), any());
+        verifyNoMoreInteractions(metrics);
     }
 
     @Test
@@ -56,7 +66,8 @@ class RequestHandlingServiceTest {
         when(intake.process(REQUEST)).thenReturn(result(OutcomeKind.SUCCESS, null));
 
         assertThat(service.handle(REQUEST, FIRST)).isEqualTo(new HandlingOutcome.Completed(OutcomeKind.SUCCESS));
-        verifyNoInteractions(publisher, metrics);
+        verifyNoInteractions(publisher);
+        verifyOnlyAgeRecorded();
     }
 
     @Test
@@ -77,7 +88,8 @@ class RequestHandlingServiceTest {
         when(intake.process(REQUEST)).thenReturn(result(OutcomeKind.BUSINESS_REJECTED, null));
 
         assertThat(service.handle(REQUEST, FIRST)).isEqualTo(new HandlingOutcome.Discarded(OutcomeKind.BUSINESS_REJECTED));
-        verifyNoInteractions(publisher, metrics);
+        verifyNoInteractions(publisher);
+        verifyOnlyAgeRecorded();
     }
 
     @ParameterizedTest
@@ -192,7 +204,8 @@ class RequestHandlingServiceTest {
         when(intake.process(REQUEST)).thenThrow(new IntakeInterruptedException(new InterruptedException()));
 
         assertThatThrownBy(() -> service.handle(REQUEST, FIRST)).isInstanceOf(IntakeInterruptedException.class);
-        verifyNoInteractions(publisher, metrics);
+        verifyNoInteractions(publisher);
+        verifyOnlyAgeRecorded();
     }
 
     @Test
@@ -216,6 +229,76 @@ class RequestHandlingServiceTest {
         assertThat(context.getValue().failedAttempts()).isEqualTo(1);
         verify(metrics).recordDeadLetter(TARGET, DeadLetterReason.INVALID_MESSAGE);
         verifyNoInteractions(intake);
+    }
+
+    @Test
+    @DisplayName("꺼낸 순간 요청이 생성된 지 얼마나 됐는지 지표로 남긴다")
+    void recordsRequestAge() {
+        OutboundRequest old = new OutboundRequest("req-old", TARGET, "{}", Instant.now().minusSeconds(30));
+        when(intake.process(old)).thenReturn(result(OutcomeKind.SUCCESS, null));
+
+        service.handle(old, FIRST);
+
+        ArgumentCaptor<Duration> age = ArgumentCaptor.forClass(Duration.class);
+        verify(metrics).recordRequestAge(eq(TARGET), age.capture());
+        assertThat(age.getValue()).isBetween(Duration.ofSeconds(30), Duration.ofSeconds(40));
+    }
+
+    @Test
+    @DisplayName("꺼낸 요청이 유효기간을 넘었으면 호출하지 않고 만료 토픽으로 보낸다")
+    void expiresAtIntake() {
+        OutboundRequest old = new OutboundRequest("req-old", TARGET, "{}", Instant.now().minus(Duration.ofMinutes(11)));
+        DeliveryContext retry = new DeliveryContext(RetryStage.SECOND, 2, Instant.now(), Instant.now(), "o",
+                OutcomeKind.TIMEOUT);
+
+        assertThat(service.handle(old, retry)).isEqualTo(new HandlingOutcome.Expired(ExpiryPoint.INTAKE));
+
+        ArgumentCaptor<Duration> age = ArgumentCaptor.forClass(Duration.class);
+        verify(publisher).expire(eq(old), eq(retry), eq(ExpiryPoint.INTAKE), eq(OutcomeKind.TIMEOUT), age.capture());
+        assertThat(age.getValue()).isGreaterThanOrEqualTo(Duration.ofMinutes(11));
+        verify(metrics).recordExpired(TARGET, ExpiryPoint.INTAKE);
+        verifyNoInteractions(intake);
+    }
+
+    @Test
+    @DisplayName("유효기간 안이면 오래됐어도 호출한다")
+    void processesWithinTtl() {
+        OutboundRequest old = new OutboundRequest("req-old", TARGET, "{}", Instant.now().minus(Duration.ofMinutes(9)));
+        when(intake.process(old)).thenReturn(result(OutcomeKind.SUCCESS, null));
+
+        assertThat(service.handle(old, FIRST)).isEqualTo(new HandlingOutcome.Completed(OutcomeKind.SUCCESS));
+        verify(publisher, never()).expire(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("다음 재시도 시각이 유효기간을 넘으면 재시도 토픽에 넣지 않고 바로 만료 토픽으로 보낸다")
+    void expiresAtRetrySchedule() {
+        OutboundRequest old = new OutboundRequest("req-old", TARGET, "{}",
+                Instant.now().minus(Duration.ofMinutes(9)).minusSeconds(30));
+        DeliveryContext secondStage = new DeliveryContext(RetryStage.SECOND, 2, Instant.now(), Instant.now(), "o");
+        when(intake.process(old)).thenReturn(result(OutcomeKind.TIMEOUT, null));
+
+        assertThat(service.handle(old, secondStage))
+                .isEqualTo(new HandlingOutcome.Expired(ExpiryPoint.RETRY_SCHEDULE));
+
+        ArgumentCaptor<DeliveryContext> context = ArgumentCaptor.forClass(DeliveryContext.class);
+        verify(publisher).expire(eq(old), context.capture(), eq(ExpiryPoint.RETRY_SCHEDULE),
+                eq(OutcomeKind.TIMEOUT), any());
+        assertThat(context.getValue().failedAttempts()).isEqualTo(3);
+        verify(publisher, never()).scheduleRetry(any(), any(), any());
+        verify(metrics).recordExpired(TARGET, ExpiryPoint.RETRY_SCHEDULE);
+        verify(metrics, never()).recordRetryScheduled(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("다음 재시도 시각이 유효기간 안이면 그대로 재시도 토픽에 넣는다")
+    void schedulesRetryWithinTtl() {
+        OutboundRequest old = new OutboundRequest("req-old", TARGET, "{}", Instant.now().minus(Duration.ofMinutes(8)));
+        DeliveryContext secondStage = new DeliveryContext(RetryStage.SECOND, 2, Instant.now(), Instant.now(), "o");
+        when(intake.process(old)).thenReturn(result(OutcomeKind.TIMEOUT, null));
+
+        assertThat(service.handle(old, secondStage))
+                .isEqualTo(new HandlingOutcome.RetryScheduled(RetryStage.THIRD, OutcomeKind.TIMEOUT));
     }
 
     private DeliveryContext capturedRetryContext(OutcomeKind kind) {

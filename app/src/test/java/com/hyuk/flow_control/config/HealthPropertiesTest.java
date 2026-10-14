@@ -145,6 +145,76 @@ class HealthPropertiesTest {
                 .isEqualTo(recovery);
     }
 
+    @Test
+    @DisplayName("진동 방지, 저트래픽, baseline 설정이 없으면 출발값을 쓴다")
+    void usesStartingValuesWhenMissing() {
+        HealthProperties properties = new HealthProperties(WINDOW, INTERVAL, 50, 0.10, 0.50, 2.0, RECOVERY);
+
+        assertThat(properties.antiOscillation()).isTrue();
+        assertThat(properties.degradedStreak()).isEqualTo(3);
+        assertThat(properties.recoveryThreshold())
+                .isEqualTo(new HealthProperties.RecoveryThreshold(0.05, 0.25, 1.5));
+        assertThat(properties.lowTraffic()).isEqualTo(new HealthProperties.LowTraffic(3, 0.5, 1, 3, 3));
+        assertThat(properties.baselineAuto()).isTrue();
+        assertThat(properties.baseline())
+                .isEqualTo(new HealthProperties.Baseline(Duration.ofMinutes(10), 100, 0.5, 1.5));
+        assertThat(properties.requiredGoodCount()).isEqualTo(30);
+    }
+
+    @Test
+    @DisplayName("진동 방지, 저트래픽, baseline 설정을 설정 파일에서 읽는다")
+    void bindsNewSettings() {
+        contextRunner
+                .withPropertyValues(
+                        "flow-control.health.window=10s",
+                        "flow-control.health.evaluation-interval=1s",
+                        "flow-control.health.minimum-calls=50",
+                        "flow-control.health.degraded-failure-rate=0.10",
+                        "flow-control.health.critical-failure-rate=0.50",
+                        "flow-control.health.degraded-latency-multiplier=2.0",
+                        "flow-control.health.recovery-duration=30s",
+                        "flow-control.health.anti-oscillation=false",
+                        "flow-control.health.recovery-threshold.degraded-failure-rate=0.07",
+                        "flow-control.health.recovery-threshold.critical-failure-rate=0.30",
+                        "flow-control.health.recovery-threshold.latency-multiplier=1.8",
+                        "flow-control.health.degraded-streak=5",
+                        "flow-control.health.low-traffic.enter-after=4",
+                        "flow-control.health.low-traffic.rate-ratio=0.4",
+                        "flow-control.health.low-traffic.too-many-requests=2",
+                        "flow-control.health.low-traffic.consecutive-failures=5",
+                        "flow-control.health.low-traffic.consecutive-timeouts=6",
+                        "flow-control.health.baseline-auto=false",
+                        "flow-control.health.baseline.window=5m",
+                        "flow-control.health.baseline.minimum-samples=200",
+                        "flow-control.health.baseline.lower-ratio=0.6",
+                        "flow-control.health.baseline.upper-ratio=1.4")
+                .run(context -> {
+                    HealthProperties properties = context.getBean(HealthProperties.class);
+                    assertThat(properties.antiOscillation()).isFalse();
+                    assertThat(properties.recoveryThreshold())
+                            .isEqualTo(new HealthProperties.RecoveryThreshold(0.07, 0.30, 1.8));
+                    assertThat(properties.degradedStreak()).isEqualTo(5);
+                    assertThat(properties.lowTraffic()).isEqualTo(new HealthProperties.LowTraffic(4, 0.4, 2, 5, 6));
+                    assertThat(properties.baselineAuto()).isFalse();
+                    assertThat(properties.baseline())
+                            .isEqualTo(new HealthProperties.Baseline(Duration.ofMinutes(5), 200, 0.6, 1.4));
+                });
+    }
+
+    @Test
+    @DisplayName("복귀 기준이 진입 기준보다 바깥이면 만들 수 없다")
+    void rejectsRecoveryOutsideEntry() {
+        assertThatThrownBy(() -> new HealthProperties(WINDOW, INTERVAL, 50, 0.10, 0.50, 2.0, RECOVERY,
+                true, new HealthProperties.RecoveryThreshold(0.2, 0.25, 1.5), 3, null, true, null))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new HealthProperties(WINDOW, INTERVAL, 50, 0.10, 0.50, 2.0, RECOVERY,
+                true, new HealthProperties.RecoveryThreshold(0.05, 0.25, 2.5), 3, null, true, null))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new HealthProperties(WINDOW, INTERVAL, 50, 0.10, 0.50, 2.0, RECOVERY,
+                true, null, 0, null, true, null))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
     @Configuration
     @EnableConfigurationProperties(HealthProperties.class)
     static class TestConfig {

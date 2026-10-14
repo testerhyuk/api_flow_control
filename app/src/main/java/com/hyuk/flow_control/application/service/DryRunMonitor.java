@@ -7,8 +7,9 @@ import com.hyuk.flow_control.config.HealthProperties;
 import com.hyuk.flow_control.config.LimitAdjustmentProperties;
 import com.hyuk.flow_control.domain.dryrun.DryRun;
 import com.hyuk.flow_control.domain.dryrun.DryRunReport;
+import com.hyuk.flow_control.domain.health.HealthMode;
+import com.hyuk.flow_control.domain.health.HealthRules;
 import com.hyuk.flow_control.domain.health.HealthState;
-import com.hyuk.flow_control.domain.health.HealthThresholds;
 import com.hyuk.flow_control.domain.limit.RateAdjustmentRule;
 import com.hyuk.flow_control.domain.policy.ManagedPolicy;
 import com.hyuk.flow_control.domain.request.OutboundResult;
@@ -32,12 +33,14 @@ public class DryRunMonitor {
     private final PolicyRegistry policies;
     private final TargetSystemHealthEvaluator evaluator;
     private final TargetSystemLimitAdjuster adjuster;
+    private final BaselineEstimator baselines;
+    private final MaintenanceMonitor maintenance;
     private final ResponseJudge judge;
     private final FlowControlMetrics metrics;
-    private final HealthThresholds thresholds;
+    private final HealthRules rules;
     private final RateAdjustmentRule rateRule;
-    private final int requiredGoodCount;
     private final Duration window;
+    private final int maxSamples;
     private final Map<String, ShadowEvaluation> running = new ConcurrentHashMap<>();
 
     public DryRunMonitor(
@@ -45,6 +48,8 @@ public class DryRunMonitor {
             PolicyRegistry policies,
             TargetSystemHealthEvaluator evaluator,
             TargetSystemLimitAdjuster adjuster,
+            BaselineEstimator baselines,
+            MaintenanceMonitor maintenance,
             ResponseJudge judge,
             FlowControlMetrics metrics,
             HealthProperties healthProperties,
@@ -53,12 +58,14 @@ public class DryRunMonitor {
         this.policies = policies;
         this.evaluator = evaluator;
         this.adjuster = adjuster;
+        this.baselines = baselines;
+        this.maintenance = maintenance;
         this.judge = judge;
         this.metrics = metrics;
-        this.thresholds = TargetSystemHealthEvaluator.thresholdsOf(healthProperties);
+        this.rules = healthProperties.rules();
         this.rateRule = TargetSystemLimitAdjuster.ruleOf(adjustmentProperties, healthProperties);
-        this.requiredGoodCount = TargetSystemHealthEvaluator.requiredGoodCountOf(healthProperties);
         this.window = healthProperties.window();
+        this.maxSamples = healthProperties.minimumCalls();
     }
 
     public synchronized void refresh() {
@@ -105,7 +112,10 @@ public class DryRunMonitor {
             }
 
             try {
-                evaluation.evaluate(now, nowNanos, adjuster.serversOf(targetSystemId));
+                evaluation.evaluate(now, nowNanos, adjuster.serversOf(targetSystemId),
+                        candidateBaseline(evaluation.dryRun()),
+                        maintenance.isActive(targetSystemId),
+                        evaluator.snapshotOf(targetSystemId).mode() == HealthMode.LOW_TRAFFIC);
             } catch (RuntimeException e) {
                 log.warn("dry-run 상태 판정 실패 : {}", targetSystemId, e);
             }
@@ -185,15 +195,20 @@ public class DryRunMonitor {
                 evaluator.statusOf(targetSystemId),
                 adjuster.appliedRateOf(targetSystemId),
                 judge,
-                thresholds,
+                rules,
                 rateRule,
-                requiredGoodCount,
                 window,
+                maxSamples,
+                candidateBaseline(dryRun),
                 metrics,
                 now,
                 System.nanoTime()));
 
         log.info("dry-run 을 시작했습니다 : {} 버전 {} 기준, {} 까지", targetSystemId, dryRun.baseVersion(), dryRun.expiresAt());
+    }
+
+    private Duration candidateBaseline(DryRun dryRun) {
+        return baselines.effective(dryRun.targetSystemId(), dryRun.candidate().limits().baselineRtt());
     }
 
     private void stop(String targetSystemId, String reason) {

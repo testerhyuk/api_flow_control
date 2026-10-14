@@ -41,6 +41,14 @@ public record OutcomeStatistics(
         return (double) badCount / sampleCount;
     }
 
+    public static boolean isSample(OutcomeKind kind) {
+        return categoryOf(kind) != Category.EXCLUDED;
+    }
+
+    public static boolean isFailure(OutcomeKind kind) {
+        return categoryOf(kind) == Category.BAD;
+    }
+
     private enum Category { NOT_BAD, BAD, EXCLUDED }
 
     private static Category categoryOf(OutcomeKind kind) {

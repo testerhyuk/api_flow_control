@@ -1,5 +1,6 @@
 package com.hyuk.flow_control.adapter.kafka;
 
+import com.hyuk.flow_control.domain.expiry.ExpiryPoint;
 import com.hyuk.flow_control.domain.request.OutcomeKind;
 import com.hyuk.flow_control.domain.retry.DeadLetterReason;
 import com.hyuk.flow_control.domain.retry.DeliveryContext;
@@ -8,6 +9,7 @@ import org.apache.kafka.common.header.Header;
 import org.apache.kafka.common.header.Headers;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 
 public final class FailureHeaders {
@@ -21,6 +23,11 @@ public final class FailureHeaders {
     public static final String ERROR = "flow-control-error";
     public static final String STATUS_CODE = "flow-control-status-code";
     public static final String RESULT_CODE = "flow-control-result-code";
+    public static final String EXPIRY_REASON = "flow-control-expiry-reason";
+    public static final String EXPIRED_WHERE = "flow-control-expired-where";
+    public static final String EXPIRED_AGE_MS = "flow-control-expired-age-ms";
+
+    public static final String TTL_EXCEEDED = "ttl_exceeded";
 
     private FailureHeaders() {
     }
@@ -39,6 +46,12 @@ public final class FailureHeaders {
         put(headers, ERROR, error);
     }
 
+    public static void writeExpiry(Headers headers, ExpiryPoint where, Duration age) {
+        put(headers, EXPIRY_REASON, TTL_EXCEEDED);
+        put(headers, EXPIRED_WHERE, where.label());
+        put(headers, EXPIRED_AGE_MS, age.toMillis());
+    }
+
     public static void writeResponseCodes(Headers headers, Integer statusCode, String resultCode) {
         put(headers, STATUS_CODE, statusCode);
         put(headers, RESULT_CODE, resultCode);
@@ -53,7 +66,8 @@ public final class FailureHeaders {
                 attempts == null ? 0 : Integer.parseInt(attempts),
                 instant(read(headers, FIRST_FAILED_AT)),
                 instant(read(headers, LAST_FAILED_AT)),
-                origin == null ? fallbackOrigin : origin);
+                origin == null ? fallbackOrigin : origin,
+                kind(read(headers, LAST_KIND)));
     }
 
     public static String read(Headers headers, String key) {
@@ -70,5 +84,16 @@ public final class FailureHeaders {
 
     private static Instant instant(String value) {
         return value == null ? null : Instant.parse(value);
+    }
+
+    private static OutcomeKind kind(String value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return OutcomeKind.valueOf(value);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 }

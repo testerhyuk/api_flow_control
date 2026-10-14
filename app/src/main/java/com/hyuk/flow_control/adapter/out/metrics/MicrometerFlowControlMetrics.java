@@ -1,8 +1,13 @@
 package com.hyuk.flow_control.adapter.out.metrics;
 
 import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
+import com.hyuk.flow_control.domain.expiry.ExpiryPoint;
+import com.hyuk.flow_control.domain.health.HealthMode;
 import com.hyuk.flow_control.domain.health.HealthState;
+import com.hyuk.flow_control.domain.health.LowTrafficEvent;
+import com.hyuk.flow_control.domain.health.SuppressedBy;
 import com.hyuk.flow_control.domain.limit.LimitStore;
+import com.hyuk.flow_control.domain.maintenance.MaintenanceSource;
 import com.hyuk.flow_control.domain.request.OutcomeKind;
 import com.hyuk.flow_control.domain.retry.DeadLetterReason;
 import com.hyuk.flow_control.domain.retry.RetryStage;
@@ -15,20 +20,12 @@ import java.time.Duration;
 
 @Component
 public class MicrometerFlowControlMetrics implements FlowControlMetrics {
-    private static final Duration[] LATENCY_BUCKETS = {
-            Duration.ofMillis(10),
-            Duration.ofMillis(25),
-            Duration.ofMillis(50),
-            Duration.ofMillis(100),
-            Duration.ofMillis(200),
-            Duration.ofMillis(300),
-            Duration.ofMillis(500),
-            Duration.ofSeconds(1),
-            Duration.ofSeconds(2),
-            Duration.ofSeconds(3),
-            Duration.ofSeconds(5)
-    };
-
+    private static final Duration OUTBOUND_LATENCY_MIN = Duration.ofMillis(1);
+    private static final Duration OUTBOUND_LATENCY_MAX = Duration.ofSeconds(10);
+    private static final Duration INTAKE_WAIT_MIN = Duration.ofMillis(1);
+    private static final Duration INTAKE_WAIT_MAX = Duration.ofMinutes(10);
+    private static final Duration REQUEST_AGE_MIN = Duration.ofMillis(100);
+    private static final Duration REQUEST_AGE_MAX = Duration.ofMinutes(10);
     private static final Duration REDIS_LATENCY_MIN = Duration.ofNanos(100_000);
     private static final Duration REDIS_LATENCY_MAX = Duration.ofMillis(50);
 
@@ -49,7 +46,9 @@ public class MicrometerFlowControlMetrics implements FlowControlMetrics {
         Timer.builder("flow.control.outbound.latency")
                 .tag("target", targetSystemId)
                 .tag("kind", kind.name())
-                .serviceLevelObjectives(LATENCY_BUCKETS)
+                .publishPercentileHistogram()
+                .minimumExpectedValue(OUTBOUND_LATENCY_MIN)
+                .maximumExpectedValue(OUTBOUND_LATENCY_MAX)
                 .register(registry)
                 .record(latency);
     }
@@ -78,7 +77,9 @@ public class MicrometerFlowControlMetrics implements FlowControlMetrics {
     public void recordIntakeWait(String targetSystemId, Duration waited) {
         Timer.builder("flow.control.intake.wait")
                 .tag("target", targetSystemId)
-                .serviceLevelObjectives(LATENCY_BUCKETS)
+                .publishPercentileHistogram()
+                .minimumExpectedValue(INTAKE_WAIT_MIN)
+                .maximumExpectedValue(INTAKE_WAIT_MAX)
                 .register(registry)
                 .record(waited);
     }
@@ -211,6 +212,70 @@ public class MicrometerFlowControlMetrics implements FlowControlMetrics {
                 .tag("reason", timeout ? "timeout" : "failure")
                 .register(registry)
                 .increment();
+    }
+
+    @Override
+    public void recordSuppressed(String targetSystemId, SuppressedBy reason) {
+        Counter.builder("flow.control.health.suppressed")
+                .tag("target", targetSystemId)
+                .tag("reason", reason.name().toLowerCase())
+                .register(registry)
+                .increment();
+    }
+
+    @Override
+    public void recordModeTransition(String targetSystemId, HealthMode to) {
+        Counter.builder("flow.control.health.mode.transitions")
+                .tag("target", targetSystemId)
+                .tag("to", to.name().toLowerCase())
+                .register(registry)
+                .increment();
+    }
+
+    @Override
+    public void recordLowTrafficEvent(String targetSystemId, LowTrafficEvent event) {
+        Counter.builder("flow.control.health.low.traffic.events")
+                .tag("target", targetSystemId)
+                .tag("event", event.name().toLowerCase())
+                .register(registry)
+                .increment();
+    }
+
+    @Override
+    public void recordMaintenanceStarted(String targetSystemId, MaintenanceSource source) {
+        Counter.builder("flow.control.maintenance.started")
+                .tag("target", targetSystemId)
+                .tag("source", source.label())
+                .register(registry)
+                .increment();
+    }
+
+    @Override
+    public void recordMaintenanceExcluded(String targetSystemId) {
+        Counter.builder("flow.control.maintenance.excluded")
+                .tag("target", targetSystemId)
+                .register(registry)
+                .increment();
+    }
+
+    @Override
+    public void recordExpired(String targetSystemId, ExpiryPoint where) {
+        Counter.builder("flow.control.expired")
+                .tag("target", targetSystemId)
+                .tag("where", where.label())
+                .register(registry)
+                .increment();
+    }
+
+    @Override
+    public void recordRequestAge(String targetSystemId, Duration age) {
+        Timer.builder("flow.control.request.age")
+                .tag("target", targetSystemId)
+                .publishPercentileHistogram()
+                .minimumExpectedValue(REQUEST_AGE_MIN)
+                .maximumExpectedValue(REQUEST_AGE_MAX)
+                .register(registry)
+                .record(age);
     }
 
     private static Counter.Builder dryRunCounter(String name, String targetSystemId) {

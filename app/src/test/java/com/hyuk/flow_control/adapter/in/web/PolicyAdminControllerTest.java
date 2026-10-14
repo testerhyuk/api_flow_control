@@ -2,6 +2,9 @@ package com.hyuk.flow_control.adapter.in.web;
 
 import com.hyuk.flow_control.application.port.in.PolicyContent;
 import com.hyuk.flow_control.application.port.in.PolicyManagementUseCase;
+import com.hyuk.flow_control.domain.maintenance.MaintenanceSchedule;
+import com.hyuk.flow_control.domain.maintenance.OneTimeMaintenance;
+import com.hyuk.flow_control.domain.maintenance.RecurringMaintenance;
 import com.hyuk.flow_control.domain.policy.ChangeNote;
 import com.hyuk.flow_control.domain.policy.LoadedPolicy;
 import com.hyuk.flow_control.domain.policy.ManagedPolicy;
@@ -18,9 +21,13 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import java.time.DayOfWeek;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -34,6 +41,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.hamcrest.Matchers.startsWith;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -108,6 +116,70 @@ class PolicyAdminControllerTest {
         assertThat(content.getValue().limits().maxTps()).isEqualTo(80);
         assertThat(content.getValue().connection().readTimeout()).isEqualTo(Duration.ofSeconds(3));
         assertThat(content.getValue().response().resultField()).isEqualTo("/resultCode");
+    }
+
+    @Test
+    @DisplayName("점검 시간표를 보내면 한국 시간 기준 반복 점검과 특정 날짜 점검으로 넘긴다")
+    void createsWithMaintenance() throws Exception {
+        when(management.create(eq("target-d"), any(), any())).thenAnswer(invocation ->
+                ((PolicyContent) invocation.getArgument(1)).toPolicy("target-d", 1));
+        String policy = withMaintenance("""
+                {
+                  "recurring": [{"days": ["SATURDAY", "SUNDAY"], "start": "23:50", "end": "00:10"}],
+                  "oneTime": [{"start": "2026-10-20T01:00:00", "end": "2026-10-20T05:00:00"}]
+                }""");
+
+        mockMvc.perform(post("/admin/policies").contentType(MediaType.APPLICATION_JSON).content("""
+                        {"targetSystemId": "target-d", "policy": %s, "changedBy": "hyuk", "reason": "점검 등록"}
+                        """.formatted(policy)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.policy.maintenance.recurring[0].days[0]").value("SATURDAY"))
+                .andExpect(jsonPath("$.policy.maintenance.recurring[0].start").value(startsWith("23:50")))
+                .andExpect(jsonPath("$.policy.maintenance.oneTime[0].end").value(startsWith("2026-10-20T05:00")));
+
+        ArgumentCaptor<PolicyContent> content = ArgumentCaptor.forClass(PolicyContent.class);
+        verify(management).create(eq("target-d"), content.capture(), any());
+        assertThat(content.getValue().maintenance()).isEqualTo(new MaintenanceSchedule(
+                List.of(new RecurringMaintenance(Set.of(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY),
+                        LocalTime.of(23, 50), LocalTime.of(0, 10))),
+                List.of(new OneTimeMaintenance(LocalDateTime.of(2026, 10, 20, 1, 0),
+                        LocalDateTime.of(2026, 10, 20, 5, 0)))));
+    }
+
+    @Test
+    @DisplayName("점검 시간표를 보내지 않으면 점검 없음이다")
+    void createsWithoutMaintenance() throws Exception {
+        when(management.create(eq("target-d"), any(), any())).thenAnswer(invocation ->
+                ((PolicyContent) invocation.getArgument(1)).toPolicy("target-d", 1));
+
+        mockMvc.perform(post("/admin/policies").contentType(MediaType.APPLICATION_JSON).content("""
+                        {"targetSystemId": "target-d", "policy": %s, "changedBy": "hyuk", "reason": "새 기관"}
+                        """.formatted(POLICY_JSON)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.policy.maintenance.recurring").isEmpty())
+                .andExpect(jsonPath("$.policy.maintenance.oneTime").isEmpty());
+
+        ArgumentCaptor<PolicyContent> content = ArgumentCaptor.forClass(PolicyContent.class);
+        verify(management).create(eq("target-d"), content.capture(), any());
+        assertThat(content.getValue().maintenance()).isEqualTo(MaintenanceSchedule.none());
+    }
+
+    @Test
+    @DisplayName("점검 끝 일시가 시작 일시보다 앞이면 400 이다")
+    void rejectsInvalidMaintenance() throws Exception {
+        String policy = withMaintenance("""
+                {"oneTime": [{"start": "2026-10-20T05:00:00", "end": "2026-10-20T01:00:00"}]}""");
+
+        mockMvc.perform(post("/admin/policies").contentType(MediaType.APPLICATION_JSON).content("""
+                        {"targetSystemId": "target-d", "policy": %s, "changedBy": "hyuk", "reason": "잘못된 점검"}
+                        """.formatted(policy)))
+                .andExpect(status().isBadRequest());
+
+        verify(management, never()).create(any(), any(), any());
+    }
+
+    private static String withMaintenance(String maintenance) {
+        return POLICY_JSON.substring(0, POLICY_JSON.lastIndexOf('}')) + ", \"maintenance\": " + maintenance + "}";
     }
 
     @Test

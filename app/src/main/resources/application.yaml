@@ -27,6 +27,7 @@ management:
         include: health, prometheus
 
 flow-control:
+  control-mode: adaptive
   health:
     window: 10s
     evaluation-interval: 1s
@@ -35,6 +36,30 @@ flow-control:
     critical-failure-rate: 0.50
     degraded-latency-multiplier: 2.0
     recovery-duration: 30s
+    anti-oscillation: true
+    recovery-threshold:
+      degraded-failure-rate: 0.05
+      critical-failure-rate: 0.25
+      latency-multiplier: 1.5
+    degraded-streak: 3
+    low-traffic:
+      enter-after: 3
+      rate-ratio: 0.5
+      too-many-requests: 1
+      consecutive-failures: 3
+      consecutive-timeouts: 3
+    baseline-auto: true
+    baseline:
+      window: 10m
+      minimum-samples: 100
+      lower-ratio: 0.5
+      upper-ratio: 1.5
+  maintenance:
+    probe-interval: 30s
+    resume-rate-ratio: 0.5
+  intake:
+    request-ttl: 10m
+    lag-interval: 5s
   limit-adjustment:
     degraded-ratio: 0.5
     recovery-step: 0.05

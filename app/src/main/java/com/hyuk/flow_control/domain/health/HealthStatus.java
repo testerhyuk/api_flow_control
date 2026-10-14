@@ -2,7 +2,8 @@ package com.hyuk.flow_control.domain.health;
 
 public record HealthStatus(
         HealthState state,
-        int consecutiveGoodCount
+        int consecutiveGoodCount,
+        int degradedStreak
 ) {
     public HealthStatus {
         if (state == null) {
@@ -11,46 +12,73 @@ public record HealthStatus(
         if (consecutiveGoodCount < 0) {
             throw new IllegalArgumentException("consecutiveGoodCount는 0 이상이어야 합니다");
         }
+        if (degradedStreak < 0) {
+            throw new IllegalArgumentException("degradedStreak는 0 이상이어야 합니다");
+        }
+    }
+
+    public HealthStatus(HealthState state, int consecutiveGoodCount) {
+        this(state, consecutiveGoodCount, 0);
     }
 
     public static HealthStatus initial() {
-        return new HealthStatus(HealthState.HEALTHY, 0);
+        return of(HealthState.HEALTHY);
+    }
+
+    public static HealthStatus of(HealthState state) {
+        return new HealthStatus(state, 0, 0);
     }
 
     public HealthStatus next(HealthGrade grade, int requiredGoodCount) {
+        return next(grade, requiredGoodCount, 1);
+    }
+
+    public HealthStatus next(HealthGrade grade, int requiredGoodCount, int requiredDegradedStreak) {
         return switch (state) {
-            case HEALTHY -> afterHealthy(grade);
-            case DEGRADED, CRITICAL -> afterTrouble(grade);
-            case RECOVERING -> afterRecovering(grade, requiredGoodCount);
+            case HEALTHY -> afterHealthy(grade, requiredDegradedStreak);
+            case DEGRADED -> afterTrouble(grade, HealthState.DEGRADED);
+            case CRITICAL -> afterTrouble(grade, HealthState.CRITICAL);
+            case RECOVERING -> afterRecovering(grade, requiredGoodCount, requiredDegradedStreak);
         };
     }
 
-    private HealthStatus afterHealthy(HealthGrade grade) {
+    private HealthStatus afterHealthy(HealthGrade grade, int requiredDegradedStreak) {
         return switch (grade) {
-            case GOOD -> new HealthStatus(HealthState.HEALTHY, 0);
-            case DEGRADED -> new HealthStatus(HealthState.DEGRADED, 0);
-            case CRITICAL -> new HealthStatus(HealthState.CRITICAL, 0);
+            case GOOD, HOLD -> of(HealthState.HEALTHY);
+            case DEGRADED -> degradedOrStay(HealthState.HEALTHY, 0, requiredDegradedStreak);
+            case CRITICAL -> of(HealthState.CRITICAL);
         };
     }
 
-    private HealthStatus afterTrouble(HealthGrade grade) {
+    private HealthStatus afterTrouble(HealthGrade grade, HealthState current) {
         return switch (grade) {
-            case GOOD -> new HealthStatus(HealthState.RECOVERING, 1);
-            case DEGRADED -> new HealthStatus(HealthState.DEGRADED, 0);
-            case CRITICAL -> new HealthStatus(HealthState.CRITICAL, 0);
+            case GOOD -> new HealthStatus(HealthState.RECOVERING, 1, 0);
+            case HOLD -> of(HealthState.DEGRADED);
+            case DEGRADED -> of(HealthState.DEGRADED);
+            case CRITICAL -> of(HealthState.CRITICAL);
         };
     }
 
-    private HealthStatus afterRecovering(HealthGrade grade, int requiredGoodCount) {
-        if (grade != HealthGrade.GOOD) {
-            return new HealthStatus(HealthState.CRITICAL, 0);
-        }
+    private HealthStatus afterRecovering(HealthGrade grade, int requiredGoodCount, int requiredDegradedStreak) {
+        return switch (grade) {
+            case GOOD -> {
+                int goodCount = consecutiveGoodCount + 1;
+                yield goodCount >= requiredGoodCount
+                        ? of(HealthState.HEALTHY)
+                        : new HealthStatus(HealthState.RECOVERING, goodCount, 0);
+            }
+            case HOLD -> of(HealthState.RECOVERING);
+            case DEGRADED -> degradedOrStay(HealthState.RECOVERING, 0, requiredDegradedStreak);
+            case CRITICAL -> of(HealthState.CRITICAL);
+        };
+    }
 
-        int goodCount = consecutiveGoodCount + 1;
+    private HealthStatus degradedOrStay(HealthState stay, int goodCount, int requiredDegradedStreak) {
+        int streak = degradedStreak + 1;
 
-        if (goodCount >= requiredGoodCount) {
-            return new HealthStatus(HealthState.HEALTHY, 0);
+        if (streak >= requiredDegradedStreak) {
+            return of(HealthState.DEGRADED);
         }
-        return new HealthStatus(HealthState.RECOVERING, goodCount);
+        return new HealthStatus(stay, goodCount, streak);
     }
 }
