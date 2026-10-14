@@ -46,6 +46,8 @@ public class RequestHandlingService implements RequestHandlingUseCase {
         } catch (IntakeInterruptedException e) {
             throw e;
         } catch (RuntimeException e) {
+            log.warn("요청 처리 중 예외가 났습니다 : {} {} {}",
+                    request.targetSystemId(), request.requestId(), context.origin(), e);
             return deadLetter(request, context.afterFailure(Instant.now()),
                     DeadLetterReason.PROCESSING_ERROR, null, describe(e));
         }

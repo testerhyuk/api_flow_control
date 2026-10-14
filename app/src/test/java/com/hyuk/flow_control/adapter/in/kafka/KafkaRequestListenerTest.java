@@ -74,6 +74,17 @@ class KafkaRequestListenerTest {
     }
 
     @Test
+    @DisplayName("본문이 비어 있으면 잘못된 메시지로 넘긴다")
+    void rejectsBlankPayload() {
+        listener(null).onMessage(record(TOPIC, """
+                {"requestId":"req-1","targetSystemId":"target-a","payload":" ","createdAt":"2026-10-13T09:00:00Z"}
+                """, System.currentTimeMillis(), new RecordHeaders()));
+
+        verify(handling).rejectInvalid(eq("target-a"), any(), any(), eq("필수 값이 빠졌습니다"));
+        verify(handling, never()).handle(any(), any());
+    }
+
+    @Test
     @DisplayName("메시지의 대상이 토픽의 대상과 다르면 잘못된 메시지로 넘긴다")
     void rejectsTargetMismatch() {
         listener(null).onMessage(record(TOPIC, """
