@@ -5,11 +5,13 @@ import com.hyuk.flow_control.domain.health.HealthState;
 import com.hyuk.flow_control.domain.request.OutcomeKind;
 import com.hyuk.flow_control.domain.retry.DeadLetterReason;
 import com.hyuk.flow_control.domain.retry.RetryStage;
+import com.hyuk.flow_control.support.TestcontainersConfiguration;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 
 import java.io.IOException;
 import java.net.URI;
@@ -27,6 +29,7 @@ import static org.assertj.core.api.Assertions.assertThat;
                 "flow-control.intake.auto-startup=false",
                 "spring.kafka.admin.auto-create=false"
         })
+@Import(TestcontainersConfiguration.class)
 class MetricsEndpointTest {
     private final HttpClient httpClient = HttpClient.newHttpClient();
 
@@ -55,7 +58,10 @@ class MetricsEndpointTest {
                 .contains("flow_control_limit_rate{target=\"target-a\"}")
                 .contains("flow_control_limit_rate_max{target=\"target-a\"}")
                 .contains("flow_control_limit_concurrency{target=\"target-a\"}")
-                .contains("flow_control_inflight{target=\"target-a\"}");
+                .contains("flow_control_inflight{target=\"target-a\"}")
+                .contains("flow_control_policy_version{target=\"target-a\"} 1.0")
+                .contains("flow_control_dryrun_active{target=\"target-a\"} 0.0")
+                .contains("flow_control_intake_redeploy_required{target=\"target-a\"} 0.0");
     }
 
     @Test
@@ -68,6 +74,8 @@ class MetricsEndpointTest {
         metrics.recordRetryScheduled("target-b", RetryStage.FIRST, OutcomeKind.TIMEOUT);
         metrics.recordRetrySucceeded("target-b", RetryStage.FIRST);
         metrics.recordDeadLetter("target-b", DeadLetterReason.RETRY_EXHAUSTED);
+        metrics.recordDryRunBlockedByTokenBucket("target-b");
+        metrics.recordDryRunJudgmentChange("target-b", OutcomeKind.BUSINESS_REJECTED, OutcomeKind.SERVER_ERROR);
 
         String body = get(managementPort, "/actuator/prometheus").body();
 
@@ -79,7 +87,9 @@ class MetricsEndpointTest {
                 .contains("flow_control_intake_wait_seconds_bucket{target=\"target-b\",le=\"0.2\"} 1")
                 .contains("flow_control_retry_scheduled_total{kind=\"TIMEOUT\",stage=\"1s\",target=\"target-b\"}")
                 .contains("flow_control_retry_succeeded_total{stage=\"1s\",target=\"target-b\"}")
-                .contains("flow_control_dlq_sent_total{reason=\"retry_exhausted\",target=\"target-b\"}");
+                .contains("flow_control_dlq_sent_total{reason=\"retry_exhausted\",target=\"target-b\"}")
+                .contains("flow_control_dryrun_would_block_total{reason=\"token_bucket\",target=\"target-b\"}")
+                .contains("flow_control_dryrun_judgment_changes_total{actual=\"BUSINESS_REJECTED\",candidate=\"SERVER_ERROR\",target=\"target-b\"}");
     }
 
     @Test

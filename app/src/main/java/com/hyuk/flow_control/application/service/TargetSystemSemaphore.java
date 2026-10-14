@@ -1,23 +1,32 @@
 package com.hyuk.flow_control.application.service;
 
+import com.hyuk.flow_control.application.port.out.PolicyChangeListener;
 import com.hyuk.flow_control.application.port.out.TargetSystemPolicyReader;
+import com.hyuk.flow_control.domain.policy.ManagedPolicy;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
-import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 @Component
-public class TargetSystemSemaphore {
-    private final Map<String, Permits> permits;
+@Order(0)
+public class TargetSystemSemaphore implements PolicyChangeListener {
+    private final Map<String, Permits> permits = new ConcurrentHashMap<>();
 
     public TargetSystemSemaphore(TargetSystemPolicyReader policyReader) {
-        Map<String, Permits> created = new HashMap<>();
-
         policyReader.readAll().forEach((targetSystemId, policy) ->
-                created.put(targetSystemId, new Permits(policy.concurrencyLimit())));
+                permits.put(targetSystemId, new Permits(policy.concurrencyLimit())));
+    }
 
-        this.permits = Map.copyOf(created);
+    @Override
+    public void onPolicyAdded(ManagedPolicy policy) {
+        permits.putIfAbsent(policy.targetSystemId(), new Permits(policy.limits().concurrencyLimit()));
+    }
+
+    @Override
+    public void onPolicyChanged(ManagedPolicy before, ManagedPolicy after) {
     }
 
     public boolean tryAcquire(String targetSystemId) {

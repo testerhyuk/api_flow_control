@@ -107,6 +107,85 @@ public class MicrometerFlowControlMetrics implements FlowControlMetrics {
                 .increment();
     }
 
+    @Override
+    public void recordPolicyRefreshFailure() {
+        Counter.builder("flow.control.policy.refresh.failures")
+                .register(registry)
+                .increment();
+    }
+
+    @Override
+    public void recordInvalidPolicy(String targetSystemId) {
+        Counter.builder("flow.control.policy.invalid")
+                .tag("target", targetSystemId)
+                .register(registry)
+                .increment();
+    }
+
+    @Override
+    public void recordDryRunObserved(String targetSystemId) {
+        dryRunCounter("flow.control.dryrun.observed", targetSystemId).register(registry).increment();
+    }
+
+    @Override
+    public void recordDryRunBlockedBySemaphore(String targetSystemId) {
+        dryRunCounter("flow.control.dryrun.would.block", targetSystemId)
+                .tag("reason", "semaphore")
+                .register(registry)
+                .increment();
+    }
+
+    @Override
+    public void recordDryRunBlockedByTokenBucket(String targetSystemId) {
+        dryRunCounter("flow.control.dryrun.would.block", targetSystemId)
+                .tag("reason", "token_bucket")
+                .register(registry)
+                .increment();
+    }
+
+    @Override
+    public void recordDryRunWaited(String targetSystemId) {
+        dryRunCounter("flow.control.dryrun.waited", targetSystemId).register(registry).increment();
+    }
+
+    @Override
+    public void recordDryRunJudgmentChange(String targetSystemId, OutcomeKind actual, OutcomeKind candidate) {
+        dryRunCounter("flow.control.dryrun.judgment.changes", targetSystemId)
+                .tag("actual", actual.name())
+                .tag("candidate", candidate.name())
+                .register(registry)
+                .increment();
+    }
+
+    @Override
+    public void recordDryRunTimeout(String targetSystemId) {
+        dryRunCounter("flow.control.dryrun.timeouts", targetSystemId)
+                .tag("result", "would_timeout")
+                .register(registry)
+                .increment();
+    }
+
+    @Override
+    public void recordDryRunUnknownTimeout(String targetSystemId) {
+        dryRunCounter("flow.control.dryrun.timeouts", targetSystemId)
+                .tag("result", "unknown")
+                .register(registry)
+                .increment();
+    }
+
+    @Override
+    public void recordDryRunStateTransition(String targetSystemId, HealthState from, HealthState to) {
+        dryRunCounter("flow.control.dryrun.health.transitions", targetSystemId)
+                .tag("from", from.name())
+                .tag("to", to.name())
+                .register(registry)
+                .increment();
+    }
+
+    private static Counter.Builder dryRunCounter(String name, String targetSystemId) {
+        return Counter.builder(name).tag("target", targetSystemId);
+    }
+
     private void recordBlocked(String targetSystemId, String reason) {
         Counter.builder("flow.control.outbound.blocked.attempts")
                 .tag("target", targetSystemId)

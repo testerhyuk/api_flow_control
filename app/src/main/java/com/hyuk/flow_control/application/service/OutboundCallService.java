@@ -17,18 +17,21 @@ public class OutboundCallService implements OutboundCallUseCase {
     private final TargetSystemRateLimiter rateLimiter;
     private final TargetSystemOutcomeRecorder recorder;
     private final FlowControlMetrics metrics;
+    private final DryRunMonitor dryRuns;
 
     public OutboundCallService(
             TargetSystemClient client,
             TargetSystemSemaphore semaphore,
             TargetSystemRateLimiter rateLimiter,
             TargetSystemOutcomeRecorder recorder,
-            FlowControlMetrics metrics) {
+            FlowControlMetrics metrics,
+            DryRunMonitor dryRuns) {
         this.client = client;
         this.semaphore = semaphore;
         this.rateLimiter = rateLimiter;
         this.recorder = recorder;
         this.metrics = metrics;
+        this.dryRuns = dryRuns;
     }
 
     @Override
@@ -48,7 +51,13 @@ public class OutboundCallService implements OutboundCallUseCase {
                 return new CallAttempt.BlockedByTokenBucket(ratelimit.retryAfter());
             }
 
-            OutboundResult result = client.call(request);
+            DryRunMonitor.Observation observation = dryRuns.beforeCall(targetSystemId);
+            OutboundResult result = null;
+            try {
+                result = client.call(request);
+            } finally {
+                observation.finish(result);
+            }
 
             recorder.record(targetSystemId, result.kind(), result.latency());
             metrics.recordCall(targetSystemId, result.kind(), result.latency());

@@ -23,4 +23,24 @@ public interface FlowControlMetrics {
     void recordRetrySucceeded(String targetSystemId, RetryStage stage);
 
     void recordDeadLetter(String targetSystemId, DeadLetterReason reason);
+
+    void recordPolicyRefreshFailure();
+
+    void recordInvalidPolicy(String targetSystemId);
+
+    void recordDryRunObserved(String targetSystemId);
+
+    void recordDryRunBlockedBySemaphore(String targetSystemId);
+
+    void recordDryRunBlockedByTokenBucket(String targetSystemId);
+
+    void recordDryRunWaited(String targetSystemId);
+
+    void recordDryRunJudgmentChange(String targetSystemId, OutcomeKind actual, OutcomeKind candidate);
+
+    void recordDryRunTimeout(String targetSystemId);
+
+    void recordDryRunUnknownTimeout(String targetSystemId);
+
+    void recordDryRunStateTransition(String targetSystemId, HealthState from, HealthState to);
 }

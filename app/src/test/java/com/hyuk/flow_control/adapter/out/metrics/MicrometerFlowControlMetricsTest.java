@@ -147,6 +147,57 @@ class MicrometerFlowControlMetricsTest {
                 .tags("target", "target-a", "reason", "invalid_message").counter().count()).isEqualTo(2.0);
     }
 
+    @Test
+    @DisplayName("정책을 다시 읽지 못한 횟수와 잘못된 정책 수를 센다")
+    void countsPolicyProblems() {
+        metrics.recordPolicyRefreshFailure();
+        metrics.recordInvalidPolicy("target-a");
+
+        assertThat(registry.get("flow.control.policy.refresh.failures").counter().count()).isEqualTo(1.0);
+        assertThat(registry.get("flow.control.policy.invalid").tags("target", "target-a").counter().count())
+                .isEqualTo(1.0);
+    }
+
+    @Test
+    @DisplayName("dry-run 에서 본 호출, 막혔을 호출, 기다린 호출을 센다")
+    void countsDryRunCalls() {
+        metrics.recordDryRunObserved("target-a");
+        metrics.recordDryRunObserved("target-a");
+        metrics.recordDryRunBlockedBySemaphore("target-a");
+        metrics.recordDryRunBlockedByTokenBucket("target-a");
+        metrics.recordDryRunWaited("target-a");
+
+        assertThat(dryRunCount("flow.control.dryrun.observed")).isEqualTo(2.0);
+        assertThat(registry.get("flow.control.dryrun.would.block")
+                .tags("target", "target-a", "reason", "semaphore").counter().count()).isEqualTo(1.0);
+        assertThat(registry.get("flow.control.dryrun.would.block")
+                .tags("target", "target-a", "reason", "token_bucket").counter().count()).isEqualTo(1.0);
+        assertThat(dryRunCount("flow.control.dryrun.waited")).isEqualTo(1.0);
+    }
+
+    @Test
+    @DisplayName("dry-run 의 판단 차이, timeout, 상태 변경을 센다")
+    void countsDryRunJudgments() {
+        metrics.recordDryRunJudgmentChange("target-a", OutcomeKind.BUSINESS_REJECTED, OutcomeKind.SERVER_ERROR);
+        metrics.recordDryRunTimeout("target-a");
+        metrics.recordDryRunUnknownTimeout("target-a");
+        metrics.recordDryRunStateTransition("target-a", HealthState.HEALTHY, HealthState.DEGRADED);
+
+        assertThat(registry.get("flow.control.dryrun.judgment.changes")
+                .tags("target", "target-a", "actual", "BUSINESS_REJECTED", "candidate", "SERVER_ERROR")
+                .counter().count()).isEqualTo(1.0);
+        assertThat(registry.get("flow.control.dryrun.timeouts")
+                .tags("target", "target-a", "result", "would_timeout").counter().count()).isEqualTo(1.0);
+        assertThat(registry.get("flow.control.dryrun.timeouts")
+                .tags("target", "target-a", "result", "unknown").counter().count()).isEqualTo(1.0);
+        assertThat(registry.get("flow.control.dryrun.health.transitions")
+                .tags("target", "target-a", "from", "HEALTHY", "to", "DEGRADED").counter().count()).isEqualTo(1.0);
+    }
+
+    private double dryRunCount(String name) {
+        return registry.get(name).tags("target", "target-a").counter().count();
+    }
+
     private double callCount(String target, String kind) {
         return registry.get("flow.control.outbound.calls").tags("target", target, "kind", kind).counter().count();
     }

@@ -1,8 +1,11 @@
 package com.hyuk.flow_control.adapter.out.http;
 
-import com.hyuk.flow_control.config.TargetSystemProperties;
+import com.hyuk.flow_control.domain.policy.ResponseRuleSet;
 import com.hyuk.flow_control.domain.request.OutcomeKind;
+import tools.jackson.core.JacksonException;
 import tools.jackson.core.JsonPointer;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -13,7 +16,7 @@ public class ResponseRules {
     private final JsonPointer resultField;
     private final Map<String, OutcomeKind> resultCodes;
 
-    public ResponseRules(TargetSystemProperties.Response response) {
+    public ResponseRules(ResponseRuleSet response) {
         Map<Integer, OutcomeKind> exact = new HashMap<>();
         Map<Integer, OutcomeKind> classes = new HashMap<>();
 
@@ -35,8 +38,22 @@ public class ResponseRules {
         return resultField != null;
     }
 
-    public JsonPointer resultField() {
-        return resultField;
+    public String readResultCode(String body, JsonMapper jsonMapper) {
+        if (!readsResultCode() || body == null || body.isBlank()) {
+            return null;
+        }
+
+        try {
+            JsonNode value = jsonMapper.readTree(body).at(resultField);
+
+            if (value.isMissingNode() || value.isNull() || value.isObject() || value.isArray()) {
+                return null;
+            }
+
+            return value.asString();
+        } catch (JacksonException e) {
+            return null;
+        }
     }
 
     public OutcomeKind judge(int statusCode, String resultCode) {

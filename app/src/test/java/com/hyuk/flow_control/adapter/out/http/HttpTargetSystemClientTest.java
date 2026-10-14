@@ -1,6 +1,10 @@
 package com.hyuk.flow_control.adapter.out.http;
 
-import com.hyuk.flow_control.config.TargetSystemProperties;
+import com.hyuk.flow_control.application.service.PolicyRegistry;
+import com.hyuk.flow_control.domain.policy.ConnectionSettings;
+import com.hyuk.flow_control.domain.policy.ManagedPolicy;
+import com.hyuk.flow_control.domain.policy.ResponseRuleSet;
+import com.hyuk.flow_control.domain.policy.TargetSystemPolicy;
 import com.hyuk.flow_control.domain.request.OutboundRequest;
 import com.hyuk.flow_control.domain.request.OutboundResult;
 import com.hyuk.flow_control.domain.request.OutcomeKind;
@@ -20,12 +24,15 @@ import java.net.ServerSocket;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class HttpTargetSystemClientTest {
     private static final String TARGET = "target-a";
@@ -35,14 +42,14 @@ class HttpTargetSystemClientTest {
     private static final String BODY_TARGET = "target-b";
     private static final OutboundRequest REQUEST = new OutboundRequest("req-1", TARGET, PAYLOAD, Instant.now());
     private static final OutboundRequest BODY_REQUEST = new OutboundRequest("req-2", BODY_TARGET, PAYLOAD, Instant.now());
-    private static final TargetSystemProperties.Response STATUS_ONLY = new TargetSystemProperties.Response(
+    private static final ResponseRuleSet STATUS_ONLY = new ResponseRuleSet(
             Map.of("2xx", OutcomeKind.SUCCESS,
                     "400", OutcomeKind.INVALID_REQUEST,
                     "429", OutcomeKind.TOO_MANY_REQUESTS,
                     "5xx", OutcomeKind.SERVER_ERROR,
                     "503", OutcomeKind.UNDER_MAINTENANCE),
             null, null);
-    private static final TargetSystemProperties.Response WITH_RESULT_CODE = new TargetSystemProperties.Response(
+    private static final ResponseRuleSet WITH_RESULT_CODE = new ResponseRuleSet(
             Map.of("2xx", OutcomeKind.SUCCESS,
                     "429", OutcomeKind.TOO_MANY_REQUESTS,
                     "5xx", OutcomeKind.SERVER_ERROR),
@@ -409,20 +416,14 @@ class HttpTargetSystemClientTest {
     }
 
     private static HttpTargetSystemClient clientFor(String url, Duration connectTimeout, Duration readTimeout) {
-        TargetSystemProperties properties = new TargetSystemProperties(Map.of(
-                TARGET, new TargetSystemProperties.TargetSystem(
-                        url, connectTimeout, readTimeout,
-                        100, Duration.ofMillis(100), 0.95, Duration.ofMillis(10), STATUS_ONLY),
-                BODY_TARGET, new TargetSystemProperties.TargetSystem(
-                        url, connectTimeout, readTimeout,
-                        100, Duration.ofMillis(100), 0.95, Duration.ofMillis(10), WITH_RESULT_CODE)
-        ));
-        RestClientConfig config = new RestClientConfig();
+        ConnectionSettings connection = new ConnectionSettings(url, connectTimeout, readTimeout);
+        TargetSystemPolicy limits = new TargetSystemPolicy(100, Duration.ofMillis(100), 0.95, Duration.ofMillis(10));
+        PolicyRegistry policies = mock(PolicyRegistry.class);
+        when(policies.policies()).thenReturn(List.of(
+                new ManagedPolicy(TARGET, 1, true, connection, limits, STATUS_ONLY),
+                new ManagedPolicy(BODY_TARGET, 1, true, connection, limits, WITH_RESULT_CODE)));
 
-        return new HttpTargetSystemClient(
-                config.targetSystemRestClients(properties),
-                config.targetSystemResponseRules(properties),
-                JsonMapper.builder().build());
+        return new HttpTargetSystemClient(new TargetSystemConnections(policies), JsonMapper.builder().build());
     }
 
     private static int closedPort() throws IOException {
