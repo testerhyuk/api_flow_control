@@ -5,6 +5,7 @@ import com.hyuk.flow_control.application.port.in.OutboundCallUseCase;
 import com.hyuk.flow_control.domain.request.CallAttempt;
 import com.hyuk.flow_control.domain.request.OutboundResult;
 import com.hyuk.flow_control.domain.request.OutcomeKind;
+import com.hyuk.flow_control.support.TestcontainersConfiguration;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.TopicDescription;
@@ -20,6 +21,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.kafka.test.EmbeddedKafkaBroker;
 import org.springframework.kafka.test.context.EmbeddedKafka;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -44,6 +46,7 @@ import static org.mockito.Mockito.when;
         "management.server.port=0"
 })
 @EmbeddedKafka
+@Import(TestcontainersConfiguration.class)
 class KafkaRequestIntakeIntegrationTest {
     private static final OutboundResult SUCCESS =
             new OutboundResult(OutcomeKind.SUCCESS, Duration.ofMillis(120), null, null, null, null);

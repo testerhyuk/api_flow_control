@@ -17,10 +17,12 @@ public class RequestIntakeService implements RequestIntakeUseCase {
 
     private final OutboundCallUseCase outboundCall;
     private final FlowControlMetrics metrics;
+    private final DryRunMonitor dryRuns;
 
-    public RequestIntakeService(OutboundCallUseCase outboundCall, FlowControlMetrics metrics) {
+    public RequestIntakeService(OutboundCallUseCase outboundCall, FlowControlMetrics metrics, DryRunMonitor dryRuns) {
         this.outboundCall = outboundCall;
         this.metrics = metrics;
+        this.dryRuns = dryRuns;
     }
 
     @Override
@@ -34,6 +36,9 @@ public class RequestIntakeService implements RequestIntakeUseCase {
             switch (attempt) {
                 case CallAttempt.Called called -> {
                     metrics.recordIntakeWait(request.targetSystemId(), waited);
+                    if (waited.isPositive()) {
+                        dryRuns.recordWaited(request.targetSystemId());
+                    }
                     return called.result();
                 }
                 case CallAttempt.BlockedBySemaphore blocked -> {

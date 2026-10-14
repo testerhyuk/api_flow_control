@@ -10,9 +10,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
-import tools.jackson.core.JacksonException;
-import tools.jackson.core.JsonPointer;
-import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.net.ConnectException;
@@ -28,22 +25,19 @@ import java.time.format.DateTimeParseException;
 public class HttpTargetSystemClient implements TargetSystemClient {
     private static final String REQUEST_ID_HEADER = "x-request-id";
 
-    private final TargetSystemRestClients restClients;
-    private final TargetSystemResponseRules responseRules;
+    private final TargetSystemConnections connections;
     private final JsonMapper jsonMapper;
 
-    public HttpTargetSystemClient(TargetSystemRestClients restClients,
-                                  TargetSystemResponseRules responseRules,
-                                  JsonMapper jsonMapper) {
-        this.restClients = restClients;
-        this.responseRules = responseRules;
+    public HttpTargetSystemClient(TargetSystemConnections connections, JsonMapper jsonMapper) {
+        this.connections = connections;
         this.jsonMapper = jsonMapper;
     }
 
     @Override
     public OutboundResult call(OutboundRequest request) {
-        RestClient restClient = restClients.get(request.targetSystemId());
-        ResponseRules rules = responseRules.get(request.targetSystemId());
+        TargetSystemConnections.Connection connection = connections.get(request.targetSystemId());
+        RestClient restClient = connection.restClient();
+        ResponseRules rules = connection.rules();
         long startedAt = System.nanoTime();
 
         try {
@@ -57,7 +51,7 @@ public class HttpTargetSystemClient implements TargetSystemClient {
 
             int statusCode = response.getStatusCode().value();
             String body = response.getBody();
-            String resultCode = rules.readsResultCode() ? resultCodeOf(body, rules.resultField()) : null;
+            String resultCode = rules.readResultCode(body, jsonMapper);
 
             return new OutboundResult(
                     rules.judge(statusCode, resultCode),
@@ -71,24 +65,6 @@ public class HttpTargetSystemClient implements TargetSystemClient {
             return new OutboundResult(fromFailureCause(e.getCause()), elapsedSince(startedAt), null, null, null, null);
         } catch (RestClientException e) {
             return new OutboundResult(OutcomeKind.SERVER_ERROR, elapsedSince(startedAt), null, null, null, null);
-        }
-    }
-
-    private String resultCodeOf(String body, JsonPointer resultField) {
-        if (body == null || body.isBlank()) {
-            return null;
-        }
-
-        try {
-            JsonNode value = jsonMapper.readTree(body).at(resultField);
-
-            if (value.isMissingNode() || value.isNull() || value.isObject() || value.isArray()) {
-                return null;
-            }
-
-            return value.asString();
-        } catch (JacksonException e) {
-            return null;
         }
     }
 

@@ -23,6 +23,7 @@ import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 class RequestIntakeServiceTest {
     private static final OutboundRequest REQUEST =
@@ -32,13 +33,15 @@ class RequestIntakeServiceTest {
 
     private OutboundCallUseCase outboundCall;
     private FlowControlMetrics metrics;
+    private DryRunMonitor dryRuns;
     private RequestIntakeService service;
 
     @BeforeEach
     void setUp() {
         outboundCall = mock(OutboundCallUseCase.class);
         metrics = mock(FlowControlMetrics.class);
-        service = new RequestIntakeService(outboundCall, metrics);
+        dryRuns = mock(DryRunMonitor.class);
+        service = new RequestIntakeService(outboundCall, metrics, dryRuns);
     }
 
     @Test
@@ -172,5 +175,27 @@ class RequestIntakeServiceTest {
         worker.join(2000);
 
         verify(metrics, never()).recordIntakeWait(any(), any());
+    }
+
+    @Test
+    @DisplayName("한도 때문에 기다렸다가 호출되면 dry-run 에 기다린 호출로 알린다")
+    void notifiesDryRunWhenWaited() {
+        when(outboundCall.send(REQUEST)).thenReturn(
+                new CallAttempt.BlockedBySemaphore(),
+                new CallAttempt.Called(RESULT));
+
+        service.process(REQUEST);
+
+        verify(dryRuns).recordWaited("target-a");
+    }
+
+    @Test
+    @DisplayName("기다리지 않고 바로 호출되면 dry-run 에 알리지 않는다")
+    void doesNotNotifyDryRunWithoutWaiting() {
+        when(outboundCall.send(REQUEST)).thenReturn(new CallAttempt.Called(RESULT));
+
+        service.process(REQUEST);
+
+        verifyNoInteractions(dryRuns);
     }
 }

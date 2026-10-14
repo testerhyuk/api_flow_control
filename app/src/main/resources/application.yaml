@@ -1,6 +1,10 @@
 spring:
   application:
     name: flow-control
+  datasource:
+    url: jdbc:postgresql://localhost:5432/flow_control
+    username: flow_control
+    password: flow_control
   kafka:
     bootstrap-servers: localhost:9092
     consumer:
@@ -29,55 +33,6 @@ flow-control:
   limit-adjustment:
     degraded-ratio: 0.5
     recovery-step: 0.05
-  target-systems:
-    target-a:
-      url: http://localhost:9001
-      connect-timeout: 1s
-      read-timeout: 3s
-      max-tps: 100
-      baseline-rtt: 150ms
-      safety-margin: 0.95
-      burst-window: 10ms
-      response:
-        status-codes:
-          "2xx": SUCCESS
-          "400": INVALID_REQUEST
-          "429": TOO_MANY_REQUESTS
-          "5xx": SERVER_ERROR
-        result-field: /resultCode
-        result-codes:
-          "0000": SUCCESS
-          "E100": BUSINESS_REJECTED
-          "E429": TOO_MANY_REQUESTS
-          "E500": SERVER_ERROR
-          "E900": UNDER_MAINTENANCE
-    target-b:
-      url: http://localhost:9002
-      connect-timeout: 1s
-      read-timeout: 3s
-      max-tps: 100
-      baseline-rtt: 150ms
-      safety-margin: 0.95
-      burst-window: 10ms
-      response:
-        status-codes:
-          "2xx": SUCCESS
-          "400": INVALID_REQUEST
-          "422": BUSINESS_REJECTED
-          "429": TOO_MANY_REQUESTS
-          "5xx": SERVER_ERROR
-    target-c:
-      url: http://localhost:9003
-      connect-timeout: 1s
-      read-timeout: 3s
-      max-tps: 100
-      baseline-rtt: 150ms
-      safety-margin: 0.95
-      burst-window: 10ms
-      response:
-        status-codes:
-          "2xx": SUCCESS
-          "400": INVALID_REQUEST
-          "422": BUSINESS_REJECTED
-          "429": TOO_MANY_REQUESTS
-          "5xx": SERVER_ERROR
+  policy:
+    refresh-interval: 5s
+    dry-run-max-duration: 30m

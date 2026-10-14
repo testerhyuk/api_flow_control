@@ -1,5 +1,6 @@
 package com.hyuk.flow_control.config;
 
+import com.hyuk.flow_control.application.service.DryRunMonitor;
 import com.hyuk.flow_control.application.service.TargetSystemHealthEvaluator;
 import com.hyuk.flow_control.application.service.TargetSystemLimitAdjuster;
 import org.junit.jupiter.api.DisplayName;
@@ -29,6 +30,7 @@ class HealthEvaluationSchedulingConfigTest {
                 .withUserConfiguration(PropertiesConfig.class, HealthEvaluationSchedulingConfig.class)
                 .withBean(TargetSystemHealthEvaluator.class, () -> evaluator)
                 .withBean(TargetSystemLimitAdjuster.class, () -> adjuster)
+                .withBean(DryRunMonitor.class, () -> mock(DryRunMonitor.class))
                 .withPropertyValues(
                         "flow-control.health.window=10s",
                         "flow-control.health.evaluation-interval=50ms",
@@ -44,20 +46,22 @@ class HealthEvaluationSchedulingConfigTest {
     }
 
     @Test
-    @DisplayName("한 번 실행할 때 판정을 먼저 하고 그다음에 한도를 조절한다")
+    @DisplayName("한 번 실행할 때 판정, 한도 조절, dry-run 판정 순서로 한다")
     void evaluatesBeforeAdjusting() {
         TargetSystemHealthEvaluator evaluator = mock(TargetSystemHealthEvaluator.class);
         TargetSystemLimitAdjuster adjuster = mock(TargetSystemLimitAdjuster.class);
+        DryRunMonitor dryRuns = mock(DryRunMonitor.class);
         HealthProperties properties = new HealthProperties(
                 Duration.ofSeconds(10), Duration.ofSeconds(1), 50, 0.10, 0.50, 2.0, Duration.ofSeconds(30));
         ScheduledTaskRegistrar registrar = new ScheduledTaskRegistrar();
 
-        new HealthEvaluationSchedulingConfig(evaluator, adjuster, properties).configureTasks(registrar);
+        new HealthEvaluationSchedulingConfig(evaluator, adjuster, dryRuns, properties).configureTasks(registrar);
         registrar.getFixedRateTaskList().getFirst().getRunnable().run();
 
-        InOrder order = inOrder(evaluator, adjuster);
+        InOrder order = inOrder(evaluator, adjuster, dryRuns);
         order.verify(evaluator).evaluateAll();
         order.verify(adjuster).adjustAll();
+        order.verify(dryRuns).evaluateAll();
     }
 
     @Configuration

@@ -1,7 +1,9 @@
 package com.hyuk.flow_control.adapter.out.ratelimit;
 
+import com.hyuk.flow_control.application.port.out.PolicyChangeListener;
 import com.hyuk.flow_control.application.port.out.TargetSystemPolicyReader;
 import com.hyuk.flow_control.application.port.out.TargetSystemRateLimiter;
+import com.hyuk.flow_control.domain.policy.ManagedPolicy;
 import com.hyuk.flow_control.domain.policy.TargetSystemPolicy;
 import com.hyuk.flow_control.domain.token.RateLimitResult;
 import io.github.bucket4j.Bandwidth;
@@ -9,26 +11,36 @@ import io.github.bucket4j.Bucket;
 import io.github.bucket4j.BucketConfiguration;
 import io.github.bucket4j.ConsumptionProbe;
 import io.github.bucket4j.TokensInheritanceStrategy;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
-import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Component
-public class Bucket4jTargetSystemRateLimiter implements TargetSystemRateLimiter {
-    private final Map<String, Bucket> buckets;
-    private final Map<String, TargetSystemPolicy> policies;
+@Order(0)
+public class Bucket4jTargetSystemRateLimiter implements TargetSystemRateLimiter, PolicyChangeListener {
+    private final Map<String, Bucket> buckets = new ConcurrentHashMap<>();
+    private final Map<String, TargetSystemPolicy> policies = new ConcurrentHashMap<>();
 
     public Bucket4jTargetSystemRateLimiter(TargetSystemPolicyReader policyReader) {
-        Map<String, Bucket> created = new HashMap<>();
+        policyReader.readAll().forEach(this::register);
+    }
 
-        policyReader.readAll().forEach((targetSystemId, policy) -> {
-            created.put(targetSystemId, createBucket(policy));
-        });
+    @Override
+    public void onPolicyAdded(ManagedPolicy policy) {
+        register(policy.targetSystemId(), policy.limits());
+    }
 
-        this.buckets = Map.copyOf(created);
-        this.policies = Map.copyOf(policyReader.readAll());
+    @Override
+    public void onPolicyChanged(ManagedPolicy before, ManagedPolicy after) {
+        policies.put(after.targetSystemId(), after.limits());
+    }
+
+    private void register(String targetSystemId, TargetSystemPolicy policy) {
+        policies.put(targetSystemId, policy);
+        buckets.putIfAbsent(targetSystemId, createBucket(policy));
     }
 
     @Override

@@ -35,6 +35,7 @@ class OutboundCallServiceTest {
     private OutboundCallService service;
     private TargetSystemOutcomeRecorder recorder;
     private FlowControlMetrics metrics;
+    private DryRunMonitor dryRuns;
 
     @BeforeEach
     void setUp() {
@@ -48,7 +49,9 @@ class OutboundCallServiceTest {
         client = mock(TargetSystemClient.class);
         recorder = mock(TargetSystemOutcomeRecorder.class);
         metrics = mock(FlowControlMetrics.class);
-        service = new OutboundCallService(client, semaphore, rateLimiter, recorder, metrics);
+        dryRuns = mock(DryRunMonitor.class);
+        when(dryRuns.beforeCall(TARGET)).thenReturn(DryRunMonitor.Observation.NONE);
+        service = new OutboundCallService(client, semaphore, rateLimiter, recorder, metrics, dryRuns);
     }
 
     @Test
@@ -174,5 +177,41 @@ class OutboundCallServiceTest {
                 .isInstanceOf(IllegalArgumentException.class);
 
         verifyNoInteractions(rateLimiter, client, metrics);
+    }
+
+    @Test
+    @DisplayName("외부를 호출할 때만 dry-run 에 호출 시작과 결과를 알린다")
+    void notifiesDryRunAroundCall() {
+        DryRunMonitor.Observation observation = mock(DryRunMonitor.Observation.class);
+        when(dryRuns.beforeCall(TARGET)).thenReturn(observation);
+        when(rateLimiter.tryConsume(TARGET)).thenReturn(RateLimitResult.allow());
+        when(client.call(REQUEST)).thenReturn(RESULT);
+
+        service.send(REQUEST);
+
+        verify(observation).finish(RESULT);
+    }
+
+    @Test
+    @DisplayName("외부 호출 중 예외가 나도 dry-run 에 호출이 끝났다고 알린다")
+    void notifiesDryRunWhenCallFails() {
+        DryRunMonitor.Observation observation = mock(DryRunMonitor.Observation.class);
+        when(dryRuns.beforeCall(TARGET)).thenReturn(observation);
+        when(rateLimiter.tryConsume(TARGET)).thenReturn(RateLimitResult.allow());
+        when(client.call(REQUEST)).thenThrow(new IllegalStateException("boom"));
+
+        assertThatThrownBy(() -> service.send(REQUEST)).isInstanceOf(IllegalStateException.class);
+
+        verify(observation).finish(null);
+    }
+
+    @Test
+    @DisplayName("한도에 막히면 dry-run 에 알리지 않는다")
+    void doesNotNotifyDryRunWhenBlocked() {
+        when(rateLimiter.tryConsume(TARGET)).thenReturn(RateLimitResult.reject(Duration.ofMillis(10)));
+
+        service.send(REQUEST);
+
+        verifyNoInteractions(dryRuns);
     }
 }

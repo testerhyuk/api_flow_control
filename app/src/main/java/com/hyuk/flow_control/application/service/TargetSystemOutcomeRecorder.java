@@ -1,36 +1,45 @@
 package com.hyuk.flow_control.application.service;
 
+import com.hyuk.flow_control.application.port.out.PolicyChangeListener;
 import com.hyuk.flow_control.application.port.out.TargetSystemPolicyReader;
 import com.hyuk.flow_control.config.HealthProperties;
 import com.hyuk.flow_control.domain.request.OutcomeKind;
 import com.hyuk.flow_control.domain.health.RecordedOutcome;
+import com.hyuk.flow_control.domain.policy.ManagedPolicy;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Deque;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 
 @Component
-public class TargetSystemOutcomeRecorder {
-    private final Map<String, Deque<RecordedOutcome>> outcomes;
+@Order(0)
+public class TargetSystemOutcomeRecorder implements PolicyChangeListener {
+    private final Map<String, Deque<RecordedOutcome>> outcomes = new ConcurrentHashMap<>();
     private final Duration window;
 
     public TargetSystemOutcomeRecorder(
             TargetSystemPolicyReader policyReader,
             HealthProperties healthProperties
             ) {
-        Map<String, Deque<RecordedOutcome>> created = new HashMap<>();
+        policyReader.readAll().keySet().forEach(targetSystemId ->
+                outcomes.put(targetSystemId, new ConcurrentLinkedDeque<>()));
 
-        policyReader.readAll().keySet().forEach(targetSystemId -> {
-            created.put(targetSystemId, new ConcurrentLinkedDeque<>());
-        });
-
-        this.outcomes = Map.copyOf(created);
         this.window = healthProperties.window();
+    }
+
+    @Override
+    public void onPolicyAdded(ManagedPolicy policy) {
+        outcomes.putIfAbsent(policy.targetSystemId(), new ConcurrentLinkedDeque<>());
+    }
+
+    @Override
+    public void onPolicyChanged(ManagedPolicy before, ManagedPolicy after) {
     }
 
     public void record(String targetSystemId, OutcomeKind kind, Duration latency) {
