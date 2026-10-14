@@ -61,6 +61,9 @@ class MetricsEndpointTest {
                 .contains("flow_control_inflight{target=\"target-a\"}")
                 .contains("flow_control_policy_version{target=\"target-a\"} 1.0")
                 .contains("flow_control_dryrun_active{target=\"target-a\"} 0.0")
+                .contains("flow_control_limit_rate_proposed{target=\"target-a\"}")
+                .contains("flow_control_limit_servers{target=\"target-a\"}")
+                .contains("flow_control_limit_store 1.0")
                 .contains("flow_control_intake_redeploy_required{target=\"target-a\"} 0.0");
     }
 
@@ -76,6 +79,8 @@ class MetricsEndpointTest {
         metrics.recordDeadLetter("target-b", DeadLetterReason.RETRY_EXHAUSTED);
         metrics.recordDryRunBlockedByTokenBucket("target-b");
         metrics.recordDryRunJudgmentChange("target-b", OutcomeKind.BUSINESS_REJECTED, OutcomeKind.SERVER_ERROR);
+        metrics.recordRedisLatency(Duration.ofNanos(400_000));
+        metrics.recordRedisError("token", true);
 
         String body = get(managementPort, "/actuator/prometheus").body();
 
@@ -89,7 +94,15 @@ class MetricsEndpointTest {
                 .contains("flow_control_retry_succeeded_total{stage=\"1s\",target=\"target-b\"}")
                 .contains("flow_control_dlq_sent_total{reason=\"retry_exhausted\",target=\"target-b\"}")
                 .contains("flow_control_dryrun_would_block_total{reason=\"token_bucket\",target=\"target-b\"}")
-                .contains("flow_control_dryrun_judgment_changes_total{actual=\"BUSINESS_REJECTED\",candidate=\"SERVER_ERROR\",target=\"target-b\"}");
+                .contains("flow_control_dryrun_judgment_changes_total{actual=\"BUSINESS_REJECTED\",candidate=\"SERVER_ERROR\",target=\"target-b\"}")
+                .contains("flow_control_redis_errors_total{operation=\"token\",reason=\"timeout\"}");
+        assertThat(body.lines()
+                .filter(line -> line.startsWith("flow_control_redis_latency_seconds_bucket{le=\""))
+                .map(line -> line.substring(line.indexOf("le=\"") + 4, line.indexOf("\"}")))
+                .filter(le -> !le.equals("+Inf"))
+                .map(Double::parseDouble))
+                .as("1ms 아래 구간")
+                .anyMatch(le -> le < 0.001);
     }
 
     @Test

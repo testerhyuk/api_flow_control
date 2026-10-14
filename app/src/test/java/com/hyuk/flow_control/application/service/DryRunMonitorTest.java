@@ -34,6 +34,7 @@ class DryRunMonitorTest {
 
     private DryRunRepository repository;
     private PolicyRegistry policies;
+    private TargetSystemLimitAdjuster adjuster;
     private DryRunMonitor monitor;
 
     @BeforeEach
@@ -41,12 +42,13 @@ class DryRunMonitorTest {
         repository = mock(DryRunRepository.class);
         policies = mock(PolicyRegistry.class);
         TargetSystemHealthEvaluator evaluator = mock(TargetSystemHealthEvaluator.class);
-        TargetSystemLimitAdjuster adjuster = mock(TargetSystemLimitAdjuster.class);
+        adjuster = mock(TargetSystemLimitAdjuster.class);
 
         when(policies.policyOf(TARGET)).thenReturn(BASE);
         when(evaluator.statusOf(TARGET)).thenReturn(HealthStatus.initial());
         when(evaluator.snapshotOf(TARGET)).thenReturn(HealthSnapshot.initial());
-        when(adjuster.rateOf(TARGET)).thenReturn(95.0);
+        when(adjuster.appliedRateOf(TARGET)).thenReturn(95.0);
+        when(adjuster.serversOf(TARGET)).thenReturn(1);
 
         monitor = new DryRunMonitor(repository, policies, evaluator, adjuster, mock(ResponseJudge.class),
                 mock(FlowControlMetrics.class),
@@ -160,6 +162,30 @@ class DryRunMonitorTest {
         monitor.refresh();
 
         assertThat(monitor.reportOf(dryRun(Instant.now().plus(Duration.ofMinutes(10))))).isEmpty();
+    }
+
+    @Test
+    @DisplayName("판정할 때 다른 서버가 있으면 겹친 시간을 쌓는다")
+    void tracksOverlapWithOtherServers() throws InterruptedException {
+        when(repository.loadAll()).thenReturn(List.of(dryRun(Instant.now().plus(Duration.ofMinutes(30)))));
+        monitor.refresh();
+        when(adjuster.serversOf(TARGET)).thenReturn(2);
+
+        Thread.sleep(20);
+        monitor.evaluateAll();
+
+        assertThat(monitor.overlapOf(TARGET).orElseThrow()).isPositive();
+    }
+
+    @Test
+    @DisplayName("dry-run 은 공용 버킷에 실제로 적용된 rate 에서 시작한다")
+    void startsFromAppliedRate() {
+        when(adjuster.appliedRateOf(TARGET)).thenReturn(47.5);
+        when(repository.loadAll()).thenReturn(List.of(dryRun(Instant.now().plus(Duration.ofMinutes(30)))));
+
+        monitor.refresh();
+
+        assertThat(monitor.rateOf(TARGET).orElseThrow()).isCloseTo(47.5, within(1e-9));
     }
 
     private static DryRun dryRun(Instant expiresAt) {

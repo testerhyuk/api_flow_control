@@ -56,6 +56,12 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql
 
+  redis:
+    image: redis:8.10.2
+    container_name: flow-control-redis
+    ports:
+      - "6379:6379"
+
   kafka-ui:
     image: kafbat/kafka-ui:v1.5.0
     container_name: flow-control-kafka-ui

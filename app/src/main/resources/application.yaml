@@ -5,6 +5,11 @@ spring:
     url: jdbc:postgresql://localhost:5432/flow_control
     username: flow_control
     password: flow_control
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      timeout: ${flow-control.shared-limit.redis-timeout}
   kafka:
     bootstrap-servers: localhost:9092
     consumer:
@@ -36,3 +41,7 @@ flow-control:
   policy:
     refresh-interval: 5s
     dry-run-max-duration: 30m
+  shared-limit:
+    proposal-ttl: 5s
+    redis-timeout: 50ms
+    recheck-interval: 5s

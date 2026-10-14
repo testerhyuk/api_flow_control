@@ -105,7 +105,7 @@ public class DryRunMonitor {
             }
 
             try {
-                evaluation.evaluate(now, nowNanos);
+                evaluation.evaluate(now, nowNanos, adjuster.serversOf(targetSystemId));
             } catch (RuntimeException e) {
                 log.warn("dry-run 상태 판정 실패 : {}", targetSystemId, e);
             }
@@ -142,7 +142,7 @@ public class DryRunMonitor {
         return Optional.of(evaluation.report(
                 Instant.now(),
                 evaluator.snapshotOf(targetSystemId).state(),
-                adjuster.rateOf(targetSystemId)));
+                adjuster.appliedRateOf(targetSystemId)));
     }
 
     public boolean isRunning(String targetSystemId) {
@@ -159,6 +159,10 @@ public class DryRunMonitor {
 
     public Optional<Integer> concurrencyLimitOf(String targetSystemId) {
         return Optional.ofNullable(running.get(targetSystemId)).map(ShadowEvaluation::concurrencyLimit);
+    }
+
+    public Optional<Duration> overlapOf(String targetSystemId) {
+        return Optional.ofNullable(running.get(targetSystemId)).map(ShadowEvaluation::overlap);
     }
 
     private void start(DryRun dryRun, Instant now) {
@@ -179,7 +183,7 @@ public class DryRunMonitor {
                 dryRun,
                 base,
                 evaluator.statusOf(targetSystemId),
-                adjuster.rateOf(targetSystemId),
+                adjuster.appliedRateOf(targetSystemId),
                 judge,
                 thresholds,
                 rateRule,

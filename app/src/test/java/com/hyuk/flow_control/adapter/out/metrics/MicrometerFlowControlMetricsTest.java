@@ -1,6 +1,7 @@
 package com.hyuk.flow_control.adapter.out.metrics;
 
 import com.hyuk.flow_control.domain.health.HealthState;
+import com.hyuk.flow_control.domain.limit.LimitStore;
 import com.hyuk.flow_control.domain.request.OutcomeKind;
 import com.hyuk.flow_control.domain.retry.DeadLetterReason;
 import com.hyuk.flow_control.domain.retry.RetryStage;
@@ -192,6 +193,42 @@ class MicrometerFlowControlMetricsTest {
                 .tags("target", "target-a", "result", "unknown").counter().count()).isEqualTo(1.0);
         assertThat(registry.get("flow.control.dryrun.health.transitions")
                 .tags("target", "target-a", "from", "HEALTHY", "to", "DEGRADED").counter().count()).isEqualTo(1.0);
+    }
+
+    @Test
+    @DisplayName("공용 버킷과 서버 안 버킷 사이를 바꾼 횟수를 방향별로 센다")
+    void countsLimitStoreSwitches() {
+        metrics.recordLimitStoreSwitch(LimitStore.LOCAL);
+        metrics.recordLimitStoreSwitch(LimitStore.SHARED);
+        metrics.recordLimitStoreSwitch(LimitStore.SHARED);
+
+        assertThat(registry.get("flow.control.limit.store.switches").tags("to", "local").counter().count())
+                .isEqualTo(1.0);
+        assertThat(registry.get("flow.control.limit.store.switches").tags("to", "shared").counter().count())
+                .isEqualTo(2.0);
+    }
+
+    @Test
+    @DisplayName("Redis 왕복 시간을 기록한다")
+    void recordsRedisLatency() {
+        metrics.recordRedisLatency(Duration.ofNanos(300_000));
+        metrics.recordRedisLatency(Duration.ofMillis(2));
+
+        Timer timer = registry.get("flow.control.redis.latency").timer();
+        assertThat(timer.count()).isEqualTo(2);
+        assertThat(timer.totalTime(TimeUnit.NANOSECONDS)).isEqualTo(2_300_000.0);
+    }
+
+    @Test
+    @DisplayName("Redis 오류를 작업과 이유(timeout, failure)별로 센다")
+    void countsRedisErrors() {
+        metrics.recordRedisError("token", true);
+        metrics.recordRedisError("proposal", false);
+
+        assertThat(registry.get("flow.control.redis.errors").tags("operation", "token", "reason", "timeout")
+                .counter().count()).isEqualTo(1.0);
+        assertThat(registry.get("flow.control.redis.errors").tags("operation", "proposal", "reason", "failure")
+                .counter().count()).isEqualTo(1.0);
     }
 
     private double dryRunCount(String name) {

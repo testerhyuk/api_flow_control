@@ -179,7 +179,7 @@ class ShadowEvaluationTest {
             evaluation.complete(response(OutcomeKind.SUCCESS, 200, 150), NOW);
         }
 
-        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L);
+        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1);
 
         DryRunReport report = evaluation.report(NOW.plusSeconds(1), HealthState.HEALTHY, 95.0);
         assertThat(report.health().state()).isEqualTo(HealthState.DEGRADED);
@@ -197,7 +197,7 @@ class ShadowEvaluationTest {
             evaluation.complete(response(OutcomeKind.SUCCESS, 200, 150), NOW);
         }
 
-        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L);
+        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1);
 
         assertThat(evaluation.state()).isEqualTo(HealthState.HEALTHY);
     }
@@ -210,7 +210,7 @@ class ShadowEvaluationTest {
             evaluation.complete(response(OutcomeKind.SUCCESS, 200, 150), NOW);
         }
 
-        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L);
+        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1);
 
         assertThat(evaluation.state()).isEqualTo(HealthState.CRITICAL);
     }
@@ -223,7 +223,7 @@ class ShadowEvaluationTest {
             evaluation.complete(response(OutcomeKind.SUCCESS, 200, 150), NOW);
         }
 
-        evaluation.evaluate(NOW.plusSeconds(11), 11_000_000_000L);
+        evaluation.evaluate(NOW.plusSeconds(11), 11_000_000_000L, 1);
 
         assertThat(evaluation.state()).isEqualTo(HealthState.HEALTHY);
         assertThat(evaluation.report(NOW.plusSeconds(11), HealthState.HEALTHY, 95.0).health().sampleCount()).isZero();
@@ -237,7 +237,7 @@ class ShadowEvaluationTest {
             evaluation.complete(response(OutcomeKind.SUCCESS, 200, 150), NOW);
         }
 
-        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L);
+        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1);
         DryRunReport report = evaluation.report(NOW.plusSeconds(4), HealthState.HEALTHY, 95.0);
 
         assertThat(report.health().timeInState())
@@ -262,6 +262,32 @@ class ShadowEvaluationTest {
     @DisplayName("한도를 낮추기만 하면 알 수 없는 부분이 없다")
     void noUnknownsWhenLowering() {
         assertThat(evaluation(limits(80, 150), 95.0).report(NOW, HealthState.HEALTHY, 95.0).unknowns()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("다른 서버와 겹친 시간을 쌓고, 알 수 없는 부분에 적는다")
+    void accumulatesOverlap() {
+        ShadowEvaluation evaluation = evaluation(limits(80, 150), 95.0);
+
+        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 2);
+        evaluation.evaluate(NOW.plusSeconds(2), 2_000_000_000L, 1);
+        evaluation.evaluate(NOW.plusSeconds(3), 3_000_000_000L, 2);
+
+        DryRunReport report = evaluation.report(NOW.plusSeconds(3), HealthState.HEALTHY, 95.0);
+        assertThat(report.overlap()).isEqualTo(Duration.ofSeconds(2));
+        assertThat(report.unknowns()).anyMatch(text -> text.contains("겹친 2초"));
+    }
+
+    @Test
+    @DisplayName("겹친 적이 없으면 겹친 시간은 0 이고 알 수 없는 부분에 적지 않는다")
+    void noOverlapWhenAlone() {
+        ShadowEvaluation evaluation = evaluation(limits(80, 150), 95.0);
+
+        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1);
+
+        DryRunReport report = evaluation.report(NOW.plusSeconds(1), HealthState.HEALTHY, 95.0);
+        assertThat(report.overlap()).isZero();
+        assertThat(report.unknowns()).noneMatch(text -> text.contains("겹친"));
     }
 
     private ShadowEvaluation evaluation(ManagedPolicy candidate, double actualRate) {
