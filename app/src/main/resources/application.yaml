@@ -45,7 +45,6 @@ flow-control:
     low-traffic:
       enter-after: 3
       rate-ratio: 0.5
-      too-many-requests: 1
       consecutive-failures: 3
       consecutive-timeouts: 3
     baseline-auto: true
@@ -60,6 +59,7 @@ flow-control:
   intake:
     request-ttl: 10m
     lag-interval: 5s
+    topic-replicas: 1
   limit-adjustment:
     degraded-ratio: 0.5
     recovery-step: 0.05

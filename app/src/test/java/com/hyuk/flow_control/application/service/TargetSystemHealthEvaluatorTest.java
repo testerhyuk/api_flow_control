@@ -392,12 +392,12 @@ class TargetSystemHealthEvaluatorTest {
     void lowTrafficEventMakesCritical() {
         when(recorder.window(TARGET_A)).thenReturn(window(5, 0));
         when(recorder.drainEvents(TARGET_A)).thenReturn(
-                Set.of(), Set.of(), Set.of(), Set.of(LowTrafficEvent.TOO_MANY_REQUESTS));
+                Set.of(), Set.of(), Set.of(), Set.of(LowTrafficEvent.CONSECUTIVE_FAILURES));
         TargetSystemHealthEvaluator evaluator = antiOscillationEvaluator();
 
         assertThat(statesAfterEvaluations(evaluator, 4)).containsExactly(
                 HealthState.HEALTHY, HealthState.HEALTHY, HealthState.HEALTHY, HealthState.CRITICAL);
-        verify(metrics).recordLowTrafficEvent(TARGET_A, LowTrafficEvent.TOO_MANY_REQUESTS);
+        verify(metrics).recordLowTrafficEvent(TARGET_A, LowTrafficEvent.CONSECUTIVE_FAILURES);
     }
 
     @Test

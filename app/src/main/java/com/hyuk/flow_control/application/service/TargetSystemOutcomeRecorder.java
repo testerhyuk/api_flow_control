@@ -105,7 +105,6 @@ public class TargetSystemOutcomeRecorder implements PolicyChangeListener {
     private static final class Outcomes {
         private final Deque<RecordedOutcome> deque = new ConcurrentLinkedDeque<>();
         private final Set<LowTrafficEvent> pending = EnumSet.noneOf(LowTrafficEvent.class);
-        private int tooManyRequests;
         private int failureStreak;
         private int timeoutStreak;
         private volatile Instant lastBlockedAt;
@@ -113,11 +112,6 @@ public class TargetSystemOutcomeRecorder implements PolicyChangeListener {
         private synchronized void track(OutcomeKind kind, HealthProperties.LowTraffic rules) {
             if (!OutcomeStatistics.isSample(kind)) {
                 return;
-            }
-
-            if (kind == OutcomeKind.TOO_MANY_REQUESTS && ++tooManyRequests >= rules.tooManyRequests()) {
-                pending.add(LowTrafficEvent.TOO_MANY_REQUESTS);
-                tooManyRequests = 0;
             }
 
             if (!OutcomeStatistics.isFailure(kind)) {

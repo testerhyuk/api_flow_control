@@ -150,13 +150,17 @@ class TargetSystemOutcomeRecorderTest {
     }
 
     @Test
-    @DisplayName("429 는 한 번만 와도 사건으로 남고, 꺼내면 비워진다")
-    void tooManyRequestsEvent() {
+    @DisplayName("429 는 실패로 세서, 3번 연속이면 연속 실패 사건이고, 꺼내면 비워진다")
+    void tooManyRequestsCountsAsFailure() {
         TargetSystemOutcomeRecorder recorder = recorderWithWindow(Duration.ofSeconds(10));
 
         recorder.record(TARGET_A, OutcomeKind.TOO_MANY_REQUESTS, Duration.ofMillis(10));
+        assertThat(recorder.drainEvents(TARGET_A)).isEmpty();
 
-        assertThat(recorder.drainEvents(TARGET_A)).containsExactly(LowTrafficEvent.TOO_MANY_REQUESTS);
+        recorder.record(TARGET_A, OutcomeKind.TOO_MANY_REQUESTS, Duration.ofMillis(10));
+        recorder.record(TARGET_A, OutcomeKind.TOO_MANY_REQUESTS, Duration.ofMillis(10));
+
+        assertThat(recorder.drainEvents(TARGET_A)).containsExactly(LowTrafficEvent.CONSECUTIVE_FAILURES);
         assertThat(recorder.drainEvents(TARGET_A)).isEmpty();
     }
 

@@ -4,8 +4,13 @@ spring:
   kafka:
     bootstrap-servers: localhost:9092
 
+server:
+  port: 8095
+
 record-ingestor:
   topic-prefix: flow-control.requests.
+  auto-start: true
+  seed: 42
   targets:
     target-a:
       rate: 100

@@ -73,5 +73,68 @@ services:
     depends_on:
       - kafka
 
+  app:
+    profiles: ["experiment"]
+    build: ../app
+    image: flow-control/app:local
+    container_name: flow-control-app
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/flow_control
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    mem_limit: 768m
+    depends_on:
+      - kafka
+      - postgres
+      - redis
+
+  mock-target-a:
+    profiles: ["experiment"]
+    build: ../mock-target-system
+    image: flow-control/mock-target:local
+    container_name: flow-control-mock-target-a
+    command: ["--mock-target.target=target-a"]
+    ports:
+      - "9001:9001"
+      - "9101:9101"
+    mem_limit: 384m
+
+  mock-target-b:
+    profiles: ["experiment"]
+    build: ../mock-target-system
+    container_name: flow-control-mock-target-b
+    command: ["--mock-target.target=target-b"]
+    ports:
+      - "9002:9002"
+      - "9102:9102"
+    mem_limit: 384m
+
+  mock-target-c:
+    profiles: ["experiment"]
+    build: ../mock-target-system
+    container_name: flow-control-mock-target-c
+    command: ["--mock-target.target=target-c"]
+    ports:
+      - "9003:9003"
+      - "9103:9103"
+    mem_limit: 384m
+
+  record-ingestor:
+    profiles: ["experiment"]
+    build: ../record-ingestor
+    image: flow-control/record-ingestor:local
+    container_name: flow-control-record-ingestor
+    command: ["--record-ingestor.auto-start=false"]
+    ports:
+      - "8095:8095"
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    mem_limit: 384m
+    depends_on:
+      - kafka
+
 volumes:
   postgres-data:
