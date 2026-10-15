@@ -228,12 +228,12 @@ class MicrometerFlowControlMetricsTest {
     @DisplayName("판정 모드 전환과 저트래픽 사건을 센다")
     void countsLowTraffic() {
         metrics.recordModeTransition("target-a", HealthMode.LOW_TRAFFIC);
-        metrics.recordLowTrafficEvent("target-a", LowTrafficEvent.TOO_MANY_REQUESTS);
+        metrics.recordLowTrafficEvent("target-a", LowTrafficEvent.CONSECUTIVE_FAILURES);
 
         assertThat(registry.get("flow.control.health.mode.transitions").tags("target", "target-a", "to", "low_traffic")
                 .counter().count()).isEqualTo(1.0);
         assertThat(registry.get("flow.control.health.low.traffic.events")
-                .tags("target", "target-a", "event", "too_many_requests").counter().count()).isEqualTo(1.0);
+                .tags("target", "target-a", "event", "consecutive_failures").counter().count()).isEqualTo(1.0);
     }
 
     @Test

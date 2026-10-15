@@ -6,6 +6,7 @@ import com.hyuk.flow_control.application.port.in.RequestHandlingUseCase;
 import com.hyuk.flow_control.application.port.out.PolicyChangeListener;
 import com.hyuk.flow_control.application.port.out.RequestIntakeControl;
 import com.hyuk.flow_control.application.service.PolicyRegistry;
+import com.hyuk.flow_control.config.IntakeProperties;
 import com.hyuk.flow_control.domain.policy.ManagedPolicy;
 import com.hyuk.flow_control.domain.retry.RetryStage;
 import io.micrometer.core.instrument.Gauge;
@@ -51,6 +52,7 @@ public class KafkaRequestIntakeContainers implements SmartLifecycle, PolicyChang
     private final PolicyRegistry policies;
     private final MeterRegistry meterRegistry;
     private final boolean autoStartup;
+    private final int topicReplicas;
     private final Map<String, TargetContainers> targets = new ConcurrentHashMap<>();
     private final Map<String, Long> warnedVersions = new ConcurrentHashMap<>();
     private volatile boolean running;
@@ -62,6 +64,7 @@ public class KafkaRequestIntakeContainers implements SmartLifecycle, PolicyChang
             JsonMapper jsonMapper,
             KafkaAdmin kafkaAdmin,
             MeterRegistry meterRegistry,
+            IntakeProperties intakeProperties,
             @Value("${flow-control.intake.auto-startup:true}") boolean autoStartup) {
         this.consumerFactory = consumerFactory;
         this.handling = handling;
@@ -70,6 +73,7 @@ public class KafkaRequestIntakeContainers implements SmartLifecycle, PolicyChang
         this.policies = policies;
         this.meterRegistry = meterRegistry;
         this.autoStartup = autoStartup;
+        this.topicReplicas = intakeProperties.topicReplicas();
 
         policies.policies().forEach(this::register);
     }
@@ -81,7 +85,8 @@ public class KafkaRequestIntakeContainers implements SmartLifecycle, PolicyChang
             return;
         }
 
-        List<NewTopic> topics = RequestTopicDefinitions.forTarget(targetSystemId, policy.limits().concurrencyLimit());
+        List<NewTopic> topics = RequestTopicDefinitions.forTarget(targetSystemId, policy.limits().concurrencyLimit(),
+                topicReplicas);
         kafkaAdmin.createOrModifyTopics(topics.toArray(NewTopic[]::new));
 
         TargetContainers created = register(policy);

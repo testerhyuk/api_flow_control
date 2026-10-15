@@ -12,3 +12,7 @@ dependencies {
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
 }
+
+tasks.named('bootJar') {
+    archiveFileName = 'mock-target-system.jar'
+}

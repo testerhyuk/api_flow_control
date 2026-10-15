@@ -14,11 +14,12 @@ import java.util.List;
 public class KafkaTopicConfig {
 
     @Bean
-    public KafkaAdmin.NewTopics requestTopics(TargetSystemPolicyReader policyReader) {
+    public KafkaAdmin.NewTopics requestTopics(TargetSystemPolicyReader policyReader, IntakeProperties intakeProperties) {
         List<NewTopic> topics = new ArrayList<>();
 
         policyReader.readAll().forEach((targetSystemId, policy) ->
-                topics.addAll(RequestTopicDefinitions.forTarget(targetSystemId, policy.concurrencyLimit())));
+                topics.addAll(RequestTopicDefinitions.forTarget(targetSystemId, policy.concurrencyLimit(),
+                        intakeProperties.topicReplicas())));
 
         return new KafkaAdmin.NewTopics(topics.toArray(NewTopic[]::new));
     }

@@ -30,6 +30,26 @@ class IngestorPropertiesTest {
     }
 
     @Test
+    @DisplayName("자동 시작과 seed 를 설정 파일에서 읽고, 없으면 자동 시작 켬과 seed 0 이다")
+    void bindsAutoStartAndSeed() {
+        contextRunner
+                .withPropertyValues(
+                        "record-ingestor.topic-prefix=flow-control.requests.",
+                        "record-ingestor.targets.target-a.rate=100",
+                        "record-ingestor.auto-start=false",
+                        "record-ingestor.seed=42")
+                .run(context -> {
+                    IngestorProperties properties = context.getBean(IngestorProperties.class);
+                    assertThat(properties.autoStart()).isFalse();
+                    assertThat(properties.seed()).isEqualTo(42);
+                });
+
+        IngestorProperties defaults = new IngestorProperties("p.", Map.of("target-a", new IngestorProperties.Target(1)));
+        assertThat(defaults.autoStart()).isTrue();
+        assertThat(defaults.seed()).isZero();
+    }
+
+    @Test
     @DisplayName("설정 값이 잘못되면 앱이 뜨지 않는다")
     void failsToStartWithInvalidValue() {
         contextRunner

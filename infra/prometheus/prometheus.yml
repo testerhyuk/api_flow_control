@@ -8,6 +8,7 @@ scrape_configs:
     static_configs:
       - targets:
           - host.docker.internal:8081
+          - app:8081
   - job_name: mock-target-system
     metrics_path: /actuator/prometheus
     static_configs:
@@ -15,3 +16,6 @@ scrape_configs:
           - host.docker.internal:9101
           - host.docker.internal:9102
           - host.docker.internal:9103
+          - mock-target-a:9101
+          - mock-target-b:9102
+          - mock-target-c:9103
