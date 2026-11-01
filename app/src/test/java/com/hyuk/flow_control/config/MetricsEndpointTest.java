@@ -68,7 +68,7 @@ class MetricsEndpointTest {
                 .contains("flow_control_limit_rate_proposed{target=\"target-a\"}")
                 .contains("flow_control_limit_servers{target=\"target-a\"}")
                 .contains("flow_control_limit_store 1.0")
-                .contains("flow_control_intake_redeploy_required{target=\"target-a\"} 0.0")
+                .contains("flow_control_intake_consumers{target=\"target-a\"}")
                 .contains("flow_control_control_mode{mode=\"adaptive\"} 1.0")
                 .contains("flow_control_health_anti_oscillation 1.0")
                 .contains("flow_control_health_baseline_auto 1.0")

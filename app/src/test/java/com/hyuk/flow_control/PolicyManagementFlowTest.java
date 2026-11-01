@@ -6,6 +6,10 @@ import com.hyuk.flow_control.application.service.DryRunMonitor;
 import com.hyuk.flow_control.application.service.PolicyRegistry;
 import com.hyuk.flow_control.support.TestcontainersConfiguration;
 import com.sun.net.httpserver.HttpServer;
+import com.hyuk.flow_control.domain.retry.RetryStage;
+import org.apache.kafka.clients.admin.AdminClient;
+import org.apache.kafka.clients.admin.AdminClientConfig;
+import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
@@ -34,6 +38,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -134,6 +139,39 @@ class PolicyManagementFlowTest {
 
         JsonNode history = jsonMapper.readTree(send("GET", "/admin/policies/" + target + "/history", null).body());
         assertThat(history.size()).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("동시 호출 한도를 읽기 스레드 수보다 올리면 재배포 없이 파티션과 읽기 스레드를 늘리고 계속 읽는다")
+    void growsConsumersWithoutRedeploy() throws Exception {
+        String target = createTarget("target-grow-");
+        String requester = register(target);
+        int before = policies.read(target).concurrencyLimit();
+
+        HttpResponse<String> updated = send("PUT", "/admin/policies/" + target, """
+                {"expectedVersion": 1, "policy": %s, "reason": "한도 올림"}
+                """.formatted(policyJson(200, 100, true)));
+        assertThat(updated.statusCode()).isEqualTo(200);
+        await(() -> policies.policyOf(target).version() == 2);
+        int after = policies.read(target).concurrencyLimit();
+        assertThat(after).isGreaterThan(before);
+
+        String requestTopic = RequestTopics.of(target, requester);
+        String retryTopic = RequestTopics.retry(RetryStage.FIRST, target);
+        await(() -> containers.concurrencyByTopic().getOrDefault(requestTopic, 0) == after
+                && containers.concurrencyByTopic().getOrDefault(retryTopic, 0) == after
+                && containers.isConsuming(target));
+        try (AdminClient admin = AdminClient.create(Map.of(
+                AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, broker.getBrokersAsString()))) {
+            Map<String, TopicDescription> topics =
+                    admin.describeTopics(List.of(requestTopic, retryTopic)).allTopicNames().get();
+            assertThat(topics.get(requestTopic).partitions()).hasSize(after);
+            assertThat(topics.get(retryTopic).partitions()).hasSize(after);
+        }
+
+        String requestId = UUID.randomUUID().toString();
+        produce(target, requester, requestId);
+        await(() -> receivedRequestIds.contains(requestId));
     }
 
     @Test
