@@ -7,6 +7,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestAttribute;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -36,9 +37,10 @@ public class PolicyAdminController {
     }
 
     @PostMapping
-    public ResponseEntity<PolicyViews.Policy> create(@RequestBody PolicyRequests.Create request) {
+    public ResponseEntity<PolicyViews.Policy> create(@RequestBody PolicyRequests.Create request,
+                                                               @RequestAttribute(AdminApiKeyFilter.OPERATOR) String operator) {
         ManagedPolicy created = management.create(
-                request.targetSystemId(), request.requiredPolicy().toContent(), request.note());
+                request.targetSystemId(), request.requiredPolicy().toContent(), request.note(operator));
 
         return ResponseEntity.created(URI.create("/admin/policies/" + created.targetSystemId()))
                 .body(PolicyViews.Policy.from(created));
@@ -46,22 +48,24 @@ public class PolicyAdminController {
 
     @PutMapping("/{targetSystemId}")
     public PolicyViews.Policy update(@PathVariable String targetSystemId,
-                                     @RequestBody PolicyRequests.Update request) {
+                                     @RequestBody PolicyRequests.Update request,
+                                     @RequestAttribute(AdminApiKeyFilter.OPERATOR) String operator) {
         return PolicyViews.Policy.from(management.update(
                 targetSystemId,
                 request.requiredPolicy().toContent(),
                 request.requiredExpectedVersion(),
-                request.note()));
+                request.note(operator)));
     }
 
     @PutMapping("/{targetSystemId}/enabled")
     public PolicyViews.Policy changeEnabled(@PathVariable String targetSystemId,
-                                            @RequestBody PolicyRequests.ChangeEnabled request) {
+                                            @RequestBody PolicyRequests.ChangeEnabled request,
+                                            @RequestAttribute(AdminApiKeyFilter.OPERATOR) String operator) {
         return PolicyViews.Policy.from(management.changeEnabled(
                 targetSystemId,
                 request.requiredEnabled(),
                 request.requiredExpectedVersion(),
-                request.note()));
+                request.note(operator)));
     }
 
     @GetMapping("/{targetSystemId}/history")
@@ -73,11 +77,12 @@ public class PolicyAdminController {
 
     @PostMapping("/{targetSystemId}/rollback")
     public PolicyViews.Policy rollback(@PathVariable String targetSystemId,
-                                       @RequestBody PolicyRequests.Rollback request) {
+                                       @RequestBody PolicyRequests.Rollback request,
+                                       @RequestAttribute(AdminApiKeyFilter.OPERATOR) String operator) {
         return PolicyViews.Policy.from(management.rollback(
                 targetSystemId,
                 request.requiredToVersion(),
                 request.requiredExpectedVersion(),
-                request.note()));
+                request.note(operator)));
     }
 }

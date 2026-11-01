@@ -103,7 +103,7 @@ class PolicyManagementFlowTest {
         String target = "target-flow-" + shortId();
 
         HttpResponse<String> created = send("POST", "/admin/policies", """
-                {"targetSystemId": "%s", "policy": %s, "changedBy": "hyuk", "reason": "새 기관"}
+                {"targetSystemId": "%s", "policy": %s, "reason": "새 기관"}
                 """.formatted(target, policyJson(10, 100, true)));
         assertThat(created.statusCode()).isEqualTo(201);
 
@@ -116,18 +116,18 @@ class PolicyManagementFlowTest {
         await(() -> receivedRequestIds.contains(requestId));
 
         HttpResponse<String> disabled = send("PUT", "/admin/policies/" + target + "/enabled", """
-                {"enabled": false, "expectedVersion": 1, "changedBy": "hyuk", "reason": "점검"}
+                {"enabled": false, "expectedVersion": 1, "reason": "점검"}
                 """);
         assertThat(disabled.statusCode()).isEqualTo(200);
         await(() -> !containers.isConsuming(target));
 
         HttpResponse<String> stale = send("PUT", "/admin/policies/" + target + "/enabled", """
-                {"enabled": true, "expectedVersion": 1, "changedBy": "hyuk", "reason": "옛 버전"}
+                {"enabled": true, "expectedVersion": 1, "reason": "옛 버전"}
                 """);
         assertThat(stale.statusCode()).isEqualTo(409);
 
         HttpResponse<String> enabled = send("PUT", "/admin/policies/" + target + "/enabled", """
-                {"enabled": true, "expectedVersion": 2, "changedBy": "hyuk", "reason": "점검 끝"}
+                {"enabled": true, "expectedVersion": 2, "reason": "점검 끝"}
                 """);
         assertThat(enabled.statusCode()).isEqualTo(200);
         await(() -> containers.isConsuming(target));
@@ -141,23 +141,23 @@ class PolicyManagementFlowTest {
     void runsDryRunAndAppliesIt() throws Exception {
         String target = "target-dry-" + shortId();
         send("POST", "/admin/policies", """
-                {"targetSystemId": "%s", "policy": %s, "changedBy": "hyuk", "reason": "새 기관"}
+                {"targetSystemId": "%s", "policy": %s, "reason": "새 기관"}
                 """.formatted(target, policyJson(10, 100, true)));
         await(() -> containers.isConsuming(target));
         String requester = register(target);
 
         HttpResponse<String> urlChange = send("POST", "/admin/policies/" + target + "/dry-run", """
-                {"expectedVersion": 1, "policy": %s, "changedBy": "hyuk", "reason": "url"}
+                {"expectedVersion": 1, "policy": %s, "reason": "url"}
                 """.formatted(policyJson(10, 100, true).replace(urlOf(), "http://127.0.0.1:1")));
         assertThat(urlChange.statusCode()).isEqualTo(400);
 
         HttpResponse<String> started = send("POST", "/admin/policies/" + target + "/dry-run", """
-                {"expectedVersion": 1, "policy": %s, "changedBy": "hyuk", "reason": "baseline 조정"}
+                {"expectedVersion": 1, "policy": %s, "reason": "baseline 조정"}
                 """.formatted(policyJson(5, 20, true)));
         assertThat(started.statusCode()).isEqualTo(201);
 
         HttpResponse<String> second = send("POST", "/admin/policies/" + target + "/dry-run", """
-                {"expectedVersion": 1, "policy": %s, "changedBy": "hyuk", "reason": "두 번째"}
+                {"expectedVersion": 1, "policy": %s, "reason": "두 번째"}
                 """.formatted(policyJson(5, 20, true)));
         assertThat(second.statusCode()).isEqualTo(409);
 
@@ -175,7 +175,7 @@ class PolicyManagementFlowTest {
         assertThat(status.get("result").get("limits").get("rate").asDouble()).isEqualTo(4.75);
 
         HttpResponse<String> applied = send("POST", "/admin/policies/" + target + "/dry-run/apply", """
-                {"changedBy": "hyuk", "reason": "적용"}
+                {"reason": "적용"}
                 """);
         assertThat(applied.statusCode()).isEqualTo(200);
 
@@ -194,7 +194,7 @@ class PolicyManagementFlowTest {
         String topic = RequestTopics.of(target, requester);
 
         HttpResponse<String> disabled = send("PUT", "/admin/requesters/" + requester + "/enabled", """
-                {"enabled": false, "expectedVersion": 1, "changedBy": "hyuk", "reason": "중지"}
+                {"enabled": false, "expectedVersion": 1, "reason": "중지"}
                 """);
         assertThat(disabled.statusCode()).isEqualTo(200);
         await(() -> !containers.concurrencyByTopic().containsKey(topic) && containers.isConsuming(target));
@@ -205,18 +205,18 @@ class PolicyManagementFlowTest {
         assertThat(receivedRequestIds).doesNotContain(pending);
 
         HttpResponse<String> stale = send("PUT", "/admin/requesters/" + requester + "/enabled", """
-                {"enabled": true, "expectedVersion": 1, "changedBy": "hyuk", "reason": "옛 버전"}
+                {"enabled": true, "expectedVersion": 1, "reason": "옛 버전"}
                 """);
         assertThat(stale.statusCode()).isEqualTo(409);
 
         HttpResponse<String> enabled = send("PUT", "/admin/requesters/" + requester + "/enabled", """
-                {"enabled": true, "expectedVersion": 2, "changedBy": "hyuk", "reason": "재개"}
+                {"enabled": true, "expectedVersion": 2, "reason": "재개"}
                 """);
         assertThat(enabled.statusCode()).isEqualTo(200);
         await(() -> receivedRequestIds.contains(pending));
 
         HttpResponse<String> added = send("PUT", "/admin/requesters/" + requester + "/targets/" + other, """
-                {"expectedVersion": 3, "changedBy": "hyuk", "reason": "외부 서버 추가"}
+                {"expectedVersion": 3, "reason": "외부 서버 추가"}
                 """);
         assertThat(added.statusCode()).isEqualTo(200);
         await(() -> isReading(other, requester));
@@ -226,7 +226,7 @@ class PolicyManagementFlowTest {
         await(() -> receivedRequestIds.contains(toOther));
 
         HttpResponse<String> removed = send("DELETE", "/admin/requesters/" + requester + "/targets/" + other, """
-                {"expectedVersion": 4, "changedBy": "hyuk", "reason": "외부 서버 빼기"}
+                {"expectedVersion": 4, "reason": "외부 서버 빼기"}
                 """);
         assertThat(removed.statusCode()).isEqualTo(200);
         await(() -> !containers.concurrencyByTopic().containsKey(RequestTopics.of(other, requester)));
@@ -239,7 +239,7 @@ class PolicyManagementFlowTest {
     private String createTarget(String prefix) throws Exception {
         String target = prefix + shortId();
         HttpResponse<String> created = send("POST", "/admin/policies", """
-                {"targetSystemId": "%s", "policy": %s, "changedBy": "hyuk", "reason": "새 기관"}
+                {"targetSystemId": "%s", "policy": %s, "reason": "새 기관"}
                 """.formatted(target, policyJson(10, 100, true)));
         assertThat(created.statusCode()).isEqualTo(201);
         await(() -> containers.isConsuming(target));
@@ -262,7 +262,8 @@ class PolicyManagementFlowTest {
 
     private HttpResponse<String> send(String method, String path, String body) throws Exception {
         HttpRequest.Builder request = HttpRequest.newBuilder(URI.create("http://localhost:" + serverPort + path))
-                .header("Content-Type", "application/json");
+                .header("Content-Type", "application/json")
+                .header("Authorization", "Bearer experiment-admin-key");
         HttpRequest.BodyPublisher publisher = body == null
                 ? HttpRequest.BodyPublishers.noBody()
                 : HttpRequest.BodyPublishers.ofString(body);
@@ -273,7 +274,7 @@ class PolicyManagementFlowTest {
     private String register(String target) throws Exception {
         String requester = "flow-" + shortId();
         HttpResponse<String> registered = send("POST", "/admin/requesters", """
-                {"requesterId": "%s", "targetSystemIds": ["%s"], "changedBy": "hyuk", "reason": "새 요청자"}
+                {"requesterId": "%s", "targetSystemIds": ["%s"], "reason": "새 요청자"}
                 """.formatted(requester, target));
         assertThat(registered.statusCode()).isEqualTo(201);
         await(() -> isReading(target, requester));

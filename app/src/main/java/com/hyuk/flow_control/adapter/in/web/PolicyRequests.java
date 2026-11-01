@@ -6,17 +6,17 @@ public final class PolicyRequests {
     private PolicyRequests() {
     }
 
-    public record Create(String targetSystemId, PolicyBody policy, String changedBy, String reason) {
+    public record Create(String targetSystemId, PolicyBody policy, String reason) {
         PolicyBody requiredPolicy() {
             return Required.of(policy, "policy");
         }
 
-        ChangeNote note() {
+        ChangeNote note(String changedBy) {
             return new ChangeNote(changedBy, reason);
         }
     }
 
-    public record Update(Long expectedVersion, PolicyBody policy, String changedBy, String reason) {
+    public record Update(Long expectedVersion, PolicyBody policy, String reason) {
         PolicyBody requiredPolicy() {
             return Required.of(policy, "policy");
         }
@@ -25,12 +25,12 @@ public final class PolicyRequests {
             return Required.of(expectedVersion, "expectedVersion");
         }
 
-        ChangeNote note() {
+        ChangeNote note(String changedBy) {
             return new ChangeNote(changedBy, reason);
         }
     }
 
-    public record ChangeEnabled(Boolean enabled, Long expectedVersion, String changedBy, String reason) {
+    public record ChangeEnabled(Boolean enabled, Long expectedVersion, String reason) {
         boolean requiredEnabled() {
             return Required.of(enabled, "enabled");
         }
@@ -39,12 +39,12 @@ public final class PolicyRequests {
             return Required.of(expectedVersion, "expectedVersion");
         }
 
-        ChangeNote note() {
+        ChangeNote note(String changedBy) {
             return new ChangeNote(changedBy, reason);
         }
     }
 
-    public record Rollback(Long toVersion, Long expectedVersion, String changedBy, String reason) {
+    public record Rollback(Long toVersion, Long expectedVersion, String reason) {
         long requiredToVersion() {
             return Required.of(toVersion, "toVersion");
         }
@@ -53,12 +53,12 @@ public final class PolicyRequests {
             return Required.of(expectedVersion, "expectedVersion");
         }
 
-        ChangeNote note() {
+        ChangeNote note(String changedBy) {
             return new ChangeNote(changedBy, reason);
         }
     }
 
-    public record StartDryRun(Long expectedVersion, PolicyBody policy, String changedBy, String reason) {
+    public record StartDryRun(Long expectedVersion, PolicyBody policy, String reason) {
         PolicyBody requiredPolicy() {
             return Required.of(policy, "policy");
         }
@@ -67,13 +67,13 @@ public final class PolicyRequests {
             return Required.of(expectedVersion, "expectedVersion");
         }
 
-        ChangeNote note() {
+        ChangeNote note(String changedBy) {
             return new ChangeNote(changedBy, reason);
         }
     }
 
-    public record ApplyDryRun(String changedBy, String reason) {
-        ChangeNote note() {
+    public record ApplyDryRun(String reason) {
+        ChangeNote note(String changedBy) {
             return new ChangeNote(changedBy, reason);
         }
     }

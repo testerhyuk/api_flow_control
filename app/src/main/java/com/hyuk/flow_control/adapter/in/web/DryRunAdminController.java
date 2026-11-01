@@ -7,6 +7,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestAttribute;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -24,12 +25,13 @@ public class DryRunAdminController {
 
     @PostMapping
     public ResponseEntity<DryRunViews.Status> start(@PathVariable String targetSystemId,
-                                                    @RequestBody PolicyRequests.StartDryRun request) {
+                                                    @RequestBody PolicyRequests.StartDryRun request,
+                                                    @RequestAttribute(AdminApiKeyFilter.OPERATOR) String operator) {
         DryRun started = dryRuns.start(
                 targetSystemId,
                 request.requiredPolicy().toContent(),
                 request.requiredExpectedVersion(),
-                request.note());
+                request.note(operator));
 
         return ResponseEntity.created(URI.create("/admin/policies/" + targetSystemId + "/dry-run"))
                 .body(DryRunViews.Status.from(started));
@@ -48,7 +50,8 @@ public class DryRunAdminController {
 
     @PostMapping("/apply")
     public PolicyViews.Policy apply(@PathVariable String targetSystemId,
-                                    @RequestBody PolicyRequests.ApplyDryRun request) {
-        return PolicyViews.Policy.from(dryRuns.apply(targetSystemId, request.note()));
+                                    @RequestBody PolicyRequests.ApplyDryRun request,
+                                    @RequestAttribute(AdminApiKeyFilter.OPERATOR) String operator) {
+        return PolicyViews.Policy.from(dryRuns.apply(targetSystemId, request.note(operator)));
     }
 }

@@ -7,6 +7,7 @@ import com.hyuk.flow_control.domain.requester.RequesterAlreadyExistsException;
 import com.hyuk.flow_control.domain.requester.RequesterHistoryEntry;
 import com.hyuk.flow_control.domain.requester.RequesterNotFoundException;
 import com.hyuk.flow_control.domain.requester.RequesterVersionConflictException;
+import com.hyuk.flow_control.support.AdminKeys;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -45,6 +46,8 @@ class RequesterAdminControllerTest {
         management = mock(RequesterManagementUseCase.class);
         mockMvc = MockMvcBuilders.standaloneSetup(new RequesterAdminController(management))
                 .setControllerAdvice(new PolicyAdminExceptionHandler())
+                .addFilters(AdminKeys.filter())
+                .defaultRequest(AdminKeys.authorized())
                 .build();
     }
 
@@ -89,7 +92,7 @@ class RequesterAdminControllerTest {
         when(management.register("card", List.of("target-a"), NOTE)).thenReturn(card);
 
         mockMvc.perform(post("/admin/requesters").contentType(MediaType.APPLICATION_JSON).content("""
-                        {"requesterId": "card", "targetSystemIds": ["target-a"], "changedBy": "hyuk", "reason": "테스트"}
+                        {"requesterId": "card", "targetSystemIds": ["target-a"], "reason": "테스트"}
                         """))
                 .andExpect(status().isCreated())
                 .andExpect(header().string("Location", "/admin/requesters/card"))
@@ -100,7 +103,7 @@ class RequesterAdminControllerTest {
     @DisplayName("외부 서버 목록 없이 등록하면 400 이다")
     void rejectsRegisterWithoutTargets() throws Exception {
         mockMvc.perform(post("/admin/requesters").contentType(MediaType.APPLICATION_JSON).content("""
-                        {"requesterId": "card", "changedBy": "hyuk", "reason": "테스트"}
+                        {"requesterId": "card", "reason": "테스트"}
                         """))
                 .andExpect(status().isBadRequest());
         verify(management, never()).register(anyString(), any(), any());
@@ -112,7 +115,7 @@ class RequesterAdminControllerTest {
         when(management.register(eq("loan"), any(), any())).thenThrow(new RequesterAlreadyExistsException("loan"));
 
         mockMvc.perform(post("/admin/requesters").contentType(MediaType.APPLICATION_JSON).content("""
-                        {"requesterId": "loan", "targetSystemIds": ["target-a"], "changedBy": "hyuk", "reason": "테스트"}
+                        {"requesterId": "loan", "targetSystemIds": ["target-a"], "reason": "테스트"}
                         """))
                 .andExpect(status().isConflict());
     }
@@ -126,19 +129,19 @@ class RequesterAdminControllerTest {
                 .thenReturn(LOAN.withoutTarget("target-a").withVersion(3));
 
         mockMvc.perform(put("/admin/requesters/loan/enabled").contentType(MediaType.APPLICATION_JSON).content("""
-                        {"enabled": false, "expectedVersion": 2, "changedBy": "hyuk", "reason": "테스트"}
+                        {"enabled": false, "expectedVersion": 2, "reason": "테스트"}
                         """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.enabled").value(false));
         mockMvc.perform(put("/admin/requesters/loan/targets/target-c").contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"expectedVersion": 2, "changedBy": "hyuk", "reason": "테스트"}
+                                {"expectedVersion": 2, "reason": "테스트"}
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.targetSystemIds[2]").value("target-c"));
         mockMvc.perform(delete("/admin/requesters/loan/targets/target-a").contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"expectedVersion": 2, "changedBy": "hyuk", "reason": "테스트"}
+                                {"expectedVersion": 2, "reason": "테스트"}
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.targetSystemIds.length()").value(1));
@@ -151,11 +154,11 @@ class RequesterAdminControllerTest {
                 .thenThrow(new RequesterVersionConflictException("loan", 1));
 
         mockMvc.perform(put("/admin/requesters/loan/enabled").contentType(MediaType.APPLICATION_JSON).content("""
-                        {"enabled": false, "changedBy": "hyuk", "reason": "테스트"}
+                        {"enabled": false, "reason": "테스트"}
                         """))
                 .andExpect(status().isBadRequest());
         mockMvc.perform(put("/admin/requesters/loan/enabled").contentType(MediaType.APPLICATION_JSON).content("""
-                        {"enabled": false, "expectedVersion": 1, "changedBy": "hyuk", "reason": "테스트"}
+                        {"enabled": false, "expectedVersion": 1, "reason": "테스트"}
                         """))
                 .andExpect(status().isConflict());
         verify(management, never()).addTarget(anyString(), anyString(), anyLong(), any());
