@@ -160,14 +160,34 @@ class TargetSystemLimitAdjusterTest {
     }
 
     @Test
-    @DisplayName("저트래픽 모드에서는 rate 를 최대치의 rate-ratio 로 둔다")
-    void lowTrafficUsesFixedRatio() {
-        when(evaluator.snapshotOf(TARGET_A)).thenReturn(lowTraffic(HealthState.HEALTHY));
+    @DisplayName("저트래픽 모드에서 위험이 아니면 rate 를 그대로 둔다")
+    void lowTrafficKeepsRate() {
+        when(evaluator.snapshotOf(TARGET_A)).thenReturn(
+                snapshot(HealthState.DEGRADED, 100),
+                lowTraffic(HealthState.HEALTHY));
         TargetSystemLimitAdjuster adjuster = adjuster(50);
 
         adjuster.adjust(TARGET_A);
+        adjuster.adjust(TARGET_A);
 
         assertThat(adjuster.rateOf(TARGET_A)).isEqualTo(47.5);
+    }
+
+    @Test
+    @DisplayName("저트래픽 모드에서 받은 새 호출 결과도 세어서, 일반 모드로 돌아온 첫 판정에서 올릴 수 있다")
+    void countsNewSamplesDuringLowTraffic() {
+        when(evaluator.snapshotOf(TARGET_A)).thenReturn(
+                snapshot(HealthState.CRITICAL, 100),
+                lowTraffic(HealthState.HEALTHY, 30),
+                snapshot(HealthState.HEALTHY, 30));
+        TargetSystemLimitAdjuster adjuster = adjuster(50);
+
+        adjuster.adjust(TARGET_A);
+        adjuster.adjust(TARGET_A);
+        assertThat(adjuster.rateOf(TARGET_A)).isEqualTo(5.0);
+
+        adjuster.adjust(TARGET_A);
+        assertThat(adjuster.rateOf(TARGET_A)).isCloseTo(5 * STEP, within(1e-9));
     }
 
     @Test
@@ -550,7 +570,12 @@ class TargetSystemLimitAdjusterTest {
     }
 
     private static HealthSnapshot lowTraffic(HealthState state) {
-        return new HealthSnapshot(state, 3, 0.0, null, Instant.now(), HealthMode.LOW_TRAFFIC, null, 0, null);
+        return lowTraffic(state, 0);
+    }
+
+    private static HealthSnapshot lowTraffic(HealthState state, int newSamples) {
+        return new HealthSnapshot(state, 3, 0.0, null, Instant.now().plusNanos(EVALUATIONS.incrementAndGet()),
+                HealthMode.LOW_TRAFFIC, null, 0, null, null, newSamples);
     }
 
     private static BaselineEstimator.Baselines meanBaseline(Duration mean) {

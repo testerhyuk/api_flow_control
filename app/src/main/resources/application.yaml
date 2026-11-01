@@ -46,7 +46,6 @@ flow-control:
     degraded-streak: 3
     low-traffic:
       enter-after: 3
-      rate-ratio: 0.5
       consecutive-failures: 3
       consecutive-timeouts: 3
       recovery-calls: 38

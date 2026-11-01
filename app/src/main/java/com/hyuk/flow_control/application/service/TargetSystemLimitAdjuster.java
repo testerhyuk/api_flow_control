@@ -45,7 +45,6 @@ public class TargetSystemLimitAdjuster implements PolicyChangeListener {
     private final MaintenanceMonitor maintenance;
     private final RateAdjustmentRule rule;
     private final ControlMode controlMode;
-    private final double lowTrafficRatio;
     private final double resumeRateRatio;
     private final Map<String, Double> rates = new ConcurrentHashMap<>();
     private final Map<String, Double> appliedRates = new ConcurrentHashMap<>();
@@ -77,7 +76,6 @@ public class TargetSystemLimitAdjuster implements PolicyChangeListener {
         this.metrics = metrics;
         this.rule = ruleOf(adjustmentProperties, healthProperties);
         this.controlMode = controlProperties.controlMode();
-        this.lowTrafficRatio = healthProperties.lowTraffic().rateRatio();
         this.resumeRateRatio = maintenanceProperties.resumeRateRatio();
 
         policyReader.readAll().forEach(this::register);
@@ -220,7 +218,7 @@ public class TargetSystemLimitAdjuster implements PolicyChangeListener {
         if (snapshot.mode() == HealthMode.LOW_TRAFFIC) {
             return snapshot.state() == HealthState.CRITICAL
                     ? rule.floor(policy)
-                    : rule.bounded(policy.effectiveRate() * lowTrafficRatio, policy);
+                    : rule.bounded(rateOf(targetSystemId), policy);
         }
         return rule.next(rateOf(targetSystemId), snapshot.state(), Optional.ofNullable(snapshot.grade()), samples,
                 policy);
