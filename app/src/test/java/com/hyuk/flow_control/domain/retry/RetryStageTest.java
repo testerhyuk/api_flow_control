@@ -50,4 +50,10 @@ class RetryStageTest {
     void noStageLongEnough() {
         assertThat(RetryStage.firstAfter(null, Duration.ofMinutes(10))).isEmpty();
     }
+
+    @Test
+    @DisplayName("재시도 대기 합계는 371초다")
+    void totalDelay() {
+        assertThat(RetryStage.totalDelay()).isEqualTo(Duration.ofSeconds(371));
+    }
 }

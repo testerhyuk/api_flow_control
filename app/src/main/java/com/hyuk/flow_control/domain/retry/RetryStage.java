@@ -27,6 +27,12 @@ public enum RetryStage {
         return delay;
     }
 
+    public static Duration totalDelay() {
+        return Arrays.stream(values())
+                .map(RetryStage::delay)
+                .reduce(Duration.ZERO, Duration::plus);
+    }
+
     public static Duration longestDelay() {
         return Arrays.stream(values())
                 .map(RetryStage::delay)
