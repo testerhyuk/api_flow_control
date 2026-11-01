@@ -6,9 +6,13 @@ import com.hyuk.flow_control.domain.policy.ManagedPolicy;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReentrantLock;
 
 @Component
 @Order(0)
@@ -35,6 +39,10 @@ public class TargetSystemSemaphore implements PolicyChangeListener {
 
     public void release(String targetSystemId) {
         permitsOf(targetSystemId).release();
+    }
+
+    public boolean awaitAvailable(String targetSystemId, Instant deadline) throws InterruptedException {
+        return permitsOf(targetSystemId).awaitAvailable(deadline);
     }
 
     public void changeLimit(String targetSystemId, int limit) {
@@ -64,6 +72,9 @@ public class TargetSystemSemaphore implements PolicyChangeListener {
 
     private static final class Permits {
         private final AtomicInteger inFlight = new AtomicInteger();
+        private final AtomicInteger waiting = new AtomicInteger();
+        private final ReentrantLock lock = new ReentrantLock();
+        private final Condition available = lock.newCondition();
         private volatile int limit;
 
         private Permits(int limit) {
@@ -85,10 +96,52 @@ public class TargetSystemSemaphore implements PolicyChangeListener {
 
         private void release() {
             inFlight.decrementAndGet();
+            if (waiting.get() > 0) {
+                wake(false);
+            }
+        }
+
+        private boolean awaitAvailable(Instant deadline) throws InterruptedException {
+            lock.lock();
+            waiting.incrementAndGet();
+            try {
+                while (inFlight.get() >= limit) {
+                    if (deadline == null) {
+                        available.await();
+                        continue;
+                    }
+
+                    long remaining = Duration.between(Instant.now(), deadline).toNanos();
+                    if (remaining <= 0) {
+                        return false;
+                    }
+                    available.awaitNanos(remaining);
+                }
+                return true;
+            } finally {
+                waiting.decrementAndGet();
+                lock.unlock();
+            }
         }
 
         private void changeLimit(int limit) {
             this.limit = limit;
+            if (waiting.get() > 0) {
+                wake(true);
+            }
+        }
+
+        private void wake(boolean all) {
+            lock.lock();
+            try {
+                if (all) {
+                    available.signalAll();
+                } else {
+                    available.signal();
+                }
+            } finally {
+                lock.unlock();
+            }
         }
 
         private int limit() {

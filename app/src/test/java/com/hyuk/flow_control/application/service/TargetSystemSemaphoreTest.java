@@ -7,7 +7,10 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -124,6 +127,68 @@ class TargetSystemSemaphoreTest {
         semaphore.release("target-a");
         assertThat(semaphore.tryAcquire("target-a")).isTrue();
         assertThat(semaphore.tryAcquire("target-a")).isFalse();
+    }
+
+    @Test
+    @DisplayName("자리가 남아 있으면 기다리지 않고 바로 돌아온다")
+    void awaitReturnsImmediatelyWhenAvailable() throws InterruptedException {
+        assertThat(semaphore.awaitAvailable("target-a", Instant.now().plusSeconds(5))).isTrue();
+        assertThat(semaphore.inFlightOf("target-a")).isZero();
+    }
+
+    @Test
+    @DisplayName("자리를 기다리던 스레드는 다른 스레드가 자리를 돌려주면 깨어난다")
+    void awaitWakesOnRelease() throws Exception {
+        semaphore.tryAcquire("target-b");
+        CompletableFuture<Boolean> waiter = CompletableFuture.supplyAsync(() -> await("target-b", Instant.now().plusSeconds(5)));
+
+        Thread.sleep(100);
+        assertThat(waiter).isNotDone();
+
+        semaphore.release("target-b");
+        assertThat(waiter.get(2, TimeUnit.SECONDS)).isTrue();
+        assertThat(semaphore.tryAcquire("target-b")).isTrue();
+    }
+
+    @Test
+    @DisplayName("자리를 기다리던 스레드는 한도가 올라가면 깨어난다")
+    void awaitWakesOnLimitIncrease() throws Exception {
+        semaphore.tryAcquire("target-b");
+        CompletableFuture<Boolean> waiter = CompletableFuture.supplyAsync(() -> await("target-b", Instant.now().plusSeconds(5)));
+
+        Thread.sleep(100);
+        semaphore.changeLimit("target-b", 2);
+
+        assertThat(waiter.get(2, TimeUnit.SECONDS)).isTrue();
+    }
+
+    @Test
+    @DisplayName("마감 시각까지 자리가 안 나면 false 를 돌려준다")
+    void awaitGivesUpAtDeadline() throws InterruptedException {
+        semaphore.tryAcquire("target-b");
+
+        long started = System.nanoTime();
+        boolean available = semaphore.awaitAvailable("target-b", Instant.now().plusMillis(150));
+        Duration elapsed = Duration.ofNanos(System.nanoTime() - started);
+
+        assertThat(available).isFalse();
+        assertThat(elapsed).isBetween(Duration.ofMillis(100), Duration.ofSeconds(2));
+    }
+
+    @Test
+    @DisplayName("마감 시각이 이미 지났으면 바로 false 를 돌려준다")
+    void awaitReturnsFalseWhenDeadlinePassed() throws InterruptedException {
+        semaphore.tryAcquire("target-b");
+
+        assertThat(semaphore.awaitAvailable("target-b", Instant.now().minusMillis(1))).isFalse();
+    }
+
+    private boolean await(String targetSystemId, Instant deadline) {
+        try {
+            return semaphore.awaitAvailable(targetSystemId, deadline);
+        } catch (InterruptedException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     @Test

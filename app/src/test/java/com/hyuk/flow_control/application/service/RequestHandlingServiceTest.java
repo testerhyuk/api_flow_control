@@ -5,6 +5,7 @@ import com.hyuk.flow_control.application.port.out.FailedRequestPublisher;
 import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
 import com.hyuk.flow_control.config.IntakeProperties;
 import com.hyuk.flow_control.domain.expiry.ExpiryPoint;
+import com.hyuk.flow_control.domain.request.IntakeResult;
 import com.hyuk.flow_control.domain.request.OutboundRequest;
 import com.hyuk.flow_control.domain.request.OutboundResult;
 import com.hyuk.flow_control.domain.request.OutcomeKind;
@@ -63,7 +64,7 @@ class RequestHandlingServiceTest {
     @Test
     @DisplayName("성공하면 끝내고 아무 데도 보내지 않는다")
     void completesOnSuccess() {
-        when(intake.process(REQUEST)).thenReturn(result(OutcomeKind.SUCCESS, null));
+        when(intake.process(eq(REQUEST), any())).thenReturn(new IntakeResult.Called(result(OutcomeKind.SUCCESS, null)));
 
         assertThat(service.handle(REQUEST, FIRST)).isEqualTo(new HandlingOutcome.Completed(OutcomeKind.SUCCESS));
         verifyNoInteractions(publisher);
@@ -73,7 +74,7 @@ class RequestHandlingServiceTest {
     @Test
     @DisplayName("재시도에서 성공하면 그 단계의 재시도 성공을 지표로 남긴다")
     void recordsRetrySuccess() {
-        when(intake.process(REQUEST)).thenReturn(result(OutcomeKind.SUCCESS, null));
+        when(intake.process(eq(REQUEST), any())).thenReturn(new IntakeResult.Called(result(OutcomeKind.SUCCESS, null)));
         DeliveryContext retry = FIRST.afterFailure(Instant.now()).movedTo(RetryStage.SECOND);
 
         service.handle(REQUEST, retry);
@@ -85,7 +86,7 @@ class RequestHandlingServiceTest {
     @Test
     @DisplayName("BUSINESS_REJECTED 는 폐기하고 아무 데도 보내지 않는다")
     void discardsBusinessRejected() {
-        when(intake.process(REQUEST)).thenReturn(result(OutcomeKind.BUSINESS_REJECTED, null));
+        when(intake.process(eq(REQUEST), any())).thenReturn(new IntakeResult.Called(result(OutcomeKind.BUSINESS_REJECTED, null)));
 
         assertThat(service.handle(REQUEST, FIRST)).isEqualTo(new HandlingOutcome.Discarded(OutcomeKind.BUSINESS_REJECTED));
         verifyNoInteractions(publisher);
@@ -97,7 +98,7 @@ class RequestHandlingServiceTest {
             "CONNECTION_FAILED", "SERVER_ERROR", "TOO_MANY_REQUESTS", "UNDER_MAINTENANCE", "TIMEOUT", "NETWORK_ERROR"})
     @DisplayName("처음 실패한 재시도 대상은 1초 단계로 보내고 실패 횟수를 1로 남긴다")
     void schedulesFirstRetry(OutcomeKind kind) {
-        when(intake.process(REQUEST)).thenReturn(result(kind, null));
+        when(intake.process(eq(REQUEST), any())).thenReturn(new IntakeResult.Called(result(kind, null)));
 
         HandlingOutcome outcome = service.handle(REQUEST, FIRST);
 
@@ -115,7 +116,7 @@ class RequestHandlingServiceTest {
     void schedulesNextStage() {
         Instant firstFailedAt = Instant.parse("2026-10-13T09:00:00Z");
         DeliveryContext secondStage = new DeliveryContext(RetryStage.SECOND, 2, firstFailedAt, firstFailedAt, "o");
-        when(intake.process(REQUEST)).thenReturn(result(OutcomeKind.TIMEOUT, null));
+        when(intake.process(eq(REQUEST), any())).thenReturn(new IntakeResult.Called(result(OutcomeKind.TIMEOUT, null)));
 
         assertThat(service.handle(REQUEST, secondStage))
                 .isEqualTo(new HandlingOutcome.RetryScheduled(RetryStage.THIRD, OutcomeKind.TIMEOUT));
@@ -132,7 +133,7 @@ class RequestHandlingServiceTest {
         DeliveryContext lastStage = new DeliveryContext(RetryStage.FOURTH, 4, Instant.now(), Instant.now(), "o");
         OutboundResult failed = new OutboundResult(
                 OutcomeKind.SERVER_ERROR, Duration.ofMillis(100), null, "<html>503</html>", 503, null);
-        when(intake.process(REQUEST)).thenReturn(failed);
+        when(intake.process(eq(REQUEST), any())).thenReturn(new IntakeResult.Called(failed));
 
         assertThat(service.handle(REQUEST, lastStage))
                 .isEqualTo(new HandlingOutcome.DeadLettered(DeadLetterReason.RETRY_EXHAUSTED));
@@ -145,8 +146,8 @@ class RequestHandlingServiceTest {
     @Test
     @DisplayName("외부 기관이 30초 뒤에 보내라고 하면 1초와 10초 단계를 건너뛰고 60초 단계로 보낸다")
     void respectsRetryAfter() {
-        when(intake.process(REQUEST)).thenReturn(
-                result(OutcomeKind.TOO_MANY_REQUESTS, Instant.now().plusSeconds(30)));
+        when(intake.process(eq(REQUEST), any())).thenReturn(new IntakeResult.Called(
+                result(OutcomeKind.TOO_MANY_REQUESTS, Instant.now().plusSeconds(30))));
 
         assertThat(service.handle(REQUEST, FIRST))
                 .isEqualTo(new HandlingOutcome.RetryScheduled(RetryStage.THIRD, OutcomeKind.TOO_MANY_REQUESTS));
@@ -155,8 +156,8 @@ class RequestHandlingServiceTest {
     @Test
     @DisplayName("알려 준 대기 시간이 이미 지났으면 1초 단계로 보낸다")
     void pastRetryAfterUsesFirstStage() {
-        when(intake.process(REQUEST)).thenReturn(
-                result(OutcomeKind.TOO_MANY_REQUESTS, Instant.now().minusSeconds(5)));
+        when(intake.process(eq(REQUEST), any())).thenReturn(new IntakeResult.Called(
+                result(OutcomeKind.TOO_MANY_REQUESTS, Instant.now().minusSeconds(5))));
 
         assertThat(service.handle(REQUEST, FIRST))
                 .isEqualTo(new HandlingOutcome.RetryScheduled(RetryStage.FIRST, OutcomeKind.TOO_MANY_REQUESTS));
@@ -165,8 +166,8 @@ class RequestHandlingServiceTest {
     @Test
     @DisplayName("알려 준 대기 시간이 마지막 단계보다 길면 재시도 소진으로 DLQ 에 보낸다")
     void retryAfterLongerThanLastStage() {
-        when(intake.process(REQUEST)).thenReturn(
-                result(OutcomeKind.UNDER_MAINTENANCE, Instant.now().plusSeconds(3600)));
+        when(intake.process(eq(REQUEST), any())).thenReturn(new IntakeResult.Called(
+                result(OutcomeKind.UNDER_MAINTENANCE, Instant.now().plusSeconds(3600))));
 
         assertThat(service.handle(REQUEST, FIRST))
                 .isEqualTo(new HandlingOutcome.DeadLettered(DeadLetterReason.RETRY_EXHAUSTED));
@@ -177,7 +178,7 @@ class RequestHandlingServiceTest {
     @DisplayName("DLQ 대상 kind 는 재시도 없이 바로 DLQ 에 보낸다")
     void deadLettersPermanentFailures(OutcomeKind kind) {
         OutboundResult failed = new OutboundResult(kind, Duration.ofMillis(100), null, "{}", 200, "E999");
-        when(intake.process(REQUEST)).thenReturn(failed);
+        when(intake.process(eq(REQUEST), any())).thenReturn(new IntakeResult.Called(failed));
 
         assertThat(service.handle(REQUEST, FIRST)).isEqualTo(new HandlingOutcome.DeadLettered(DeadLetterReason.DLQ_KIND));
         ArgumentCaptor<DeliveryContext> context = ArgumentCaptor.forClass(DeliveryContext.class);
@@ -189,7 +190,7 @@ class RequestHandlingServiceTest {
     @Test
     @DisplayName("처리 중 예외가 나면 예외 내용을 담아 DLQ 에 보낸다")
     void deadLettersProcessingError() {
-        when(intake.process(REQUEST)).thenThrow(new IllegalArgumentException("설정에 없는 대상"));
+        when(intake.process(eq(REQUEST), any())).thenThrow(new IllegalArgumentException("설정에 없는 대상"));
 
         assertThat(service.handle(REQUEST, FIRST))
                 .isEqualTo(new HandlingOutcome.DeadLettered(DeadLetterReason.PROCESSING_ERROR));
@@ -201,7 +202,7 @@ class RequestHandlingServiceTest {
     @Test
     @DisplayName("앱 종료로 대기가 중단되면 DLQ 에 보내지 않고 그대로 예외를 낸다")
     void rethrowsInterruption() {
-        when(intake.process(REQUEST)).thenThrow(new IntakeInterruptedException(new InterruptedException()));
+        when(intake.process(eq(REQUEST), any())).thenThrow(new IntakeInterruptedException(new InterruptedException()));
 
         assertThatThrownBy(() -> service.handle(REQUEST, FIRST)).isInstanceOf(IntakeInterruptedException.class);
         verifyNoInteractions(publisher);
@@ -211,7 +212,7 @@ class RequestHandlingServiceTest {
     @Test
     @DisplayName("재시도 토픽에 넣다가 실패하면 예외를 내서 처리 완료로 기록되지 않게 한다")
     void propagatesPublishFailure() {
-        when(intake.process(REQUEST)).thenReturn(result(OutcomeKind.TIMEOUT, null));
+        when(intake.process(eq(REQUEST), any())).thenReturn(new IntakeResult.Called(result(OutcomeKind.TIMEOUT, null)));
         doThrow(new IllegalStateException("Kafka 장애")).when(publisher).scheduleRetry(any(), any(), any());
 
         assertThatThrownBy(() -> service.handle(REQUEST, FIRST)).isInstanceOf(IllegalStateException.class);
@@ -235,7 +236,7 @@ class RequestHandlingServiceTest {
     @DisplayName("꺼낸 순간 요청이 생성된 지 얼마나 됐는지 지표로 남긴다")
     void recordsRequestAge() {
         OutboundRequest old = new OutboundRequest("req-old", TARGET, "{}", Instant.now().minusSeconds(30));
-        when(intake.process(old)).thenReturn(result(OutcomeKind.SUCCESS, null));
+        when(intake.process(eq(old), any())).thenReturn(new IntakeResult.Called(result(OutcomeKind.SUCCESS, null)));
 
         service.handle(old, FIRST);
 
@@ -264,10 +265,36 @@ class RequestHandlingServiceTest {
     @DisplayName("유효기간 안이면 오래됐어도 호출한다")
     void processesWithinTtl() {
         OutboundRequest old = new OutboundRequest("req-old", TARGET, "{}", Instant.now().minus(Duration.ofMinutes(9)));
-        when(intake.process(old)).thenReturn(result(OutcomeKind.SUCCESS, null));
+        when(intake.process(eq(old), any())).thenReturn(new IntakeResult.Called(result(OutcomeKind.SUCCESS, null)));
 
         assertThat(service.handle(old, FIRST)).isEqualTo(new HandlingOutcome.Completed(OutcomeKind.SUCCESS));
         verify(publisher, never()).expire(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("요청이 만들어진 시각 + 유효기간을 한도 대기의 마감 시각으로 넘긴다")
+    void passesTtlDeadlineToIntake() {
+        Instant createdAt = Instant.now().minusSeconds(30);
+        OutboundRequest request = new OutboundRequest("req-deadline", TARGET, "{}", createdAt);
+        when(intake.process(eq(request), any())).thenReturn(new IntakeResult.Called(result(OutcomeKind.SUCCESS, null)));
+
+        service.handle(request, FIRST);
+
+        verify(intake).process(request, createdAt.plus(TTL));
+    }
+
+    @Test
+    @DisplayName("한도를 기다리다 유효기간이 지나면 호출하지 않고 만료 토픽으로 보낸다")
+    void expiresWhileWaitingForLimit() {
+        DeliveryContext retry = new DeliveryContext(RetryStage.SECOND, 2, Instant.now(), Instant.now(), "o",
+                OutcomeKind.TIMEOUT);
+        when(intake.process(eq(REQUEST), any())).thenReturn(new IntakeResult.Expired(Instant.now()));
+
+        assertThat(service.handle(REQUEST, retry)).isEqualTo(new HandlingOutcome.Expired(ExpiryPoint.LIMIT_WAIT));
+
+        verify(publisher).expire(eq(REQUEST), eq(retry), eq(ExpiryPoint.LIMIT_WAIT), eq(OutcomeKind.TIMEOUT), any());
+        verify(metrics).recordExpired(TARGET, ExpiryPoint.LIMIT_WAIT);
+        verify(publisher, never()).scheduleRetry(any(), any(), any());
     }
 
     @Test
@@ -276,7 +303,7 @@ class RequestHandlingServiceTest {
         OutboundRequest old = new OutboundRequest("req-old", TARGET, "{}",
                 Instant.now().minus(Duration.ofMinutes(9)).minusSeconds(30));
         DeliveryContext secondStage = new DeliveryContext(RetryStage.SECOND, 2, Instant.now(), Instant.now(), "o");
-        when(intake.process(old)).thenReturn(result(OutcomeKind.TIMEOUT, null));
+        when(intake.process(eq(old), any())).thenReturn(new IntakeResult.Called(result(OutcomeKind.TIMEOUT, null)));
 
         assertThat(service.handle(old, secondStage))
                 .isEqualTo(new HandlingOutcome.Expired(ExpiryPoint.RETRY_SCHEDULE));
@@ -295,7 +322,7 @@ class RequestHandlingServiceTest {
     void schedulesRetryWithinTtl() {
         OutboundRequest old = new OutboundRequest("req-old", TARGET, "{}", Instant.now().minus(Duration.ofMinutes(8)));
         DeliveryContext secondStage = new DeliveryContext(RetryStage.SECOND, 2, Instant.now(), Instant.now(), "o");
-        when(intake.process(old)).thenReturn(result(OutcomeKind.TIMEOUT, null));
+        when(intake.process(eq(old), any())).thenReturn(new IntakeResult.Called(result(OutcomeKind.TIMEOUT, null)));
 
         assertThat(service.handle(old, secondStage))
                 .isEqualTo(new HandlingOutcome.RetryScheduled(RetryStage.THIRD, OutcomeKind.TIMEOUT));

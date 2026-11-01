@@ -7,6 +7,7 @@ import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
 import com.hyuk.flow_control.config.IntakeProperties;
 import com.hyuk.flow_control.domain.expiry.ExpiryPoint;
 import com.hyuk.flow_control.domain.expiry.RequestTtl;
+import com.hyuk.flow_control.domain.request.IntakeResult;
 import com.hyuk.flow_control.domain.request.OutboundRequest;
 import com.hyuk.flow_control.domain.request.OutboundResult;
 import com.hyuk.flow_control.domain.request.OutcomeKind;
@@ -55,10 +56,16 @@ public class RequestHandlingService implements RequestHandlingUseCase {
             }
         }
 
+        Instant deadline = request.createdAt() == null ? null : ttl.deadlineOf(request.createdAt());
         OutboundResult result;
 
         try {
-            result = intake.process(request);
+            switch (intake.process(request, deadline)) {
+                case IntakeResult.Called called -> result = called.result();
+                case IntakeResult.Expired expired -> {
+                    return expire(request, context, ExpiryPoint.LIMIT_WAIT, context.lastKind(), expired.at());
+                }
+            }
         } catch (IntakeInterruptedException e) {
             throw e;
         } catch (RuntimeException e) {

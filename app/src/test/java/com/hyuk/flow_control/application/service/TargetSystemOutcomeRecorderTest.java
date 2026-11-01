@@ -150,6 +150,23 @@ class TargetSystemOutcomeRecorderTest {
     }
 
     @Test
+    @DisplayName("세마포어 자리를 기다리는 요청이 있으면 window 가 지나도 막힌 것으로 본다")
+    void treatsWaitingAsBlocked() throws InterruptedException {
+        TargetSystemOutcomeRecorder recorder = recorderWithWindow(Duration.ofMillis(200));
+
+        recorder.waitStarted(TARGET_A);
+        recorder.recordBlocked(TARGET_A);
+        Thread.sleep(300);
+        assertThat(recorder.blockedWithinWindow(TARGET_A)).isTrue();
+
+        recorder.waitEnded(TARGET_A);
+        assertThat(recorder.blockedWithinWindow(TARGET_A)).isTrue();
+
+        Thread.sleep(300);
+        assertThat(recorder.blockedWithinWindow(TARGET_A)).isFalse();
+    }
+
+    @Test
     @DisplayName("429 는 실패로 세서, 3번 연속이면 연속 실패 사건이고, 꺼내면 비워진다")
     void tooManyRequestsCountsAsFailure() {
         TargetSystemOutcomeRecorder recorder = recorderWithWindow(Duration.ofSeconds(10));
