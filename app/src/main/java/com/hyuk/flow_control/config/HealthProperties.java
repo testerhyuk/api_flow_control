@@ -143,9 +143,10 @@ public record HealthProperties(
             int enterAfter,
             double rateRatio,
             int consecutiveFailures,
-            int consecutiveTimeouts
+            int consecutiveTimeouts,
+            int recoveryCalls
     ) {
-        static final LowTraffic DEFAULT = new LowTraffic(3, 0.5, 3, 3);
+        static final LowTraffic DEFAULT = new LowTraffic(3, 0.5, 3, 3, 38);
 
         public LowTraffic {
             if (enterAfter < 1) {
@@ -156,6 +157,9 @@ public record HealthProperties(
             }
             if (consecutiveFailures < 1 || consecutiveTimeouts < 1) {
                 throw new IllegalArgumentException("low-traffic 의 사건 횟수는 1 이상이어야 합니다");
+            }
+            if (recoveryCalls < 1) {
+                throw new IllegalArgumentException("low-traffic.recovery-calls 는 1 이상이어야 합니다");
             }
         }
     }

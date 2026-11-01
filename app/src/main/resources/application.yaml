@@ -49,6 +49,7 @@ flow-control:
       rate-ratio: 0.5
       consecutive-failures: 3
       consecutive-timeouts: 3
+      recovery-calls: 38
     baseline-auto: true
     baseline:
       window: 10m

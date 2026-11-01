@@ -451,22 +451,57 @@ class TargetSystemHealthEvaluatorTest {
     }
 
     @Test
-    @DisplayName("저트래픽 모드에서 위험이 된 뒤 recovery-duration 동안 사건이 없으면 정상으로 되돌린다")
-    void lowTrafficQuietPeriodRestoresHealthy() throws InterruptedException {
+    @DisplayName("저트래픽 모드에서 위험이 된 뒤 recovery-calls 건을 호출하는 동안 사건이 없으면 정상으로 되돌린다")
+    void lowTrafficQuietCallsRestoreHealthy() {
         when(recorder.window(TARGET_A)).thenReturn(window(5, 0));
         when(recorder.drainEvents(TARGET_A)).thenReturn(
-                Set.of(), Set.of(), Set.of(LowTrafficEvent.CONSECUTIVE_TIMEOUTS), Set.of());
-        TargetSystemHealthEvaluator evaluator = evaluator(Duration.ofMillis(10), Duration.ofMillis(100), true);
+                Set.of(), Set.of(), Set.of(), Set.of(LowTrafficEvent.CONSECUTIVE_TIMEOUTS), Set.of());
+        TargetSystemHealthEvaluator evaluator = antiOscillationEvaluator();
 
-        for (int i = 0; i < 4; i++) {
-            evaluator.evaluate(TARGET_A);
-        }
-        assertThat(evaluator.snapshotOf(TARGET_A).state()).isEqualTo(HealthState.CRITICAL);
+        assertThat(statesAfterEvaluations(evaluator, 8)).containsExactly(
+                HealthState.HEALTHY, HealthState.HEALTHY, HealthState.HEALTHY, HealthState.CRITICAL,
+                HealthState.CRITICAL, HealthState.CRITICAL, HealthState.CRITICAL, HealthState.HEALTHY);
+        assertThat(evaluator.snapshotOf(TARGET_A).mode()).isEqualTo(HealthMode.LOW_TRAFFIC);
+    }
 
-        Thread.sleep(150);
-        evaluator.evaluate(TARGET_A);
+    @Test
+    @DisplayName("저트래픽 모드에서 위험인 동안 호출이 없으면 시간이 지나도 위험에 머문다")
+    void lowTrafficStaysCriticalWithoutCalls() {
+        when(recorder.window(TARGET_A)).thenReturn(window(5, 0));
+        when(recorder.drainEvents(TARGET_A)).thenReturn(
+                Set.of(), Set.of(), Set.of(), Set.of(LowTrafficEvent.CONSECUTIVE_FAILURES), Set.of());
+        when(recorder.drainNewSamples(TARGET_A)).thenReturn(0);
+        TargetSystemHealthEvaluator evaluator = antiOscillationEvaluator();
 
-        assertThat(evaluator.snapshotOf(TARGET_A).state()).isEqualTo(HealthState.HEALTHY);
+        List<HealthState> states = statesAfterEvaluations(evaluator, 50);
+
+        assertThat(states.subList(3, 50)).containsOnly(HealthState.CRITICAL);
+    }
+
+    @Test
+    @DisplayName("저트래픽 모드에서 사건이 다시 나면 호출 건수를 0 부터 다시 센다")
+    void lowTrafficEventRestartsQuietCalls() {
+        when(recorder.window(TARGET_A)).thenReturn(window(5, 0));
+        when(recorder.drainEvents(TARGET_A)).thenReturn(
+                Set.of(), Set.of(), Set.of(), Set.of(LowTrafficEvent.CONSECUTIVE_FAILURES), Set.of(),
+                Set.of(LowTrafficEvent.CONSECUTIVE_FAILURES), Set.of());
+        TargetSystemHealthEvaluator evaluator = antiOscillationEvaluator();
+
+        List<HealthState> states = statesAfterEvaluations(evaluator, 10);
+
+        assertThat(states.get(8)).isEqualTo(HealthState.CRITICAL);
+        assertThat(states.get(9)).isEqualTo(HealthState.HEALTHY);
+    }
+
+    @Test
+    @DisplayName("위험인 채로 저트래픽 모드에 들어오면 그때부터 호출 건수를 센다")
+    void countsQuietCallsAfterEnteringLowTrafficWhileCritical() {
+        when(recorder.window(TARGET_A)).thenReturn(critical(), window(5, 0));
+        TargetSystemHealthEvaluator evaluator = antiOscillationEvaluator();
+
+        assertThat(statesAfterEvaluations(evaluator, 7)).containsExactly(
+                HealthState.CRITICAL, HealthState.CRITICAL, HealthState.CRITICAL, HealthState.CRITICAL,
+                HealthState.CRITICAL, HealthState.CRITICAL, HealthState.HEALTHY);
         assertThat(evaluator.snapshotOf(TARGET_A).mode()).isEqualTo(HealthMode.LOW_TRAFFIC);
     }
 
