@@ -36,7 +36,7 @@ class TargetSystemPolicyTest {
     @DisplayName("버스트 용량은 실제 Rate 에 burst-window 를 곱한 값이다")
     void burstCapacity() {
         TargetSystemPolicy policy = new TargetSystemPolicy(
-                1000, Duration.ofMillis(100), 1.0, Duration.ofMillis(10));
+                2000, Duration.ofMillis(100), 0.5, Duration.ofMillis(10));
 
         assertThat(policy.burstCapacity()).isEqualTo(10);
     }
@@ -74,10 +74,30 @@ class TargetSystemPolicyTest {
     }
 
     @Test
-    @DisplayName("safety-margin 이 0 이하이거나 1 을 넘으면 만들 수 없다")
+    @DisplayName("baseline-p95 가 0 이면 만들 수 없다")
+    void rejectsZeroBaselineP95() {
+        assertThatThrownBy(() -> new TargetSystemPolicy(
+                100, Duration.ofMillis(100), Duration.ZERO, 0.95, Duration.ofMillis(10)))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("baseline-p95 를 주지 않으면 baseline-rtt 의 2배다")
+    void defaultsBaselineP95ToTwiceBaselineRtt() {
+        TargetSystemPolicy policy = new TargetSystemPolicy(100, Duration.ofMillis(150), 0.95, Duration.ofMillis(10));
+
+        assertThat(policy.baselineP95()).isEqualTo(Duration.ofMillis(300));
+    }
+
+    @Test
+    @DisplayName("safety-margin 이 0 이하이거나 1 이상이면 만들 수 없다")
     void rejectsInvalidSafetyMargin() {
         assertThatThrownBy(() -> new TargetSystemPolicy(
                 100, Duration.ofMillis(100), 0.0, Duration.ofMillis(10)))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        assertThatThrownBy(() -> new TargetSystemPolicy(
+                100, Duration.ofMillis(100), 1.0, Duration.ofMillis(10)))
                 .isInstanceOf(IllegalArgumentException.class);
 
         assertThatThrownBy(() -> new TargetSystemPolicy(

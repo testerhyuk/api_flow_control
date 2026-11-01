@@ -5,6 +5,7 @@ import com.hyuk.mock_target.metrics.SimulatorMetrics;
 import com.hyuk.mock_target.simulation.CallResult;
 import com.hyuk.mock_target.simulation.CallSimulator;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -38,5 +39,10 @@ public class CallController {
 
         metrics.recordCall(result.outcome(), Duration.ofNanos(System.nanoTime() - startedAt));
         return renderer.render(result, requestId, spec.responseFormat());
+    }
+
+    @GetMapping("/health")
+    public ResponseEntity<String> health() {
+        return renderer.render(simulator.health(), null, spec.responseFormat());
     }
 }

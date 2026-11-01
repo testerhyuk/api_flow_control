@@ -69,6 +69,21 @@ class TargetSystemConnectionsTest {
     }
 
     @Test
+    @DisplayName("path 가 바뀌면 HTTP 클라이언트를 새로 만들고 새 path 로 보낸다")
+    void replacesClientWhenPathChanges() {
+        TargetSystemConnections.Connection before = connections.get(TARGET);
+        ConnectionSettings current = policy.connection();
+        ManagedPolicy changed = Policies.withConnection(policy.withVersion(2), new ConnectionSettings(
+                current.url(), "/api/v1/payments", current.connectTimeout(), current.readTimeout()));
+
+        connections.onPolicyChanged(policy, changed);
+
+        TargetSystemConnections.Connection after = connections.get(TARGET);
+        assertThat(after.httpClient()).isNotSameAs(before.httpClient());
+        assertThat(after.path()).isEqualTo("/api/v1/payments");
+    }
+
+    @Test
     @DisplayName("응답 판단 규칙만 바뀌면 HTTP 클라이언트는 그대로 두고 규칙만 바꾼다")
     void swapsOnlyRulesWhenResponseChanges() {
         TargetSystemConnections.Connection before = connections.get(TARGET);

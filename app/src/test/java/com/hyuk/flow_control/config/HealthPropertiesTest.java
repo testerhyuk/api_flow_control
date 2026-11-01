@@ -154,7 +154,7 @@ class HealthPropertiesTest {
         assertThat(properties.degradedStreak()).isEqualTo(3);
         assertThat(properties.recoveryThreshold())
                 .isEqualTo(new HealthProperties.RecoveryThreshold(0.05, 0.25, 1.5));
-        assertThat(properties.lowTraffic()).isEqualTo(new HealthProperties.LowTraffic(3, 0.5, 3, 3));
+        assertThat(properties.lowTraffic()).isEqualTo(new HealthProperties.LowTraffic(3, 3, 3, 38));
         assertThat(properties.baselineAuto()).isTrue();
         assertThat(properties.baseline())
                 .isEqualTo(new HealthProperties.Baseline(Duration.ofMinutes(10), 100, 0.5, 1.5));
@@ -179,9 +179,9 @@ class HealthPropertiesTest {
                         "flow-control.health.recovery-threshold.latency-multiplier=1.8",
                         "flow-control.health.degraded-streak=5",
                         "flow-control.health.low-traffic.enter-after=4",
-                        "flow-control.health.low-traffic.rate-ratio=0.4",
                         "flow-control.health.low-traffic.consecutive-failures=5",
                         "flow-control.health.low-traffic.consecutive-timeouts=6",
+                        "flow-control.health.low-traffic.recovery-calls=20",
                         "flow-control.health.baseline-auto=false",
                         "flow-control.health.baseline.window=5m",
                         "flow-control.health.baseline.minimum-samples=200",
@@ -193,11 +193,18 @@ class HealthPropertiesTest {
                     assertThat(properties.recoveryThreshold())
                             .isEqualTo(new HealthProperties.RecoveryThreshold(0.07, 0.30, 1.8));
                     assertThat(properties.degradedStreak()).isEqualTo(5);
-                    assertThat(properties.lowTraffic()).isEqualTo(new HealthProperties.LowTraffic(4, 0.4, 5, 6));
+                    assertThat(properties.lowTraffic()).isEqualTo(new HealthProperties.LowTraffic(4, 5, 6, 20));
                     assertThat(properties.baselineAuto()).isFalse();
                     assertThat(properties.baseline())
                             .isEqualTo(new HealthProperties.Baseline(Duration.ofMinutes(5), 200, 0.6, 1.4));
                 });
+    }
+
+    @Test
+    @DisplayName("저트래픽 모드의 위험 해제 호출 건수가 1보다 작으면 만들 수 없다")
+    void rejectsInvalidRecoveryCalls() {
+        assertThatThrownBy(() -> new HealthProperties.LowTraffic(3, 3, 3, 0))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

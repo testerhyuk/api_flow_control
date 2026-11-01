@@ -21,6 +21,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Component
 @Order(0)
@@ -61,6 +62,16 @@ public class TargetSystemOutcomeRecorder implements PolicyChangeListener {
         outcomesOf(targetSystemId).lastBlockedAt = Instant.now();
     }
 
+    public void waitStarted(String targetSystemId) {
+        outcomesOf(targetSystemId).waiting.incrementAndGet();
+    }
+
+    public void waitEnded(String targetSystemId) {
+        Outcomes target = outcomesOf(targetSystemId);
+        target.lastBlockedAt = Instant.now();
+        target.waiting.decrementAndGet();
+    }
+
     public List<RecordedOutcome> recentOutcomes(String targetSystemId) {
         return window(targetSystemId).outcomes();
     }
@@ -75,12 +86,21 @@ public class TargetSystemOutcomeRecorder implements PolicyChangeListener {
     }
 
     public boolean blockedWithinWindow(String targetSystemId) {
-        Instant blockedAt = outcomesOf(targetSystemId).lastBlockedAt;
+        Outcomes target = outcomesOf(targetSystemId);
+        if (target.waiting.get() > 0) {
+            return true;
+        }
+
+        Instant blockedAt = target.lastBlockedAt;
         return blockedAt != null && !blockedAt.isBefore(Instant.now().minus(window));
     }
 
     public Set<LowTrafficEvent> drainEvents(String targetSystemId) {
         return outcomesOf(targetSystemId).drain();
+    }
+
+    public int drainNewSamples(String targetSystemId) {
+        return outcomesOf(targetSystemId).newSamples.getAndSet(0);
     }
 
     private void removeOlderThan(Deque<RecordedOutcome> deque, Instant threshold) {
@@ -107,12 +127,16 @@ public class TargetSystemOutcomeRecorder implements PolicyChangeListener {
         private final Set<LowTrafficEvent> pending = EnumSet.noneOf(LowTrafficEvent.class);
         private int failureStreak;
         private int timeoutStreak;
+        private final AtomicInteger waiting = new AtomicInteger();
+        private final AtomicInteger newSamples = new AtomicInteger();
         private volatile Instant lastBlockedAt;
 
         private synchronized void track(OutcomeKind kind, HealthProperties.LowTraffic rules) {
             if (!OutcomeStatistics.isSample(kind)) {
                 return;
             }
+
+            newSamples.incrementAndGet();
 
             if (!OutcomeStatistics.isFailure(kind)) {
                 failureStreak = 0;

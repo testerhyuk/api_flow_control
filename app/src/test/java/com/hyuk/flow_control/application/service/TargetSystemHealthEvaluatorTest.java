@@ -3,6 +3,7 @@ package com.hyuk.flow_control.application.service;
 import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
 import com.hyuk.flow_control.application.port.out.TargetSystemPolicyReader;
 import com.hyuk.flow_control.config.HealthProperties;
+import com.hyuk.flow_control.domain.health.HealthGrade;
 import com.hyuk.flow_control.domain.health.HealthMode;
 import com.hyuk.flow_control.domain.health.HealthSnapshot;
 import com.hyuk.flow_control.domain.health.HealthState;
@@ -60,11 +61,12 @@ class TargetSystemHealthEvaluatorTest {
         when(policyReader.readAll()).thenReturn(Map.of(TARGET_A, policyA, TARGET_B, policyB));
         when(policyReader.read(TARGET_A)).thenReturn(policyA);
         when(policyReader.read(TARGET_B)).thenReturn(policyB);
-        when(baselines.effective(TARGET_A)).thenReturn(BASELINE_A);
-        when(baselines.effective(TARGET_B)).thenReturn(BASELINE_B);
+        when(baselines.effective(TARGET_A)).thenReturn(new BaselineEstimator.Baselines(BASELINE_A, BASELINE_A));
+        when(baselines.effective(TARGET_B)).thenReturn(new BaselineEstimator.Baselines(BASELINE_B, BASELINE_B));
         when(recorder.window(TARGET_A)).thenReturn(OutcomeWindow.empty());
         when(recorder.window(TARGET_B)).thenReturn(OutcomeWindow.empty());
         when(recorder.drainEvents(any())).thenReturn(Set.of());
+        when(recorder.drainNewSamples(any())).thenReturn(10);
     }
 
     @Test
@@ -205,16 +207,17 @@ class TargetSystemHealthEvaluatorTest {
     }
 
     @Test
-    @DisplayName("판정 기준 latency 는 정책 값이 아니라 지금 쓰는 baseline 으로 계산한다")
+    @DisplayName("판정 기준 latency 는 정책 값이 아니라 지금 쓰는 p95 baseline 으로 계산한다")
     void usesEffectiveBaseline() {
-        when(baselines.effective(TARGET_A)).thenReturn(Duration.ofMillis(150));
+        when(baselines.effective(TARGET_A))
+                .thenReturn(new BaselineEstimator.Baselines(Duration.ofMillis(100), Duration.ofMillis(150)));
         when(recorder.window(TARGET_A)).thenReturn(successes(100, Duration.ofMillis(250)));
         TargetSystemHealthEvaluator evaluator = plainEvaluator();
 
         evaluator.evaluate(TARGET_A);
 
         assertThat(evaluator.snapshotOf(TARGET_A).state()).isEqualTo(HealthState.HEALTHY);
-        assertThat(evaluator.snapshotOf(TARGET_A).baselineRtt()).isEqualTo(Duration.ofMillis(150));
+        assertThat(evaluator.snapshotOf(TARGET_A).baselineP95()).isEqualTo(Duration.ofMillis(150));
     }
 
     @Test
@@ -235,7 +238,7 @@ class TargetSystemHealthEvaluatorTest {
         assertThat(snapshot.evaluatedAt()).isBetween(before, after);
         assertThat(snapshot.mode()).isEqualTo(HealthMode.ADAPTIVE);
         assertThat(snapshot.windowSpan()).isEqualTo(Duration.ofMillis(800));
-        assertThat(snapshot.baselineRtt()).isEqualTo(BASELINE_A);
+        assertThat(snapshot.baselineP95()).isEqualTo(BASELINE_A);
     }
 
     @Test
@@ -342,6 +345,42 @@ class TargetSystemHealthEvaluatorTest {
     }
 
     @Test
+    @DisplayName("저하 연속 횟수는 첫 저하는 바로, 그 뒤로는 새 호출 결과가 판정 개수만큼 쌓였을 때만 센다")
+    void countsDegradedStreakOncePerBatch() {
+        when(recorder.drainNewSamples(TARGET_A)).thenReturn(5);
+        when(recorder.window(TARGET_A)).thenReturn(degraded());
+        TargetSystemHealthEvaluator evaluator = antiOscillationEvaluator();
+
+        assertThat(statesAfterEvaluations(evaluator, 5)).containsExactly(
+                HealthState.HEALTHY, HealthState.HEALTHY, HealthState.HEALTHY, HealthState.HEALTHY,
+                HealthState.DEGRADED);
+    }
+
+    @Test
+    @DisplayName("회복 중 좋음은 새 호출 결과가 판정 개수만큼 쌓였을 때만 센다")
+    void countsGoodOncePerBatch() {
+        when(recorder.drainNewSamples(TARGET_A)).thenReturn(5);
+        when(recorder.window(TARGET_A)).thenReturn(critical(), good(), good(), good(), good(), good());
+        TargetSystemHealthEvaluator evaluator = antiOscillationEvaluator();
+
+        assertThat(statesAfterEvaluations(evaluator, 6)).containsExactly(
+                HealthState.CRITICAL, HealthState.RECOVERING, HealthState.RECOVERING, HealthState.RECOVERING,
+                HealthState.RECOVERING, HealthState.HEALTHY);
+    }
+
+    @Test
+    @DisplayName("회복 중 새 호출 결과가 판정 개수만큼 쌓이지 않은 판정의 사이값은 연속 좋음 횟수를 바꾸지 않는다")
+    void ignoresHoldWithinBatch() {
+        when(recorder.drainNewSamples(TARGET_A)).thenReturn(5);
+        when(recorder.window(TARGET_A)).thenReturn(critical(), good(), window(93, 7), good(), good(), good());
+        TargetSystemHealthEvaluator evaluator = antiOscillationEvaluator();
+
+        assertThat(statesAfterEvaluations(evaluator, 6)).containsExactly(
+                HealthState.CRITICAL, HealthState.RECOVERING, HealthState.RECOVERING, HealthState.RECOVERING,
+                HealthState.RECOVERING, HealthState.HEALTHY);
+    }
+
+    @Test
     @DisplayName("건수가 모자라고 한도에 막힌 시도도 없는 판정이 3번 연속이면 저트래픽 모드로 들어간다")
     void entersLowTraffic() {
         when(recorder.window(TARGET_A)).thenReturn(window(5, 0));
@@ -414,23 +453,70 @@ class TargetSystemHealthEvaluatorTest {
     }
 
     @Test
-    @DisplayName("저트래픽 모드에서 위험이 된 뒤 recovery-duration 동안 사건이 없으면 정상으로 되돌린다")
-    void lowTrafficQuietPeriodRestoresHealthy() throws InterruptedException {
+    @DisplayName("저트래픽 모드에서 위험이 된 뒤 recovery-calls 건을 호출하는 동안 사건이 없으면 정상으로 되돌린다")
+    void lowTrafficQuietCallsRestoreHealthy() {
         when(recorder.window(TARGET_A)).thenReturn(window(5, 0));
         when(recorder.drainEvents(TARGET_A)).thenReturn(
-                Set.of(), Set.of(), Set.of(LowTrafficEvent.CONSECUTIVE_TIMEOUTS), Set.of());
-        TargetSystemHealthEvaluator evaluator = evaluator(Duration.ofMillis(10), Duration.ofMillis(100), true);
+                Set.of(), Set.of(), Set.of(), Set.of(LowTrafficEvent.CONSECUTIVE_TIMEOUTS), Set.of());
+        TargetSystemHealthEvaluator evaluator = antiOscillationEvaluator();
 
-        for (int i = 0; i < 4; i++) {
-            evaluator.evaluate(TARGET_A);
-        }
-        assertThat(evaluator.snapshotOf(TARGET_A).state()).isEqualTo(HealthState.CRITICAL);
+        assertThat(statesAfterEvaluations(evaluator, 8)).containsExactly(
+                HealthState.HEALTHY, HealthState.HEALTHY, HealthState.HEALTHY, HealthState.CRITICAL,
+                HealthState.CRITICAL, HealthState.CRITICAL, HealthState.CRITICAL, HealthState.HEALTHY);
+        assertThat(evaluator.snapshotOf(TARGET_A).mode()).isEqualTo(HealthMode.LOW_TRAFFIC);
+    }
 
-        Thread.sleep(150);
+    @Test
+    @DisplayName("저트래픽 모드에서 위험인 동안 호출이 없으면 시간이 지나도 위험에 머문다")
+    void lowTrafficStaysCriticalWithoutCalls() {
+        when(recorder.window(TARGET_A)).thenReturn(window(5, 0));
+        when(recorder.drainEvents(TARGET_A)).thenReturn(
+                Set.of(), Set.of(), Set.of(), Set.of(LowTrafficEvent.CONSECUTIVE_FAILURES), Set.of());
+        when(recorder.drainNewSamples(TARGET_A)).thenReturn(0);
+        TargetSystemHealthEvaluator evaluator = antiOscillationEvaluator();
+
+        List<HealthState> states = statesAfterEvaluations(evaluator, 50);
+
+        assertThat(states.subList(3, 50)).containsOnly(HealthState.CRITICAL);
+    }
+
+    @Test
+    @DisplayName("저트래픽 모드에서 사건이 다시 나면 호출 건수를 0 부터 다시 센다")
+    void lowTrafficEventRestartsQuietCalls() {
+        when(recorder.window(TARGET_A)).thenReturn(window(5, 0));
+        when(recorder.drainEvents(TARGET_A)).thenReturn(
+                Set.of(), Set.of(), Set.of(), Set.of(LowTrafficEvent.CONSECUTIVE_FAILURES), Set.of(),
+                Set.of(LowTrafficEvent.CONSECUTIVE_FAILURES), Set.of());
+        TargetSystemHealthEvaluator evaluator = antiOscillationEvaluator();
+
+        List<HealthState> states = statesAfterEvaluations(evaluator, 10);
+
+        assertThat(states.get(8)).isEqualTo(HealthState.CRITICAL);
+        assertThat(states.get(9)).isEqualTo(HealthState.HEALTHY);
+    }
+
+    @Test
+    @DisplayName("위험인 채로 저트래픽 모드에 들어오면 그 판정까지 쌓인 호출은 버리고 다음 판정부터 호출 건수를 센다")
+    void countsQuietCallsAfterEnteringLowTrafficWhileCritical() {
+        when(recorder.window(TARGET_A)).thenReturn(critical(), window(5, 0));
+        TargetSystemHealthEvaluator evaluator = antiOscillationEvaluator();
+
+        assertThat(statesAfterEvaluations(evaluator, 8)).containsExactly(
+                HealthState.CRITICAL, HealthState.CRITICAL, HealthState.CRITICAL, HealthState.CRITICAL,
+                HealthState.CRITICAL, HealthState.CRITICAL, HealthState.CRITICAL, HealthState.HEALTHY);
+        assertThat(evaluator.snapshotOf(TARGET_A).mode()).isEqualTo(HealthMode.LOW_TRAFFIC);
+    }
+
+    @Test
+    @DisplayName("판정 결과에 이번 판정의 등급과 새로 받은 호출 결과 개수를 담는다")
+    void snapshotCarriesGradeAndNewSamples() {
+        when(recorder.window(TARGET_A)).thenReturn(good());
+        TargetSystemHealthEvaluator evaluator = plainEvaluator();
+
         evaluator.evaluate(TARGET_A);
 
-        assertThat(evaluator.snapshotOf(TARGET_A).state()).isEqualTo(HealthState.HEALTHY);
-        assertThat(evaluator.snapshotOf(TARGET_A).mode()).isEqualTo(HealthMode.LOW_TRAFFIC);
+        assertThat(evaluator.snapshotOf(TARGET_A).grade()).isEqualTo(HealthGrade.GOOD);
+        assertThat(evaluator.snapshotOf(TARGET_A).newSamples()).isEqualTo(10);
     }
 
     @Test
@@ -444,6 +530,7 @@ class TargetSystemHealthEvaluatorTest {
 
         assertThat(evaluator.snapshotOf(TARGET_A)).isEqualTo(HealthSnapshot.initial());
         verify(recorder).drainEvents(TARGET_A);
+        verify(recorder).drainNewSamples(TARGET_A);
         verify(recorder, never()).window(TARGET_A);
     }
 

@@ -274,6 +274,41 @@ class HttpTargetSystemClientTest {
     }
 
     @Test
+    @DisplayName("정책의 path 로 보낸다")
+    void sendsToPolicyPath() {
+        respond(200, null);
+        client = clientFor(new ConnectionSettings("http://127.0.0.1:" + server.getAddress().getPort(),
+                "/api/v1/payments", CONNECT_TIMEOUT, READ_TIMEOUT));
+
+        client.call(REQUEST);
+
+        assertThat(receivedPath).isEqualTo("/api/v1/payments");
+    }
+
+    @Test
+    @DisplayName("점검 확인은 정책의 probe-path 로 GET 을 보내고 응답 규칙으로 분류한다")
+    void probesWithGetToProbePath() {
+        respond(503, null);
+        client = clientFor(new ConnectionSettings("http://127.0.0.1:" + server.getAddress().getPort(),
+                "/call", "/status", CONNECT_TIMEOUT, READ_TIMEOUT));
+
+        OutcomeKind kind = client.probe(TARGET);
+
+        assertThat(kind).isEqualTo(OutcomeKind.UNDER_MAINTENANCE);
+        assertThat(receivedMethod).isEqualTo("GET");
+        assertThat(receivedPath).isEqualTo("/status");
+    }
+
+    @Test
+    @DisplayName("점검 확인 응답이 늦으면 TIMEOUT 이다")
+    void probeTimesOut() {
+        respond(200, null);
+        responseDelay = READ_TIMEOUT.plusMillis(200);
+
+        assertThat(client.probe(TARGET)).isEqualTo(OutcomeKind.TIMEOUT);
+    }
+
+    @Test
     @DisplayName("응답 시간을 잰다")
     void measuresLatency() {
         respond(200, null);
@@ -416,7 +451,10 @@ class HttpTargetSystemClientTest {
     }
 
     private static HttpTargetSystemClient clientFor(String url, Duration connectTimeout, Duration readTimeout) {
-        ConnectionSettings connection = new ConnectionSettings(url, connectTimeout, readTimeout);
+        return clientFor(new ConnectionSettings(url, connectTimeout, readTimeout));
+    }
+
+    private static HttpTargetSystemClient clientFor(ConnectionSettings connection) {
         TargetSystemPolicy limits = new TargetSystemPolicy(100, Duration.ofMillis(100), 0.95, Duration.ofMillis(10));
         PolicyRegistry policies = mock(PolicyRegistry.class);
         when(policies.policies()).thenReturn(List.of(

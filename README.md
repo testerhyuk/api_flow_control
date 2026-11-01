@@ -8,7 +8,7 @@ DLQ 메시지의 값은 원래 요청 JSON 그대로라서, 원래 요청 토픽
 target-a 의 DLQ 를 요청 토픽으로 옮기는 명령 (CMD):
 
 ```
-docker exec flow-control-kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic flow-control.dlq.target-a --group dlq-redrive --consumer-property auto.offset.reset=earliest --timeout-ms 10000 | docker exec -i flow-control-kafka /opt/kafka/bin/kafka-console-producer.sh --bootstrap-server localhost:9092 --topic flow-control.requests.target-a
+docker exec flow-control-kafka-1 /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server kafka-1:29092 --topic flow-control.dlq.target-a --group dlq-redrive --consumer-property auto.offset.reset=earliest --timeout-ms 10000 | docker exec -i flow-control-kafka-1 /opt/kafka/bin/kafka-console-producer.sh --bootstrap-server kafka-1:29092 --topic flow-control.requests.target-a
 ```
 
 - `dlq-redrive` 그룹이 어디까지 옮겼는지 기억하므로, 다시 실행하면 그 뒤에 새로 쌓인 메시지만 옮긴다.

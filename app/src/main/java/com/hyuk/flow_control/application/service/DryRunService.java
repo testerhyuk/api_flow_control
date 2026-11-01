@@ -50,6 +50,9 @@ public class DryRunService implements DryRunUseCase {
         if (!candidate.connection().url().equals(current.connection().url())) {
             throw new IllegalArgumentException("url 을 바꾸는 정책은 dry-run 할 수 없습니다 : " + targetSystemId);
         }
+        if (!candidate.connection().path().equals(current.connection().path())) {
+            throw new IllegalArgumentException("path 를 바꾸는 정책은 dry-run 할 수 없습니다 : " + targetSystemId);
+        }
         if (candidate.enabled() != current.enabled()) {
             throw new IllegalArgumentException("enabled 는 dry-run 으로 바꿀 수 없습니다. 켜고 끄기 API 를 써 주세요 : " + targetSystemId);
         }

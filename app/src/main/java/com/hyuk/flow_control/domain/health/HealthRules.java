@@ -19,23 +19,31 @@ public record HealthRules(
     }
 
     public Judgment judge(HealthStatus current, OutcomeStatistics statistics, Duration baselineRtt) {
+        return judge(current, statistics, baselineRtt, thresholds.minimumCalls());
+    }
+
+    public Judgment judge(HealthStatus current, OutcomeStatistics statistics, Duration baselineRtt, int newSamples) {
         HealthThresholds plain = thresholds.withoutHysteresis();
         HealthThresholds active = antiOscillation ? thresholds : plain;
         int degradedStreak = antiOscillation ? requiredDegradedStreak : 1;
 
         Optional<HealthGrade> grade = active.gradeOf(statistics, baselineRtt, current.state());
         if (grade.isEmpty()) {
-            return new Judgment(current, Optional.empty(), Optional.empty());
+            return new Judgment(current.withNewSamples(newSamples), Optional.empty(), Optional.empty());
         }
 
-        HealthStatus next = current.next(grade.get(), requiredGoodCount, degradedStreak);
+        HealthStatus next = current.next(grade.get(), requiredGoodCount, degradedStreak, newSamples,
+                thresholds.minimumCalls());
 
         if (!antiOscillation) {
             return new Judgment(next, grade, Optional.empty());
         }
 
         HealthGrade plainGrade = plain.gradeOf(statistics, baselineRtt, current.state()).orElseThrow();
-        HealthStatus plainNext = current.next(plainGrade, requiredGoodCount, 1);
+        HealthStatus withoutStreak = new HealthStatus(current.state(), current.consecutiveGoodCount(), 0,
+                current.uncountedSamples());
+        HealthStatus plainNext = withoutStreak.next(plainGrade, requiredGoodCount, 1, newSamples,
+                thresholds.minimumCalls());
 
         if (plainNext.state() == next.state()) {
             return new Judgment(next, grade, Optional.empty());

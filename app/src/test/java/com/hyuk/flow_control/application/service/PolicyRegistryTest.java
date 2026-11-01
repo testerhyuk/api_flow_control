@@ -5,19 +5,26 @@ import com.hyuk.flow_control.application.port.out.PolicyChangeListener;
 import com.hyuk.flow_control.application.port.out.PolicyRepository;
 import com.hyuk.flow_control.domain.policy.LoadedPolicy;
 import com.hyuk.flow_control.domain.policy.ManagedPolicy;
+import com.hyuk.flow_control.domain.policy.ResponseRuleSet;
+import com.hyuk.flow_control.domain.request.OutcomeKind;
 import com.hyuk.flow_control.support.Policies;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InOrder;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
@@ -27,9 +34,12 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+@ExtendWith(OutputCaptureExtension.class)
 class PolicyRegistryTest {
     private static final ManagedPolicy A_V1 = Policies.policy("target-a", 1);
     private static final ManagedPolicy B_V1 = Policies.policy("target-b", 1);
+    private static final ResponseRuleSet NO_MAINTENANCE_CODE =
+            new ResponseRuleSet(Map.of("2xx", OutcomeKind.SUCCESS, "5xx", OutcomeKind.SERVER_ERROR), null, null);
 
     private PolicyRepository repository;
     private PolicyChangeListener first;
@@ -121,6 +131,28 @@ class PolicyRegistryTest {
     }
 
     @Test
+    @DisplayName("점검 코드가 없는 정책은 처음 읽을 때, 추가될 때, 버전이 바뀔 때 한 번씩 경고를 남긴다")
+    void warnsWithoutMaintenanceCode(CapturedOutput output) {
+        ManagedPolicy noCodeV1 = Policies.withResponse(Policies.policy("target-c", 1), NO_MAINTENANCE_CODE);
+        ManagedPolicy noCodeV2 = Policies.withResponse(Policies.policy("target-c", 2), NO_MAINTENANCE_CODE);
+        ManagedPolicy noCodeD = Policies.withResponse(Policies.policy("target-d", 1), NO_MAINTENANCE_CODE);
+        when(repository.loadAll()).thenReturn(List.of(new LoadedPolicy.Valid(A_V1), new LoadedPolicy.Valid(noCodeV1)));
+        PolicyRegistry registry = new PolicyRegistry(repository, listeners, metrics);
+
+        registry.refresh();
+        assertThat(warningsIn(output, "target-c")).isEqualTo(1);
+
+        when(repository.loadAll()).thenReturn(List.of(new LoadedPolicy.Valid(A_V1), new LoadedPolicy.Valid(noCodeV2),
+                new LoadedPolicy.Valid(noCodeD)));
+        registry.refresh();
+        registry.refresh();
+
+        assertThat(warningsIn(output, "target-c")).isEqualTo(2);
+        assertThat(warningsIn(output, "target-d")).isEqualTo(1);
+        assertThat(warningsIn(output, "target-a")).isZero();
+    }
+
+    @Test
     @DisplayName("새로 생긴 대상은 추가하고 알린다")
     void addsNewTarget() {
         when(repository.loadAll()).thenReturn(List.of(new LoadedPolicy.Valid(A_V1)));
@@ -149,6 +181,60 @@ class PolicyRegistryTest {
     }
 
     @Test
+    @DisplayName("반영에 실패한 곳에만 다음 읽기 때 같은 변경을 다시 알리고, 성공하면 더 알리지 않는다")
+    void retriesOnlyFailedListener() {
+        when(repository.loadAll()).thenReturn(List.of(new LoadedPolicy.Valid(A_V1)));
+        PolicyRegistry registry = new PolicyRegistry(repository, listeners, metrics);
+        ManagedPolicy v2 = A_V1.withVersion(2);
+        doThrow(new IllegalStateException("boom")).doNothing().when(first).onPolicyChanged(A_V1, v2);
+        when(repository.loadAll()).thenReturn(List.of(new LoadedPolicy.Valid(v2)));
+
+        registry.refresh();
+        registry.refresh();
+        registry.refresh();
+
+        verify(first, times(2)).onPolicyChanged(A_V1, v2);
+        verify(second, times(1)).onPolicyChanged(A_V1, v2);
+        verify(metrics, times(1)).recordPolicyApplyFailure(eq("target-a"), any());
+    }
+
+    @Test
+    @DisplayName("다시 알리기 전에 새 버전이 오면 마지막으로 성공한 버전에서 최신 버전으로 한 번에 알린다")
+    void mergesFailedChangeWithNewVersion() {
+        when(repository.loadAll()).thenReturn(List.of(new LoadedPolicy.Valid(A_V1)));
+        PolicyRegistry registry = new PolicyRegistry(repository, listeners, metrics);
+        ManagedPolicy v2 = A_V1.withVersion(2);
+        ManagedPolicy v3 = A_V1.withVersion(3);
+        doThrow(new IllegalStateException("boom")).when(first).onPolicyChanged(A_V1, v2);
+
+        when(repository.loadAll()).thenReturn(List.of(new LoadedPolicy.Valid(v2)));
+        registry.refresh();
+        when(repository.loadAll()).thenReturn(List.of(new LoadedPolicy.Valid(v3)));
+        registry.refresh();
+        registry.refresh();
+
+        verify(first).onPolicyChanged(A_V1, v3);
+        verify(first, never()).onPolicyChanged(v2, v3);
+        verify(second).onPolicyChanged(v2, v3);
+    }
+
+    @Test
+    @DisplayName("추가 알림에 실패하면 DB 를 못 읽은 회차에도 다시 추가 알림을 보낸다")
+    void retriesAddedEvenWhenDatabaseFails() {
+        when(repository.loadAll()).thenReturn(List.of());
+        PolicyRegistry registry = new PolicyRegistry(repository, listeners, metrics);
+        doThrow(new IllegalStateException("boom")).doNothing().when(second).onPolicyAdded(A_V1);
+
+        when(repository.loadAll()).thenReturn(List.of(new LoadedPolicy.Valid(A_V1)));
+        registry.refresh();
+        when(repository.loadAll()).thenThrow(new IllegalStateException("db down"));
+        registry.refresh();
+
+        verify(first, times(1)).onPolicyAdded(A_V1);
+        verify(second, times(2)).onPolicyAdded(A_V1);
+    }
+
+    @Test
     @DisplayName("다시 읽을 때 DB 에 문제가 있으면 마지막 정책을 계속 쓰고 지표에 남긴다")
     void keepsLastPoliciesWhenDatabaseFails() {
         when(repository.loadAll()).thenReturn(List.of(new LoadedPolicy.Valid(A_V1)));
@@ -159,6 +245,77 @@ class PolicyRegistryTest {
 
         assertThat(registry.policyOf("target-a")).isEqualTo(A_V1);
         verify(metrics).recordPolicyRefreshFailure();
+    }
+
+    @Test
+    @DisplayName("DB 에서 사라진 정책은 꺼짐으로 바꿔 한 번만 알리고, 다시 넣으면 같은 버전이어도 반영한다")
+    void disablesRemovedPolicyAndRestoresIt() {
+        when(repository.loadAll()).thenReturn(List.of(new LoadedPolicy.Valid(A_V1), new LoadedPolicy.Valid(B_V1)));
+        PolicyRegistry registry = new PolicyRegistry(repository, listeners, metrics);
+        ManagedPolicy disabled = B_V1.withEnabled(false);
+
+        when(repository.loadAll()).thenReturn(List.of(new LoadedPolicy.Valid(A_V1)));
+        registry.refresh();
+        registry.refresh();
+
+        assertThat(registry.policyOf("target-b")).isEqualTo(disabled);
+        verify(first, times(1)).onPolicyChanged(B_V1, disabled);
+        verify(second, times(1)).onPolicyChanged(B_V1, disabled);
+
+        when(repository.loadAll()).thenReturn(List.of(new LoadedPolicy.Valid(A_V1), new LoadedPolicy.Valid(B_V1)));
+        registry.refresh();
+
+        assertThat(registry.policyOf("target-b")).isEqualTo(B_V1);
+        verify(first).onPolicyChanged(disabled, B_V1);
+        verify(second).onPolicyChanged(disabled, B_V1);
+    }
+
+    @Test
+    @DisplayName("읽을 때마다 외부 서버별로 최신 정책이 잘못됐는지 알리고, 고쳐지거나 줄이 사라지면 0 으로 돌린다")
+    void reportsLatestPolicyInvalid() {
+        when(repository.loadAll()).thenReturn(List.of(
+                new LoadedPolicy.Valid(A_V1), new LoadedPolicy.Invalid("target-b", 1, "max-tps")));
+        PolicyRegistry registry = new PolicyRegistry(repository, listeners, metrics);
+
+        verify(metrics).recordLatestPolicyInvalid("target-a", false);
+        verify(metrics).recordLatestPolicyInvalid("target-b", true);
+
+        when(repository.loadAll()).thenReturn(List.of(new LoadedPolicy.Valid(A_V1), new LoadedPolicy.Valid(B_V1)));
+        registry.refresh();
+        verify(metrics).recordLatestPolicyInvalid("target-b", false);
+
+        when(repository.loadAll()).thenReturn(List.of(
+                new LoadedPolicy.Valid(A_V1), new LoadedPolicy.Invalid("target-c", 1, "max-tps")));
+        registry.refresh();
+        verify(metrics, times(2)).recordLatestPolicyInvalid("target-b", false);
+        verify(metrics).recordLatestPolicyInvalid("target-c", true);
+    }
+
+    @Test
+    @DisplayName("잘못된 정책 줄은 사라진 것으로 보지 않는다")
+    void invalidRowIsNotRemoved() {
+        when(repository.loadAll()).thenReturn(List.of(new LoadedPolicy.Valid(A_V1)));
+        PolicyRegistry registry = new PolicyRegistry(repository, listeners, metrics);
+
+        when(repository.loadAll()).thenReturn(List.of(new LoadedPolicy.Invalid("target-a", 2, "max-tps")));
+        registry.refresh();
+
+        assertThat(registry.policyOf("target-a")).isEqualTo(A_V1);
+        verify(first, never()).onPolicyChanged(any(), any());
+    }
+
+    @Test
+    @DisplayName("지금 정책이 있는데 다시 읽은 결과가 비어 있으면 DB 를 못 읽은 것처럼 마지막 정책을 그대로 쓴다")
+    void ignoresEmptyResult() {
+        when(repository.loadAll()).thenReturn(List.of(new LoadedPolicy.Valid(A_V1)));
+        PolicyRegistry registry = new PolicyRegistry(repository, listeners, metrics);
+
+        when(repository.loadAll()).thenReturn(List.of());
+        registry.refresh();
+
+        assertThat(registry.policyOf("target-a")).isEqualTo(A_V1);
+        verify(metrics).recordPolicyRefreshFailure();
+        verify(first, never()).onPolicyChanged(any(), any());
     }
 
     @Test
@@ -174,5 +331,11 @@ class PolicyRegistryTest {
         assertThat(registry.policyOf("target-a")).isEqualTo(A_V1);
         verify(metrics, times(1)).recordInvalidPolicy("target-a");
         verify(first, never()).onPolicyChanged(any(), any());
+    }
+
+    private static long warningsIn(CapturedOutput output, String targetSystemId) {
+        return output.getAll().lines()
+                .filter(line -> line.contains("점검(UNDER_MAINTENANCE) 코드가 없어서") && line.contains(targetSystemId + " 버전"))
+                .count();
     }
 }

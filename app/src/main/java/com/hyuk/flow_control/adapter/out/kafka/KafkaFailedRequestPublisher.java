@@ -11,24 +11,26 @@ import com.hyuk.flow_control.domain.request.OutcomeKind;
 import com.hyuk.flow_control.domain.retry.DeadLetterReason;
 import com.hyuk.flow_control.domain.retry.DeliveryContext;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 
 @Component
 public class KafkaFailedRequestPublisher implements FailedRequestPublisher {
-    private static final long SEND_TIMEOUT_SECONDS = 10;
-
-    private final KafkaTemplate<String, String> kafkaTemplate;
+    private final RetryingKafkaSender sender;
     private final JsonMapper jsonMapper;
 
+    @Autowired
     public KafkaFailedRequestPublisher(KafkaTemplate<String, String> kafkaTemplate, JsonMapper jsonMapper) {
-        this.kafkaTemplate = kafkaTemplate;
+        this(kafkaTemplate, jsonMapper, RetryingKafkaSender.RETRY_INTERVAL);
+    }
+
+    KafkaFailedRequestPublisher(KafkaTemplate<String, String> kafkaTemplate, JsonMapper jsonMapper,
+                                Duration retryInterval) {
+        this.sender = new RetryingKafkaSender(kafkaTemplate, retryInterval);
         this.jsonMapper = jsonMapper;
     }
 
@@ -93,13 +95,6 @@ public class KafkaFailedRequestPublisher implements FailedRequestPublisher {
     }
 
     private void send(ProducerRecord<String, String> record) {
-        try {
-            kafkaTemplate.send(record).get(SEND_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("실패 요청 전송 중 중단되었습니다 : " + record.topic(), e);
-        } catch (ExecutionException | TimeoutException e) {
-            throw new IllegalStateException("실패 요청 전송에 실패했습니다 : " + record.topic(), e);
-        }
+        sender.send(record);
     }
 }

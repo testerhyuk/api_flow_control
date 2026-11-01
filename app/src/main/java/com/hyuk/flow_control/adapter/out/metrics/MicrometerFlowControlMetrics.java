@@ -12,11 +12,15 @@ import com.hyuk.flow_control.domain.request.OutcomeKind;
 import com.hyuk.flow_control.domain.retry.DeadLetterReason;
 import com.hyuk.flow_control.domain.retry.RetryStage;
 import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Component
 public class MicrometerFlowControlMetrics implements FlowControlMetrics {
@@ -30,6 +34,7 @@ public class MicrometerFlowControlMetrics implements FlowControlMetrics {
     private static final Duration REDIS_LATENCY_MAX = Duration.ofMillis(50);
 
     private final MeterRegistry registry;
+    private final Map<String, AtomicInteger> latestPolicyInvalid = new ConcurrentHashMap<>();
 
     public MicrometerFlowControlMetrics(MeterRegistry registry) {
         this.registry = registry;
@@ -125,6 +130,26 @@ public class MicrometerFlowControlMetrics implements FlowControlMetrics {
                 .tag("target", targetSystemId)
                 .register(registry)
                 .increment();
+    }
+
+    @Override
+    public void recordPolicyApplyFailure(String targetSystemId, String listener) {
+        Counter.builder("flow.control.policy.apply.failures")
+                .tag("target", targetSystemId)
+                .tag("listener", listener)
+                .register(registry)
+                .increment();
+    }
+
+    @Override
+    public void recordLatestPolicyInvalid(String targetSystemId, boolean invalid) {
+        latestPolicyInvalid.computeIfAbsent(targetSystemId, id -> {
+            AtomicInteger value = new AtomicInteger();
+            Gauge.builder("flow.control.policy.invalid.latest", value, AtomicInteger::get)
+                    .tag("target", id)
+                    .register(registry);
+            return value;
+        }).set(invalid ? 1 : 0);
     }
 
     @Override

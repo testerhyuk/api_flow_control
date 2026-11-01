@@ -3,7 +3,8 @@ package com.hyuk.flow_control.domain.health;
 public record HealthStatus(
         HealthState state,
         int consecutiveGoodCount,
-        int degradedStreak
+        int degradedStreak,
+        int uncountedSamples
 ) {
     public HealthStatus {
         if (state == null) {
@@ -15,6 +16,13 @@ public record HealthStatus(
         if (degradedStreak < 0) {
             throw new IllegalArgumentException("degradedStreak는 0 이상이어야 합니다");
         }
+        if (uncountedSamples < 0) {
+            throw new IllegalArgumentException("uncountedSamples는 0 이상이어야 합니다");
+        }
+    }
+
+    public HealthStatus(HealthState state, int consecutiveGoodCount, int degradedStreak) {
+        this(state, consecutiveGoodCount, degradedStreak, 0);
     }
 
     public HealthStatus(HealthState state, int consecutiveGoodCount) {
@@ -34,15 +42,35 @@ public record HealthStatus(
     }
 
     public HealthStatus next(HealthGrade grade, int requiredGoodCount, int requiredDegradedStreak) {
+        return next(grade, requiredGoodCount, requiredDegradedStreak, 1, 1);
+    }
+
+    public HealthStatus next(HealthGrade grade, int requiredGoodCount, int requiredDegradedStreak,
+                             int newSamples, int batchSize) {
+        boolean freshBatch = uncountedSamples + newSamples >= batchSize;
+
         return switch (state) {
-            case HEALTHY -> afterHealthy(grade, requiredDegradedStreak);
+            case HEALTHY -> afterHealthy(grade, requiredDegradedStreak, freshBatch, newSamples);
             case DEGRADED -> afterTrouble(grade, HealthState.DEGRADED);
             case CRITICAL -> afterTrouble(grade, HealthState.CRITICAL);
-            case RECOVERING -> afterRecovering(grade, requiredGoodCount, requiredDegradedStreak);
+            case RECOVERING -> afterRecovering(grade, requiredGoodCount, requiredDegradedStreak, freshBatch,
+                    newSamples);
         };
     }
 
-    private HealthStatus afterHealthy(HealthGrade grade, int requiredDegradedStreak) {
+    public HealthStatus withNewSamples(int newSamples) {
+        if (state != HealthState.RECOVERING && degradedStreak == 0) {
+            return this;
+        }
+        return new HealthStatus(state, consecutiveGoodCount, degradedStreak, uncountedSamples + newSamples);
+    }
+
+    private HealthStatus afterHealthy(HealthGrade grade, int requiredDegradedStreak, boolean freshBatch,
+                                      int newSamples) {
+        if (grade != HealthGrade.CRITICAL && degradedStreak > 0 && !freshBatch) {
+            return withNewSamples(newSamples);
+        }
+
         return switch (grade) {
             case GOOD, HOLD -> of(HealthState.HEALTHY);
             case DEGRADED -> degradedOrStay(HealthState.HEALTHY, 0, requiredDegradedStreak);
@@ -59,7 +87,13 @@ public record HealthStatus(
         };
     }
 
-    private HealthStatus afterRecovering(HealthGrade grade, int requiredGoodCount, int requiredDegradedStreak) {
+    private HealthStatus afterRecovering(HealthGrade grade, int requiredGoodCount, int requiredDegradedStreak,
+                                         boolean freshBatch, int newSamples) {
+        boolean firstDegraded = grade == HealthGrade.DEGRADED && degradedStreak == 0;
+        if (grade != HealthGrade.CRITICAL && !firstDegraded && !freshBatch) {
+            return withNewSamples(newSamples);
+        }
+
         return switch (grade) {
             case GOOD -> {
                 int goodCount = consecutiveGoodCount + 1;

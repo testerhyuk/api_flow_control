@@ -29,6 +29,15 @@ class HealthRulesTest {
     }
 
     @Test
+    @DisplayName("회복 중 건수가 모자라 판정하지 못해도 새 호출 결과 개수는 쌓는다")
+    void accumulatesSamplesWithoutEnoughSamples() {
+        HealthRules.Judgment judgment = ON.judge(new HealthStatus(HealthState.RECOVERING, 1), statistics(5, 5),
+                BASELINE, 4);
+
+        assertThat(judgment.next()).isEqualTo(new HealthStatus(HealthState.RECOVERING, 1, 0, 4));
+    }
+
+    @Test
     @DisplayName("진동 방지가 켜져 있으면 사이값에서 악화를 유지하고, 히스테리시스가 막았다고 알려준다")
     void hysteresisSuppresses() {
         HealthRules.Judgment judgment = ON.judge(HealthStatus.of(HealthState.DEGRADED), statistics(93, 7), BASELINE);
@@ -44,6 +53,16 @@ class HealthRulesTest {
         HealthRules.Judgment judgment = ON.judge(HealthStatus.initial(), statistics(80, 20), BASELINE);
 
         assertThat(judgment.next()).isEqualTo(new HealthStatus(HealthState.HEALTHY, 0, 1));
+        assertThat(judgment.suppressedBy()).contains(SuppressedBy.CONSECUTIVE);
+    }
+
+    @Test
+    @DisplayName("묶음이 다 차지 않아 세지 않은 악화 등급도 연속 관측이 막았다고 알려준다")
+    void streakSuppressesWithinBatch() {
+        HealthRules.Judgment judgment = ON.judge(new HealthStatus(HealthState.HEALTHY, 0, 1), statistics(80, 20),
+                BASELINE, 5);
+
+        assertThat(judgment.next()).isEqualTo(new HealthStatus(HealthState.HEALTHY, 0, 1, 5));
         assertThat(judgment.suppressedBy()).contains(SuppressedBy.CONSECUTIVE);
     }
 

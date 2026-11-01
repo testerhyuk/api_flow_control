@@ -46,7 +46,7 @@ class ShadowEvaluationTest {
     private static final ManagedPolicy BASE = Policies.policy(TARGET, 1);
     private static final HealthThresholds THRESHOLDS = new HealthThresholds(10, 0.1, 0.5, 2.0);
     private static final HealthRules RULES = new HealthRules(THRESHOLDS, 3, 1, false);
-    private static final RateAdjustmentRule RATE_RULE = new RateAdjustmentRule(0.5, 0.05, 10, 1.0);
+    private static final RateAdjustmentRule RATE_RULE = new RateAdjustmentRule(0.5, 10, 1.0);
 
     private ResponseJudge judge;
     private FlowControlMetrics metrics;
@@ -203,10 +203,26 @@ class ShadowEvaluationTest {
             evaluation.complete(response(OutcomeKind.SUCCESS, 200, 150), NOW);
         }
 
-        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1, Duration.ofMillis(100));
+        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1,
+                new BaselineEstimator.Baselines(Duration.ofMillis(100), Duration.ofMillis(100)));
 
         assertThat(evaluation.state()).isEqualTo(HealthState.HEALTHY);
         assertThat(evaluation.concurrencyLimit()).isEqualTo(10);
+    }
+
+    @Test
+    @DisplayName("상태는 p95 baseline 으로 판정하고, 동시 처리 한도는 평균 baseline 으로 계산한다")
+    void usesP95ForJudgmentAndMeanForConcurrency() {
+        ShadowEvaluation evaluation = evaluation(limits(100, 50), 95.0);
+        for (int i = 0; i < 10; i++) {
+            evaluation.complete(response(OutcomeKind.SUCCESS, 200, 150), NOW);
+        }
+
+        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1,
+                new BaselineEstimator.Baselines(Duration.ofMillis(50), Duration.ofMillis(100)));
+
+        assertThat(evaluation.state()).isEqualTo(HealthState.HEALTHY);
+        assertThat(evaluation.concurrencyLimit()).isEqualTo(5);
     }
 
     @Test
@@ -349,14 +365,43 @@ class ShadowEvaluationTest {
         assertThat(report.unknowns()).noneMatch(text -> text.contains("겹친"));
     }
 
-    private ShadowEvaluation evaluation(ManagedPolicy candidate, double actualRate) {
-        DryRun dryRun = new DryRun(candidate, 1, NOW, NOW.plus(Duration.ofMinutes(30)), new ChangeNote("hyuk", "test"));
-        return new ShadowEvaluation(dryRun, BASE, HealthStatus.initial(), actualRate, judge, RULES, RATE_RULE,
-                Duration.ofSeconds(10), 10, candidate.limits().baselineRtt(), metrics, NOW, 0L);
+    @Test
+    @DisplayName("회복 중 좋음은 판정에 쓰는 새 호출 결과가 판정 개수만큼 쌓였을 때만 센다")
+    void countsGoodOncePerBatch() {
+        ShadowEvaluation evaluation = evaluation(limits(100, 150), 95.0, new HealthStatus(HealthState.RECOVERING, 1));
+        completeMany(evaluation, OutcomeKind.SUCCESS, 10, NOW);
+        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1, baselineOf(evaluation));
+
+        completeMany(evaluation, OutcomeKind.SUCCESS, 5, NOW.plusSeconds(1));
+        completeMany(evaluation, OutcomeKind.UNEXPECTED_RESPONSE, 10, NOW.plusSeconds(1));
+        evaluation.evaluate(NOW.plusSeconds(2), 2_000_000_000L, 1, baselineOf(evaluation));
+        HealthState waiting = evaluation.state();
+
+        completeMany(evaluation, OutcomeKind.SUCCESS, 5, NOW.plusSeconds(2));
+        evaluation.evaluate(NOW.plusSeconds(3), 3_000_000_000L, 1, baselineOf(evaluation));
+
+        assertThat(waiting).isEqualTo(HealthState.RECOVERING);
+        assertThat(evaluation.state()).isEqualTo(HealthState.HEALTHY);
     }
 
-    private static Duration baselineOf(ShadowEvaluation evaluation) {
-        return evaluation.dryRun().candidate().limits().baselineRtt();
+    private void completeMany(ShadowEvaluation evaluation, OutcomeKind kind, int count, Instant at) {
+        for (int i = 0; i < count; i++) {
+            evaluation.complete(response(kind, 200, 150), at);
+        }
+    }
+
+    private ShadowEvaluation evaluation(ManagedPolicy candidate, double actualRate) {
+        return evaluation(candidate, actualRate, HealthStatus.initial());
+    }
+
+    private ShadowEvaluation evaluation(ManagedPolicy candidate, double actualRate, HealthStatus actualStatus) {
+        DryRun dryRun = new DryRun(candidate, 1, NOW, NOW.plus(Duration.ofMinutes(30)), new ChangeNote("hyuk", "test"));
+        return new ShadowEvaluation(dryRun, BASE, actualStatus, actualRate, judge, RULES, RATE_RULE,
+                Duration.ofSeconds(10), 10, BaselineEstimator.Baselines.of(candidate.limits()), metrics, NOW, 0L);
+    }
+
+    private static BaselineEstimator.Baselines baselineOf(ShadowEvaluation evaluation) {
+        return BaselineEstimator.Baselines.of(evaluation.dryRun().candidate().limits());
     }
 
     private static ManagedPolicy limits(int maxTps, long baselineMillis) {
@@ -364,7 +409,8 @@ class ShadowEvaluationTest {
     }
 
     private static TargetSystemPolicy limitsOf(int maxTps, long baselineMillis) {
-        return new TargetSystemPolicy(maxTps, Duration.ofMillis(baselineMillis), 0.95, Duration.ofMillis(10));
+        return new TargetSystemPolicy(maxTps, Duration.ofMillis(baselineMillis), Duration.ofMillis(baselineMillis), 0.95,
+                Duration.ofMillis(10));
     }
 
     private static ManagedPolicy candidateOf(TargetSystemPolicy limits) {

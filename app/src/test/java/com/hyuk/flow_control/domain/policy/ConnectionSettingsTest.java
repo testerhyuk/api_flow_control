@@ -8,6 +8,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import java.time.Duration;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ConnectionSettingsTest {
@@ -20,6 +21,21 @@ class ConnectionSettingsTest {
     void rejectsBlankUrl(String url) {
         assertThatThrownBy(() -> new ConnectionSettings(url, ONE_SECOND, ONE_SECOND))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @ParameterizedTest
+    @NullAndEmptySource
+    @ValueSource(strings = {"call", " /call"})
+    @DisplayName("path 가 없거나 / 로 시작하지 않으면 만들 수 없다")
+    void rejectsPathWithoutLeadingSlash(String path) {
+        assertThatThrownBy(() -> new ConnectionSettings("http://a", path, ONE_SECOND, ONE_SECOND))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("path 를 주지 않으면 /call 이다")
+    void defaultsPathToCall() {
+        assertThat(new ConnectionSettings("http://a", ONE_SECOND, ONE_SECOND).path()).isEqualTo("/call");
     }
 
     @Test

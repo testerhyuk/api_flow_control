@@ -24,8 +24,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class RequestGeneratorTest {
-    private static final String TOPIC_A = "flow-control.requests.target-a";
-    private static final String TOPIC_C = "flow-control.requests.target-c";
+    private static final String TOPIC_A = "flow-control.requests.target-a.record-ingestor";
+    private static final String TOPIC_C = "flow-control.requests.target-c.record-ingestor";
 
     private final JsonMapper jsonMapper = JsonMapper.builder().build();
     private KafkaTemplate<String, String> kafkaTemplate;
@@ -177,7 +177,7 @@ class RequestGeneratorTest {
     @DisplayName("자동 시작 설정을 따른다")
     void followsAutoStart() {
         RequestGenerator manual = new RequestGenerator(kafkaTemplate, new RequestMessageFactory(), jsonMapper,
-                new IngestorProperties("flow-control.requests.", Map.of("target-a", new IngestorProperties.Target(1)),
+                new IngestorProperties("flow-control.requests.", "record-ingestor", Map.of("target-a", new IngestorProperties.Target(1)),
                         false, 0));
 
         assertThat(manual.isAutoStartup()).isFalse();
@@ -186,7 +186,7 @@ class RequestGeneratorTest {
 
     private RequestGenerator generator(Map<String, IngestorProperties.Target> targets) {
         return new RequestGenerator(kafkaTemplate, new RequestMessageFactory(), jsonMapper,
-                new IngestorProperties("flow-control.requests.", targets));
+                new IngestorProperties("flow-control.requests.", "record-ingestor", targets));
     }
 
     private long sentTo(String topic) {

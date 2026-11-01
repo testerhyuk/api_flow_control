@@ -6,7 +6,7 @@ import com.hyuk.flow_control.application.port.out.TargetSystemRateLimiter;
 import com.hyuk.flow_control.config.ControlProperties;
 import com.hyuk.flow_control.config.HealthProperties;
 import com.hyuk.flow_control.config.LimitAdjustmentProperties;
-import com.hyuk.flow_control.config.MaintenanceProperties;
+import com.hyuk.flow_control.domain.health.HealthGrade;
 import com.hyuk.flow_control.domain.health.HealthMode;
 import com.hyuk.flow_control.domain.health.HealthSnapshot;
 import com.hyuk.flow_control.domain.health.HealthState;
@@ -21,6 +21,7 @@ import org.mockito.AdditionalMatchers;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -44,12 +45,14 @@ class TargetSystemLimitAdjusterTest {
     private static final String TARGET_A = "target-a";
     private static final String LOW = "target-low";
     private static final String TINY = "target-tiny";
+    private static final AtomicLong EVALUATIONS = new AtomicLong();
+    private static final double STEP = 20.0 / 19;
     private static final TargetSystemPolicy POLICY_A =
             new TargetSystemPolicy(100, Duration.ofMillis(100), 0.95, Duration.ofMillis(10));
     private static final TargetSystemPolicy POLICY_LOW =
             new TargetSystemPolicy(10, Duration.ofMillis(100), 0.95, Duration.ofMillis(10));
     private static final TargetSystemPolicy POLICY_TINY =
-            new TargetSystemPolicy(4, Duration.ofMillis(100), 1.0, Duration.ofMillis(10));
+            new TargetSystemPolicy(8, Duration.ofMillis(100), 0.5, Duration.ofMillis(10));
 
     private TargetSystemHealthEvaluator evaluator;
     private TargetSystemPolicyReader policyReader;
@@ -74,9 +77,9 @@ class TargetSystemLimitAdjusterTest {
         when(policyReader.read(TARGET_A)).thenReturn(POLICY_A);
         when(policyReader.read(LOW)).thenReturn(POLICY_LOW);
         when(policyReader.read(TINY)).thenReturn(POLICY_TINY);
-        when(baselines.effective(TARGET_A)).thenReturn(POLICY_A.baselineRtt());
-        when(baselines.effective(LOW)).thenReturn(POLICY_LOW.baselineRtt());
-        when(baselines.effective(TINY)).thenReturn(POLICY_TINY.baselineRtt());
+        when(baselines.effective(TARGET_A)).thenReturn(meanBaseline(POLICY_A.baselineRtt()));
+        when(baselines.effective(LOW)).thenReturn(meanBaseline(POLICY_LOW.baselineRtt()));
+        when(baselines.effective(TINY)).thenReturn(meanBaseline(POLICY_TINY.baselineRtt()));
         semaphore = spy(new TargetSystemSemaphore(policyReader));
         when(evaluator.snapshotOf(TARGET_A)).thenReturn(HealthSnapshot.initial());
         when(evaluator.snapshotOf(LOW)).thenReturn(HealthSnapshot.initial());
@@ -120,7 +123,7 @@ class TargetSystemLimitAdjusterTest {
     @DisplayName("concurrency 는 지금 쓰는 baseline 으로 계산한다")
     void usesEffectiveBaselineForConcurrency() {
         when(evaluator.snapshotOf(TARGET_A)).thenReturn(snapshot(HealthState.HEALTHY, 100));
-        when(baselines.effective(TARGET_A)).thenReturn(Duration.ofMillis(200));
+        when(baselines.effective(TARGET_A)).thenReturn(meanBaseline(Duration.ofMillis(200)));
         TargetSystemLimitAdjuster adjuster = adjuster(50);
 
         adjuster.adjust(TARGET_A);
@@ -132,7 +135,7 @@ class TargetSystemLimitAdjusterTest {
     @DisplayName("고정 한도에서는 상태가 나빠도 정책의 rate 와 정책 baseline 으로 계산한 concurrency 를 그대로 쓴다")
     void fixedModeKeepsPolicyLimits() {
         when(evaluator.snapshotOf(TARGET_A)).thenReturn(snapshot(HealthState.CRITICAL, 100));
-        when(baselines.effective(TARGET_A)).thenReturn(Duration.ofMillis(200));
+        when(baselines.effective(TARGET_A)).thenReturn(meanBaseline(Duration.ofMillis(200)));
         TargetSystemLimitAdjuster adjuster = adjuster(50, ControlMode.FIXED);
 
         adjuster.adjust(TARGET_A);
@@ -156,14 +159,34 @@ class TargetSystemLimitAdjusterTest {
     }
 
     @Test
-    @DisplayName("저트래픽 모드에서는 rate 를 최대치의 rate-ratio 로 둔다")
-    void lowTrafficUsesFixedRatio() {
-        when(evaluator.snapshotOf(TARGET_A)).thenReturn(lowTraffic(HealthState.HEALTHY));
+    @DisplayName("저트래픽 모드에서 위험이 아니면 rate 를 그대로 둔다")
+    void lowTrafficKeepsRate() {
+        when(evaluator.snapshotOf(TARGET_A)).thenReturn(
+                snapshot(HealthState.DEGRADED, 100),
+                lowTraffic(HealthState.HEALTHY));
         TargetSystemLimitAdjuster adjuster = adjuster(50);
 
         adjuster.adjust(TARGET_A);
+        adjuster.adjust(TARGET_A);
 
         assertThat(adjuster.rateOf(TARGET_A)).isEqualTo(47.5);
+    }
+
+    @Test
+    @DisplayName("저트래픽 모드에서 받은 새 호출 결과도 세어서, 일반 모드로 돌아온 첫 판정에서 올릴 수 있다")
+    void countsNewSamplesDuringLowTraffic() {
+        when(evaluator.snapshotOf(TARGET_A)).thenReturn(
+                snapshot(HealthState.CRITICAL, 100),
+                lowTraffic(HealthState.HEALTHY, 30),
+                snapshot(HealthState.HEALTHY, 30));
+        TargetSystemLimitAdjuster adjuster = adjuster(50);
+
+        adjuster.adjust(TARGET_A);
+        adjuster.adjust(TARGET_A);
+        assertThat(adjuster.rateOf(TARGET_A)).isEqualTo(5.0);
+
+        adjuster.adjust(TARGET_A);
+        assertThat(adjuster.rateOf(TARGET_A)).isCloseTo(5 * STEP, within(1e-9));
     }
 
     @Test
@@ -192,12 +215,13 @@ class TargetSystemLimitAdjusterTest {
     }
 
     @Test
-    @DisplayName("점검이 끝나면 직전 rate 와 최대치의 절반 중 작은 값에서 다시 시작한다")
-    void lowersRateAfterMaintenance() {
+    @DisplayName("점검이 끝나면 점검 전 rate 와 상관없이 바닥 rate 에서 다시 시작한다")
+    void startsFromFloorAfterMaintenance() {
         TargetSystemLimitAdjuster adjuster = adjuster(50);
+        assertThat(adjuster.rateOf(TARGET_A)).isEqualTo(95.0);
 
         adjuster.onMaintenanceEnded(TARGET_A);
-        assertThat(adjuster.rateOf(TARGET_A)).isEqualTo(47.5);
+        assertThat(adjuster.rateOf(TARGET_A)).isEqualTo(5.0);
 
         when(evaluator.snapshotOf(TARGET_A)).thenReturn(snapshot(HealthState.CRITICAL, 100));
         adjuster.adjust(TARGET_A);
@@ -279,21 +303,24 @@ class TargetSystemLimitAdjusterTest {
     }
 
     @Test
-    @DisplayName("CRITICAL 에서 DEGRADED 가 되어도 rate 를 올리지 않는다")
-    void doesNotRaiseOnDegradedAfterCritical() {
+    @DisplayName("CRITICAL 에서 DEGRADED 가 되면 새 호출 결과가 충분할 때 올리고, 모자라면 그대로 둔다")
+    void raisesByStepOnDegradedAfterCritical() {
         when(evaluator.snapshotOf(TARGET_A)).thenReturn(
                 snapshot(HealthState.CRITICAL, 100),
-                snapshot(HealthState.DEGRADED, 100));
+                snapshot(HealthState.DEGRADED, 100),
+                snapshot(HealthState.DEGRADED, 10));
         TargetSystemLimitAdjuster adjuster = adjuster(50);
 
         adjuster.adjust(TARGET_A);
         adjuster.adjust(TARGET_A);
+        assertThat(adjuster.rateOf(TARGET_A)).isCloseTo(5 * STEP, within(1e-9));
 
-        assertThat(adjuster.rateOf(TARGET_A)).isEqualTo(5.0);
+        adjuster.adjust(TARGET_A);
+        assertThat(adjuster.rateOf(TARGET_A)).isCloseTo(5 * STEP, within(1e-9));
     }
 
     @Test
-    @DisplayName("RECOVERING 이고 건수가 충분하면 판정마다 처음 rate 의 recovery-step 만큼 늘린다")
+    @DisplayName("RECOVERING 이고 새 호출 결과가 충분하면 판정마다 지금 rate 에 안전 비율로 정한 폭만큼 늘린다")
     void raisesByStepWhileRecovering() {
         when(evaluator.snapshotOf(TARGET_A)).thenReturn(
                 snapshot(HealthState.CRITICAL, 100),
@@ -303,14 +330,51 @@ class TargetSystemLimitAdjusterTest {
 
         adjuster.adjust(TARGET_A);
         adjuster.adjust(TARGET_A);
-        assertThat(adjuster.rateOf(TARGET_A)).isCloseTo(9.75, within(1e-9));
+        assertThat(adjuster.rateOf(TARGET_A)).isCloseTo(5 * STEP, within(1e-9));
 
         adjuster.adjust(TARGET_A);
-        assertThat(adjuster.rateOf(TARGET_A)).isCloseTo(14.5, within(1e-9));
+        assertThat(adjuster.rateOf(TARGET_A)).isCloseTo(5 * STEP * STEP, within(1e-9));
 
-        verify(rateLimiter).changeRate(eq(TARGET_A), AdditionalMatchers.eq(9.75, 1e-9));
-        verify(rateLimiter).changeRate(eq(TARGET_A), AdditionalMatchers.eq(14.5, 1e-9));
-        verify(semaphore).changeLimit(TARGET_A, 2);
+        verify(rateLimiter).changeRate(eq(TARGET_A), AdditionalMatchers.eq(5 * STEP, 1e-9));
+        verify(rateLimiter).changeRate(eq(TARGET_A), AdditionalMatchers.eq(5 * STEP * STEP, 1e-9));
+    }
+
+    @Test
+    @DisplayName("RECOVERING 에서 HOLD 면 새 호출 결과가 충분해도 rate 를 늘리지 않는다")
+    void doesNotRaiseOnHoldWhileRecovering() {
+        when(evaluator.snapshotOf(TARGET_A)).thenReturn(
+                snapshot(HealthState.CRITICAL, 100),
+                snapshot(HealthState.RECOVERING, HealthGrade.HOLD, 100));
+        TargetSystemLimitAdjuster adjuster = adjuster(50);
+
+        adjuster.adjust(TARGET_A);
+        adjuster.adjust(TARGET_A);
+
+        assertThat(adjuster.rateOf(TARGET_A)).isEqualTo(5.0);
+    }
+
+    @Test
+    @DisplayName("새 호출 결과는 판정이 바뀔 때만 더하고, 판정 개수만큼 쌓이면 올린 뒤 0부터 다시 센다")
+    void countsNewSamplesSinceChange() {
+        HealthSnapshot first = snapshot(HealthState.RECOVERING, 30);
+        when(evaluator.snapshotOf(TARGET_A)).thenReturn(
+                snapshot(HealthState.CRITICAL, 100),
+                first,
+                first,
+                snapshot(HealthState.RECOVERING, 30),
+                snapshot(HealthState.RECOVERING, 30));
+        TargetSystemLimitAdjuster adjuster = adjuster(50);
+        adjuster.adjust(TARGET_A);
+
+        adjuster.adjust(TARGET_A);
+        adjuster.adjust(TARGET_A);
+        assertThat(adjuster.rateOf(TARGET_A)).isEqualTo(5.0);
+
+        adjuster.adjust(TARGET_A);
+        assertThat(adjuster.rateOf(TARGET_A)).isCloseTo(5 * STEP, within(1e-9));
+
+        adjuster.adjust(TARGET_A);
+        assertThat(adjuster.rateOf(TARGET_A)).isCloseTo(5 * STEP, within(1e-9));
     }
 
     @Test
@@ -334,7 +398,7 @@ class TargetSystemLimitAdjusterTest {
         TargetSystemLimitAdjuster adjuster = adjuster(50);
         adjuster.adjust(TARGET_A);
 
-        when(evaluator.snapshotOf(TARGET_A)).thenReturn(snapshot(HealthState.HEALTHY, 100));
+        when(evaluator.snapshotOf(TARGET_A)).thenAnswer(invocation -> snapshot(HealthState.HEALTHY, 100));
         for (int i = 0; i < 20; i++) {
             adjuster.adjust(TARGET_A);
         }
@@ -388,14 +452,14 @@ class TargetSystemLimitAdjusterTest {
 
         when(evaluator.snapshotOf(TARGET_A)).thenReturn(snapshot(HealthState.HEALTHY, 100));
         adjuster.adjust(TARGET_A);
-        assertThat(adjuster.rateOf(TARGET_A)).isCloseTo(52.25, within(1e-9));
+        assertThat(adjuster.rateOf(TARGET_A)).isCloseTo(47.5 * STEP, within(1e-9));
     }
 
     @Test
     @DisplayName("이어받을 rate 는 한 번만 읽는다")
     void inheritsOnlyOnce() {
         sharedRates.storeAppliedRate(TARGET_A, 47.5);
-        when(evaluator.snapshotOf(TARGET_A)).thenReturn(snapshot(HealthState.HEALTHY, 100));
+        when(evaluator.snapshotOf(TARGET_A)).thenAnswer(invocation -> snapshot(HealthState.HEALTHY, 100));
         TargetSystemLimitAdjuster adjuster = adjuster(50);
         adjuster.adjust(TARGET_A);
 
@@ -418,6 +482,24 @@ class TargetSystemLimitAdjusterTest {
         assertThat(adjuster.serversOf(TARGET_A)).isEqualTo(1);
         verify(rateLimiter).changeRate(TARGET_A, 47.5);
         verify(metrics, atLeastOnce()).recordRedisError("proposal", true);
+    }
+
+    @Test
+    @DisplayName("공용 저장소를 쓸 수 없으면 서버 안 토큰 버킷의 rate 를 마지막으로 알던 서버 수로 나눈다")
+    void dividesBucketRateByLastKnownServersWhenStoreUnavailable() {
+        when(evaluator.snapshotOf(TARGET_A)).thenReturn(snapshot(HealthState.HEALTHY, 100));
+        sharedRates.proposeFromOtherServer(TARGET_A, "other", 95.0);
+        TargetSystemLimitAdjuster adjuster = adjuster(50);
+        adjuster.adjust(TARGET_A);
+        assertThat(adjuster.serversOf(TARGET_A)).isEqualTo(2);
+        verify(rateLimiter).changeRate(TARGET_A, 95.0);
+
+        sharedRates.becomeUnavailable(true);
+        adjuster.adjust(TARGET_A);
+
+        verify(rateLimiter).changeRate(TARGET_A, 47.5);
+        assertThat(adjuster.appliedRateOf(TARGET_A)).isEqualTo(95.0);
+        assertThat(adjuster.serversOf(TARGET_A)).isEqualTo(2);
     }
 
     @Test
@@ -466,18 +548,37 @@ class TargetSystemLimitAdjusterTest {
     private TargetSystemLimitAdjuster adjuster(int minimumCalls, ControlMode mode) {
         HealthProperties healthProperties = new HealthProperties(
                 Duration.ofSeconds(10), Duration.ofSeconds(1), minimumCalls, 0.10, 0.50, 2.0, Duration.ofSeconds(30));
-        LimitAdjustmentProperties adjustmentProperties = new LimitAdjustmentProperties(0.5, 0.05);
+        LimitAdjustmentProperties adjustmentProperties = new LimitAdjustmentProperties(0.5);
 
         return new TargetSystemLimitAdjuster(evaluator, policyReader, rateLimiter, semaphore, sharedRates,
                 baselines, maintenance, metrics, adjustmentProperties, healthProperties,
-                new MaintenanceProperties(Duration.ofSeconds(30), 0.5), new ControlProperties(mode));
+                new ControlProperties(mode));
     }
 
-    private static HealthSnapshot snapshot(HealthState state, int sampleCount) {
-        return new HealthSnapshot(state, sampleCount, 0.0, null, Instant.now());
+    private static HealthSnapshot snapshot(HealthState state, int newSamples) {
+        HealthGrade grade = switch (state) {
+            case HEALTHY, RECOVERING -> HealthGrade.GOOD;
+            case DEGRADED -> HealthGrade.DEGRADED;
+            case CRITICAL -> HealthGrade.CRITICAL;
+        };
+        return snapshot(state, grade, newSamples);
+    }
+
+    private static HealthSnapshot snapshot(HealthState state, HealthGrade grade, int newSamples) {
+        return new HealthSnapshot(state, newSamples, 0.0, null, Instant.now().plusNanos(EVALUATIONS.incrementAndGet()),
+                HealthMode.ADAPTIVE, null, 0, null, grade, newSamples);
     }
 
     private static HealthSnapshot lowTraffic(HealthState state) {
-        return new HealthSnapshot(state, 3, 0.0, null, Instant.now(), HealthMode.LOW_TRAFFIC, null, 0, null);
+        return lowTraffic(state, 0);
+    }
+
+    private static HealthSnapshot lowTraffic(HealthState state, int newSamples) {
+        return new HealthSnapshot(state, 3, 0.0, null, Instant.now().plusNanos(EVALUATIONS.incrementAndGet()),
+                HealthMode.LOW_TRAFFIC, null, 0, null, null, newSamples);
+    }
+
+    private static BaselineEstimator.Baselines meanBaseline(Duration mean) {
+        return new BaselineEstimator.Baselines(mean, mean.multipliedBy(2));
     }
 }

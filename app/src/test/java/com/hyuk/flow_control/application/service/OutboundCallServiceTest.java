@@ -48,7 +48,7 @@ class OutboundCallServiceTest {
     void setUp() {
         TargetSystemPolicyReader policyReader = mock(TargetSystemPolicyReader.class);
         when(policyReader.readAll()).thenReturn(Map.of(
-                TARGET, new TargetSystemPolicy(1, Duration.ofSeconds(1), 1.0, Duration.ofMillis(10))
+                TARGET, new TargetSystemPolicy(2, Duration.ofSeconds(1), 0.5, Duration.ofMillis(10))
         ));
 
         semaphore = new TargetSystemSemaphore(policyReader);

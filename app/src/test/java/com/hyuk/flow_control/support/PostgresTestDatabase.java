@@ -25,6 +25,7 @@ public final class PostgresTestDatabase {
     public static void reset(DataSource dataSource) {
         Flyway flyway = Flyway.configure()
                 .dataSource(dataSource)
+                .locations("classpath:db/migration", "classpath:db/seed")
                 .cleanDisabled(false)
                 .load();
         flyway.clean();

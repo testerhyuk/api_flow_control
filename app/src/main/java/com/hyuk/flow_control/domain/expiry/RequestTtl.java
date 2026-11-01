@@ -11,7 +11,11 @@ public record RequestTtl(Duration ttl) {
     }
 
     public boolean isExpiredAt(Instant createdAt, Instant at) {
-        return at.isAfter(createdAt.plus(ttl));
+        return at.isAfter(deadlineOf(createdAt));
+    }
+
+    public Instant deadlineOf(Instant createdAt) {
+        return createdAt.plus(ttl);
     }
 
     public static Duration ageAt(Instant createdAt, Instant at) {

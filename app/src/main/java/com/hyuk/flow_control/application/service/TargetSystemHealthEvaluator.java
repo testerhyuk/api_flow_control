@@ -4,6 +4,7 @@ import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
 import com.hyuk.flow_control.application.port.out.PolicyChangeListener;
 import com.hyuk.flow_control.application.port.out.TargetSystemPolicyReader;
 import com.hyuk.flow_control.config.HealthProperties;
+import com.hyuk.flow_control.domain.health.HealthGrade;
 import com.hyuk.flow_control.domain.health.HealthMode;
 import com.hyuk.flow_control.domain.health.HealthRules;
 import com.hyuk.flow_control.domain.health.HealthSnapshot;
@@ -37,7 +38,7 @@ public class TargetSystemHealthEvaluator implements PolicyChangeListener {
     private final HealthRules rules;
     private final int minimumCalls;
     private final int lowTrafficEnterAfter;
-    private final Duration quietPeriod;
+    private final int recoveryCalls;
     private final Map<String, Target> targets = new ConcurrentHashMap<>();
 
     public TargetSystemHealthEvaluator(
@@ -54,7 +55,7 @@ public class TargetSystemHealthEvaluator implements PolicyChangeListener {
         this.rules = healthProperties.rules();
         this.minimumCalls = healthProperties.minimumCalls();
         this.lowTrafficEnterAfter = healthProperties.lowTraffic().enterAfter();
-        this.quietPeriod = healthProperties.recoveryDuration();
+        this.recoveryCalls = healthProperties.lowTraffic().recoveryCalls();
 
         policyReader.readAll().keySet().forEach(targetSystemId -> targets.put(targetSystemId, new Target()));
     }
@@ -107,7 +108,7 @@ public class TargetSystemHealthEvaluator implements PolicyChangeListener {
         changeMode(targetSystemId, target, HealthMode.ADAPTIVE);
         HealthSnapshot last = target.snapshot;
         target.snapshot = new HealthSnapshot(HealthState.RECOVERING, last.sampleCount(), last.failureRate(), last.p95(),
-                Instant.now(), HealthMode.ADAPTIVE, last.windowSpan(), 0, last.baselineRtt());
+                Instant.now(), HealthMode.ADAPTIVE, last.windowSpan(), 0, last.baselineP95());
 
         recordTransition(targetSystemId, before, target.status);
     }
@@ -118,14 +119,16 @@ public class TargetSystemHealthEvaluator implements PolicyChangeListener {
 
         if (maintenance.isActive(targetSystemId)) {
             recorder.drainEvents(targetSystemId);
+            recorder.drainNewSamples(targetSystemId);
             target.lowTrafficTicks = 0;
             return;
         }
 
         OutcomeWindow window = recorder.window(targetSystemId);
         OutcomeStatistics statistics = window.statistics();
-        Duration baselineRtt = baselines.effective(targetSystemId);
+        Duration baselineP95 = baselines.effective(targetSystemId).p95();
         Set<LowTrafficEvent> events = recorder.drainEvents(targetSystemId);
+        int samples = recorder.drainNewSamples(targetSystemId);
         HealthStatus current = target.status;
         boolean enough = statistics.sampleCount() >= minimumCalls;
 
@@ -136,7 +139,8 @@ public class TargetSystemHealthEvaluator implements PolicyChangeListener {
                 target.lowTrafficTicks = 0;
                 changeMode(targetSystemId, target, HealthMode.LOW_TRAFFIC);
                 if (current.state() == HealthState.CRITICAL) {
-                    target.lastEventAt = now;
+                    samples = 0;
+                    target.quietCalls = 0;
                 }
             }
         } else if (target.mode == HealthMode.ADAPTIVE) {
@@ -145,9 +149,15 @@ public class TargetSystemHealthEvaluator implements PolicyChangeListener {
             changeMode(targetSystemId, target, HealthMode.ADAPTIVE);
         }
 
-        HealthStatus next = target.mode == HealthMode.LOW_TRAFFIC
-                ? inLowTraffic(targetSystemId, target, current, events, now)
-                : judge(targetSystemId, current, statistics, baselineRtt);
+        HealthStatus next;
+        HealthGrade grade = null;
+        if (target.mode == HealthMode.LOW_TRAFFIC) {
+            next = inLowTraffic(targetSystemId, target, current, events, samples);
+        } else {
+            HealthRules.Judgment judgment = judge(targetSystemId, current, statistics, baselineP95, samples);
+            next = judgment.next();
+            grade = judgment.grade().orElse(null);
+        }
 
         target.status = next;
         target.snapshot = new HealthSnapshot(
@@ -159,35 +169,38 @@ public class TargetSystemHealthEvaluator implements PolicyChangeListener {
                 target.mode,
                 window.span(),
                 next.degradedStreak(),
-                baselineRtt);
+                baselineP95,
+                grade,
+                samples);
 
         recordTransition(targetSystemId, current, next);
     }
 
-    private HealthStatus judge(String targetSystemId, HealthStatus current, OutcomeStatistics statistics,
-                               Duration baselineRtt) {
-        HealthRules.Judgment judgment = rules.judge(current, statistics, baselineRtt);
+    private HealthRules.Judgment judge(String targetSystemId, HealthStatus current, OutcomeStatistics statistics,
+                                       Duration baselineP95, int samples) {
+        HealthRules.Judgment judgment = rules.judge(current, statistics, baselineP95, samples);
         judgment.suppressedBy().ifPresent(reason -> metrics.recordSuppressed(targetSystemId, reason));
-        return judgment.next();
+        return judgment;
     }
 
     private HealthStatus inLowTraffic(String targetSystemId, Target target, HealthStatus current,
-                                      Set<LowTrafficEvent> events, Instant now) {
+                                      Set<LowTrafficEvent> events, int samples) {
         if (!events.isEmpty()) {
             events.forEach(event -> metrics.recordLowTrafficEvent(targetSystemId, event));
-            target.lastEventAt = now;
+            target.quietCalls = 0;
             log.info("저트래픽 모드에서 사건이 나서 CRITICAL 로 내립니다 : {} {}", targetSystemId, events);
             return HealthStatus.of(HealthState.CRITICAL);
         }
 
-        if (current.state() == HealthState.CRITICAL
-                && target.lastEventAt != null
-                && !now.isBefore(target.lastEventAt.plus(quietPeriod))) {
-            target.lastEventAt = null;
-            return HealthStatus.initial();
+        if (current.state() == HealthState.CRITICAL && target.quietCalls != null) {
+            target.quietCalls += samples;
+            if (target.quietCalls >= recoveryCalls) {
+                target.quietCalls = null;
+                return HealthStatus.initial();
+            }
         }
 
-        return current;
+        return current.withNewSamples(samples);
     }
 
     private void changeMode(String targetSystemId, Target target, HealthMode to) {
@@ -223,6 +236,6 @@ public class TargetSystemHealthEvaluator implements PolicyChangeListener {
         private volatile HealthSnapshot snapshot = HealthSnapshot.initial();
         private volatile HealthMode mode = HealthMode.ADAPTIVE;
         private int lowTrafficTicks;
-        private Instant lastEventAt;
+        private Integer quietCalls;
     }
 }

@@ -10,6 +10,7 @@ import com.hyuk.flow_control.domain.dryrun.DryRunReport;
 import com.hyuk.flow_control.domain.health.HealthState;
 import com.hyuk.flow_control.domain.policy.ChangeNote;
 import com.hyuk.flow_control.domain.request.OutcomeKind;
+import com.hyuk.flow_control.support.AdminKeys;
 import com.hyuk.flow_control.support.Policies;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -45,11 +46,10 @@ class DryRunAdminControllerTest {
               "expectedVersion": 3,
               "policy": {
                 "enabled": true,
-                "connection": {"url": "http://localhost:9001", "connectTimeoutMs": 1000, "readTimeoutMs": 3000},
-                "limits": {"maxTps": 100, "baselineRttMs": 90, "safetyMargin": 0.95, "burstWindowMs": 10},
+                "connection": {"url": "http://localhost:9001", "probePath": "/health", "connectTimeoutMs": 1000, "readTimeoutMs": 3000},
+                "limits": {"maxTps": 100, "baselineRttMs": 90, "baselineP95Ms": 180, "safetyMargin": 0.95, "burstWindowMs": 10},
                 "response": {"statusCodes": {"2xx": "SUCCESS"}}
               },
-              "changedBy": "hyuk",
               "reason": "baseline 조정"
             }""";
 
@@ -61,6 +61,8 @@ class DryRunAdminControllerTest {
         dryRuns = mock(DryRunUseCase.class);
         mockMvc = MockMvcBuilders.standaloneSetup(new DryRunAdminController(dryRuns))
                 .setControllerAdvice(new PolicyAdminExceptionHandler())
+                .addFilters(AdminKeys.filter())
+                .defaultRequest(AdminKeys.authorized())
                 .build();
     }
 
@@ -154,7 +156,7 @@ class DryRunAdminControllerTest {
         when(dryRuns.apply("target-a", new ChangeNote("hyuk", "적용"))).thenReturn(Policies.policy("target-a", 4));
 
         mockMvc.perform(post("/admin/policies/target-a/dry-run/apply").contentType(MediaType.APPLICATION_JSON).content("""
-                        {"changedBy": "hyuk", "reason": "적용"}
+                        {"reason": "적용"}
                         """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.version").value(4));

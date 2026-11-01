@@ -150,6 +150,23 @@ class TargetSystemOutcomeRecorderTest {
     }
 
     @Test
+    @DisplayName("세마포어 자리를 기다리는 요청이 있으면 window 가 지나도 막힌 것으로 본다")
+    void treatsWaitingAsBlocked() throws InterruptedException {
+        TargetSystemOutcomeRecorder recorder = recorderWithWindow(Duration.ofMillis(200));
+
+        recorder.waitStarted(TARGET_A);
+        recorder.recordBlocked(TARGET_A);
+        Thread.sleep(300);
+        assertThat(recorder.blockedWithinWindow(TARGET_A)).isTrue();
+
+        recorder.waitEnded(TARGET_A);
+        assertThat(recorder.blockedWithinWindow(TARGET_A)).isTrue();
+
+        Thread.sleep(300);
+        assertThat(recorder.blockedWithinWindow(TARGET_A)).isFalse();
+    }
+
+    @Test
     @DisplayName("429 는 실패로 세서, 3번 연속이면 연속 실패 사건이고, 꺼내면 비워진다")
     void tooManyRequestsCountsAsFailure() {
         TargetSystemOutcomeRecorder recorder = recorderWithWindow(Duration.ofSeconds(10));
@@ -223,6 +240,21 @@ class TargetSystemOutcomeRecorderTest {
 
         assertThatThrownBy(() -> recorder.recentOutcomes("target-z"))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("판정에 쓰는 호출 결과만 새로 쌓인 개수로 세고, 꺼내면 0 부터 다시 센다")
+    void drainsNewSamples() {
+        TargetSystemOutcomeRecorder recorder = recorderWithWindow(Duration.ofSeconds(10));
+
+        recorder.record(TARGET_A, OutcomeKind.SUCCESS, Duration.ofMillis(120));
+        recorder.record(TARGET_A, OutcomeKind.SERVER_ERROR, Duration.ofMillis(50));
+        recorder.record(TARGET_A, OutcomeKind.UNEXPECTED_RESPONSE, Duration.ofMillis(80));
+        recorder.record(TARGET_B, OutcomeKind.SUCCESS, Duration.ofMillis(120));
+
+        assertThat(recorder.drainNewSamples(TARGET_A)).isEqualTo(2);
+        assertThat(recorder.drainNewSamples(TARGET_A)).isZero();
+        assertThat(recorder.drainNewSamples(TARGET_B)).isEqualTo(1);
     }
 
     private static TargetSystemOutcomeRecorder recorderWithWindow(Duration window) {

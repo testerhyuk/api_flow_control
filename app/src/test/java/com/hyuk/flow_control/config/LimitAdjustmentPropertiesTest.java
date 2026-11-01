@@ -18,10 +18,9 @@ class LimitAdjustmentPropertiesTest {
     void bindsFromProperties() {
         contextRunner
                 .withPropertyValues(
-                        "flow-control.limit-adjustment.degraded-ratio=0.5",
-                        "flow-control.limit-adjustment.recovery-step=0.05")
+                        "flow-control.limit-adjustment.degraded-ratio=0.5")
                 .run(context -> assertThat(context.getBean(LimitAdjustmentProperties.class))
-                        .isEqualTo(new LimitAdjustmentProperties(0.5, 0.05)));
+                        .isEqualTo(new LimitAdjustmentProperties(0.5)));
     }
 
     @Test
@@ -29,8 +28,7 @@ class LimitAdjustmentPropertiesTest {
     void failsToStartWithInvalidValue() {
         contextRunner
                 .withPropertyValues(
-                        "flow-control.limit-adjustment.degraded-ratio=1.0",
-                        "flow-control.limit-adjustment.recovery-step=0.05")
+                        "flow-control.limit-adjustment.degraded-ratio=1.0")
                 .run(context -> assertThat(context).hasFailed());
     }
 
@@ -43,21 +41,11 @@ class LimitAdjustmentPropertiesTest {
     @Test
     @DisplayName("degraded-ratio 가 0 이하이거나 1 이상이면 만들 수 없다")
     void rejectsInvalidDegradedRatio() {
-        assertThatThrownBy(() -> new LimitAdjustmentProperties(0.0, 0.05))
+        assertThatThrownBy(() -> new LimitAdjustmentProperties(0.0))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new LimitAdjustmentProperties(-0.1, 0.05))
+        assertThatThrownBy(() -> new LimitAdjustmentProperties(-0.1))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new LimitAdjustmentProperties(1.0, 0.05))
-                .isInstanceOf(IllegalArgumentException.class);
-    }
-
-    @Test
-    @DisplayName("recovery-step 은 1 까지 되고 0 이하이거나 1 을 넘으면 만들 수 없다")
-    void validatesRecoveryStep() {
-        assertThat(new LimitAdjustmentProperties(0.5, 1.0).recoveryStep()).isEqualTo(1.0);
-        assertThatThrownBy(() -> new LimitAdjustmentProperties(0.5, 0.0))
-                .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new LimitAdjustmentProperties(0.5, 1.01))
+        assertThatThrownBy(() -> new LimitAdjustmentProperties(1.0))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 

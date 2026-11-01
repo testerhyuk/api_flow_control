@@ -146,7 +146,7 @@ class SharedRateLimitRedisTest {
 
         TargetSystemPolicyReader policyReader = mock(TargetSystemPolicyReader.class);
         when(policyReader.readAll()).thenReturn(Map.of(
-                target, new TargetSystemPolicy(10, Duration.ofSeconds(1), 1.0, Duration.ofSeconds(1))));
+                target, new TargetSystemPolicy(20, Duration.ofSeconds(1), 0.5, Duration.ofSeconds(1))));
         FailoverTargetSystemRateLimiter limiter =
                 new FailoverTargetSystemRateLimiter(policyReader, buckets, availability, metrics);
 

@@ -1,8 +1,10 @@
 package com.hyuk.flow_control.application.port.in;
 
+import com.hyuk.flow_control.domain.request.IntakeResult;
 import com.hyuk.flow_control.domain.request.OutboundRequest;
-import com.hyuk.flow_control.domain.request.OutboundResult;
+
+import java.time.Instant;
 
 public interface RequestIntakeUseCase {
-    OutboundResult process(OutboundRequest request);
+    IntakeResult process(OutboundRequest request, Instant deadline);
 }

@@ -1,3 +1,18 @@
+x-kafka-env: &kafka-env
+  CLUSTER_ID: 4L6g3nShT-eMCtK--X86sw
+  KAFKA_PROCESS_ROLES: broker,controller
+  KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+  KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+  KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-1:9093,2@kafka-2:9093,3@kafka-3:9093
+  KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+  KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+  KAFKA_MIN_INSYNC_REPLICAS: 2
+  KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+  KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+  KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+  KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+  KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+
 services:
   prometheus:
     image: prom/prometheus:v3.13.4
@@ -23,26 +38,38 @@ services:
     depends_on:
       - prometheus
 
-  kafka:
+  kafka-1:
     image: apache/kafka:4.3.1
-    container_name: flow-control-kafka
+    container_name: flow-control-kafka-1
     ports:
       - "9092:9092"
     environment:
-      CLUSTER_ID: 4L6g3nShT-eMCtK--X86sw
+      <<: *kafka-env
       KAFKA_NODE_ID: 1
-      KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_LISTENERS: PLAINTEXT://:9092,INTERNAL://:29092,CONTROLLER://:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,INTERNAL://kafka:29092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
-      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
-      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,INTERNAL://kafka-1:29092
+
+  kafka-2:
+    image: apache/kafka:4.3.1
+    container_name: flow-control-kafka-2
+    ports:
+      - "9094:9094"
+    environment:
+      <<: *kafka-env
+      KAFKA_NODE_ID: 2
+      KAFKA_LISTENERS: PLAINTEXT://:9094,INTERNAL://:29092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9094,INTERNAL://kafka-2:29092
+
+  kafka-3:
+    image: apache/kafka:4.3.1
+    container_name: flow-control-kafka-3
+    ports:
+      - "9096:9096"
+    environment:
+      <<: *kafka-env
+      KAFKA_NODE_ID: 3
+      KAFKA_LISTENERS: PLAINTEXT://:9096,INTERNAL://:29092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9096,INTERNAL://kafka-3:29092
 
   postgres:
     image: postgres:18.4
@@ -69,9 +96,11 @@ services:
       - "8090:8080"
     environment:
       KAFKA_CLUSTERS_0_NAME: local
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka-1:29092,kafka-2:29092,kafka-3:29092
     depends_on:
-      - kafka
+      - kafka-1
+      - kafka-2
+      - kafka-3
 
   app:
     profiles: ["experiment"]
@@ -82,12 +111,15 @@ services:
       - "8080:8080"
       - "8081:8081"
     environment:
+      SPRING_PROFILES_ACTIVE: experiment
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/flow_control
       SPRING_DATA_REDIS_HOST: redis
-      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka-1:29092,kafka-2:29092,kafka-3:29092
     mem_limit: 768m
     depends_on:
-      - kafka
+      - kafka-1
+      - kafka-2
+      - kafka-3
       - postgres
       - redis
 
@@ -131,10 +163,12 @@ services:
     ports:
       - "8095:8095"
     environment:
-      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka-1:29092,kafka-2:29092,kafka-3:29092
     mem_limit: 384m
     depends_on:
-      - kafka
+      - kafka-1
+      - kafka-2
+      - kafka-3
 
 volumes:
   postgres-data:

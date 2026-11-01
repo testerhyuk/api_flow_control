@@ -28,7 +28,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 class KafkaRequestListenerTest {
-    private static final String TOPIC = "flow-control.requests.target-a";
+    private static final String TOPIC = "flow-control.requests.target-a.loan";
     private static final String VALID = """
             {"requestId":"req-1","targetSystemId":"target-a","payload":"{\\"amount\\":1000}","createdAt":"2026-10-13T09:00:00.123Z"}
             """;
@@ -43,13 +43,13 @@ class KafkaRequestListenerTest {
     }
 
     @Test
-    @DisplayName("원래 토픽의 메시지는 처음 들어온 요청으로 넘긴다")
+    @DisplayName("요청 토픽의 메시지는 토픽 이름에서 읽은 요청자와 함께 처음 들어온 요청으로 넘긴다")
     void passesFirstDelivery() {
         listener(null).onMessage(record(TOPIC, VALID, System.currentTimeMillis(), new RecordHeaders()));
 
         verify(handling).handle(
                 new OutboundRequest("req-1", "target-a", "{\"amount\":1000}", Instant.parse("2026-10-13T09:00:00.123Z")),
-                DeliveryContext.first("flow-control.requests.target-a-3@42"));
+                DeliveryContext.first("flow-control.requests.target-a.loan-3@42", "loan"));
     }
 
     @Test

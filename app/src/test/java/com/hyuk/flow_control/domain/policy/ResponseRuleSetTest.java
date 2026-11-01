@@ -18,6 +18,16 @@ class ResponseRuleSetTest {
             "429", OutcomeKind.TOO_MANY_REQUESTS);
 
     @Test
+    @DisplayName("상태 코드 표나 결과 코드 표 중 한 곳에라도 UNDER_MAINTENANCE 가 있으면 점검 코드가 있다")
+    void detectsMaintenanceCode() {
+        assertThat(new ResponseRuleSet(STATUS_CODES, null, null).hasMaintenanceCode()).isFalse();
+        assertThat(new ResponseRuleSet(Map.of("503", OutcomeKind.UNDER_MAINTENANCE), null, null)
+                .hasMaintenanceCode()).isTrue();
+        assertThat(new ResponseRuleSet(STATUS_CODES, "/resultCode", Map.of("E900", OutcomeKind.UNDER_MAINTENANCE))
+                .hasMaintenanceCode()).isTrue();
+    }
+
+    @Test
     @DisplayName("상태 코드 표가 없거나 비어 있으면 만들 수 없다")
     void rejectsMissingStatusCodes() {
         assertThatThrownBy(() -> new ResponseRuleSet(null, null, null))

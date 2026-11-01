@@ -2,6 +2,7 @@ package com.hyuk.flow_control.adapter.in.kafka;
 
 import com.hyuk.flow_control.adapter.kafka.RequestTopics;
 import com.hyuk.flow_control.application.service.PolicyRegistry;
+import com.hyuk.flow_control.application.service.RequesterRegistry;
 import com.hyuk.flow_control.config.IntakeProperties;
 import com.hyuk.flow_control.domain.policy.ManagedPolicy;
 import com.hyuk.flow_control.domain.retry.RetryStage;
@@ -40,10 +41,13 @@ public class KafkaLagMonitor implements SmartLifecycle {
 
     private final KafkaAdmin kafkaAdmin;
     private final PolicyRegistry policies;
+    private final RequesterRegistry requesters;
     private final MeterRegistry meterRegistry;
     private final Duration interval;
+    private final String requestGroupId;
     private final boolean autoStartup;
     private final Map<String, Double> lags = new ConcurrentHashMap<>();
+    private final Map<String, List<String>> requestTopicsByTarget = new ConcurrentHashMap<>();
     private volatile ScheduledExecutorService executor;
     private volatile AdminClient admin;
     private volatile boolean failing;
@@ -51,13 +55,17 @@ public class KafkaLagMonitor implements SmartLifecycle {
     public KafkaLagMonitor(
             KafkaAdmin kafkaAdmin,
             PolicyRegistry policies,
+            RequesterRegistry requesters,
             MeterRegistry meterRegistry,
             IntakeProperties intakeProperties,
+            @Value("${spring.kafka.consumer.group-id}") String requestGroupId,
             @Value("${flow-control.intake.auto-startup:true}") boolean autoStartup) {
         this.kafkaAdmin = kafkaAdmin;
         this.policies = policies;
+        this.requesters = requesters;
         this.meterRegistry = meterRegistry;
         this.interval = intakeProperties.lagInterval();
+        this.requestGroupId = requestGroupId;
         this.autoStartup = autoStartup;
     }
 
@@ -102,6 +110,14 @@ public class KafkaLagMonitor implements SmartLifecycle {
         return lags.getOrDefault(topic, Double.NaN);
     }
 
+    public double requestLagOf(String targetSystemId) {
+        double total = 0;
+        for (String topic : requestTopicsByTarget.getOrDefault(targetSystemId, List.of())) {
+            total += lagOf(topic);
+        }
+        return total;
+    }
+
     private void refreshSafely() {
         try {
             refresh();
@@ -125,8 +141,15 @@ public class KafkaLagMonitor implements SmartLifecycle {
 
         for (ManagedPolicy policy : policies.policies()) {
             String targetSystemId = policy.targetSystemId();
-            register(targetSystemId, RequestTopics.of(targetSystemId), REQUEST_STAGE);
-            groupsByTopic.put(RequestTopics.of(targetSystemId), KafkaRequestIntakeContainers.REQUEST_GROUP_ID);
+            registerRequest(targetSystemId);
+            List<String> requestTopics = requesters.requesterIdsOf(targetSystemId).stream()
+                    .map(requesterId -> RequestTopics.of(targetSystemId, requesterId))
+                    .toList();
+            requestTopics.forEach(topic -> {
+                lags.putIfAbsent(topic, Double.NaN);
+                groupsByTopic.put(topic, requestGroupId);
+            });
+            requestTopicsByTarget.put(targetSystemId, requestTopics);
 
             for (RetryStage stage : RetryStage.values()) {
                 String topic = RequestTopics.retry(stage, targetSystemId);
@@ -192,6 +215,17 @@ public class KafkaLagMonitor implements SmartLifecycle {
         Map<TopicPartition, Long> offsets = new HashMap<>();
         result.forEach((partition, info) -> offsets.put(partition, info.offset()));
         return offsets;
+    }
+
+    private void registerRequest(String targetSystemId) {
+        if (requestTopicsByTarget.putIfAbsent(targetSystemId, List.of()) != null) {
+            return;
+        }
+
+        Gauge.builder("flow.control.intake.lag", () -> requestLagOf(targetSystemId))
+                .tag("target", targetSystemId)
+                .tag("stage", REQUEST_STAGE)
+                .register(meterRegistry);
     }
 
     private void register(String targetSystemId, String topic, String stage) {

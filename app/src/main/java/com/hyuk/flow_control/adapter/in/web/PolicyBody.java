@@ -33,10 +33,13 @@ public record PolicyBody(
         return new PolicyBody(
                 policy.enabled(),
                 new Connection(connection.url(),
+                        connection.path(),
+                        connection.probePath(),
                         connection.connectTimeout().toMillis(),
                         connection.readTimeout().toMillis()),
                 new Limits(limits.maxTps(),
                         limits.baselineRtt().toMillis(),
+                        limits.baselineP95().toMillis(),
                         limits.safetyMargin(),
                         limits.burstWindow().toMillis()),
                 new Response(response.statusCodes(), response.resultField(), response.resultCodes()),
@@ -52,11 +55,14 @@ public record PolicyBody(
                 Required.of(enabled, "enabled"),
                 new ConnectionSettings(
                         connection.url(),
+                        connection.path() == null ? ConnectionSettings.DEFAULT_PATH : connection.path(),
+                        Required.of(connection.probePath(), "connection.probePath"),
                         millis(connection.connectTimeoutMs(), "connection.connectTimeoutMs"),
                         millis(connection.readTimeoutMs(), "connection.readTimeoutMs")),
                 new TargetSystemPolicy(
                         Required.of(limits.maxTps(), "limits.maxTps"),
                         millis(limits.baselineRttMs(), "limits.baselineRttMs"),
+                        millis(limits.baselineP95Ms(), "limits.baselineP95Ms"),
                         Required.of(limits.safetyMargin(), "limits.safetyMargin"),
                         millis(limits.burstWindowMs(), "limits.burstWindowMs")),
                 new ResponseRuleSet(response.statusCodes(), response.resultField(), response.resultCodes()),
@@ -67,10 +73,11 @@ public record PolicyBody(
         return Duration.ofMillis(Required.of(value, name));
     }
 
-    public record Connection(String url, Long connectTimeoutMs, Long readTimeoutMs) {
+    public record Connection(String url, String path, String probePath, Long connectTimeoutMs, Long readTimeoutMs) {
     }
 
-    public record Limits(Integer maxTps, Long baselineRttMs, Double safetyMargin, Long burstWindowMs) {
+    public record Limits(Integer maxTps, Long baselineRttMs, Long baselineP95Ms, Double safetyMargin,
+                         Long burstWindowMs) {
     }
 
     public record Response(

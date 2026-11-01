@@ -42,7 +42,7 @@ public class HttpTargetSystemClient implements TargetSystemClient {
 
         try {
             ResponseEntity<String> response = restClient.post()
-                    .uri("/call")
+                    .uri(connection.path())
                     .header(REQUEST_ID_HEADER, request.requestId())
                     .body(request.payload())
                     .retrieve()
@@ -65,6 +65,26 @@ public class HttpTargetSystemClient implements TargetSystemClient {
             return new OutboundResult(fromFailureCause(e.getCause()), elapsedSince(startedAt), null, null, null, null);
         } catch (RestClientException e) {
             return new OutboundResult(OutcomeKind.SERVER_ERROR, elapsedSince(startedAt), null, null, null, null);
+        }
+    }
+
+    @Override
+    public OutcomeKind probe(String targetSystemId) {
+        TargetSystemConnections.Connection connection = connections.get(targetSystemId);
+        ResponseRules rules = connection.rules();
+
+        try {
+            ResponseEntity<String> response = connection.restClient().get()
+                    .uri(connection.probePath())
+                    .retrieve()
+                    .onStatus(status -> true, (req, res) -> {})
+                    .toEntity(String.class);
+
+            return rules.judge(response.getStatusCode().value(), rules.readResultCode(response.getBody(), jsonMapper));
+        } catch (ResourceAccessException e) {
+            return fromFailureCause(e.getCause());
+        } catch (RestClientException e) {
+            return OutcomeKind.SERVER_ERROR;
         }
     }
 

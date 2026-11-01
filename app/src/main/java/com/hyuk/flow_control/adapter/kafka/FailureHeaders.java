@@ -18,6 +18,7 @@ public final class FailureHeaders {
     public static final String LAST_FAILED_AT = "flow-control-last-failed-at";
     public static final String LAST_KIND = "flow-control-last-kind";
     public static final String ORIGIN = "flow-control-origin";
+    public static final String REQUESTER = "flow-control-requester";
     public static final String RETRY_STAGE = "flow-control-retry-stage";
     public static final String DEAD_LETTER_REASON = "flow-control-dlq-reason";
     public static final String ERROR = "flow-control-error";
@@ -38,6 +39,7 @@ public final class FailureHeaders {
         put(headers, LAST_FAILED_AT, context.lastFailedAt());
         put(headers, LAST_KIND, lastKind == null ? null : lastKind.name());
         put(headers, ORIGIN, context.origin());
+        put(headers, REQUESTER, context.requesterId());
         put(headers, RETRY_STAGE, context.stage() == null ? null : context.stage().label());
     }
 
@@ -67,7 +69,8 @@ public final class FailureHeaders {
                 instant(read(headers, FIRST_FAILED_AT)),
                 instant(read(headers, LAST_FAILED_AT)),
                 origin == null ? fallbackOrigin : origin,
-                kind(read(headers, LAST_KIND)));
+                kind(read(headers, LAST_KIND)),
+                read(headers, REQUESTER));
     }
 
     public static String read(Headers headers, String key) {

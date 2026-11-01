@@ -12,6 +12,7 @@ import com.hyuk.flow_control.domain.policy.PolicyAlreadyExistsException;
 import com.hyuk.flow_control.domain.policy.PolicyHistoryEntry;
 import com.hyuk.flow_control.domain.policy.PolicyNotFoundException;
 import com.hyuk.flow_control.domain.policy.PolicyVersionConflictException;
+import com.hyuk.flow_control.support.AdminKeys;
 import com.hyuk.flow_control.support.Policies;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -49,8 +50,8 @@ class PolicyAdminControllerTest {
     private static final String POLICY_JSON = """
             {
               "enabled": true,
-              "connection": {"url": "http://localhost:9001", "connectTimeoutMs": 1000, "readTimeoutMs": 3000},
-              "limits": {"maxTps": 80, "baselineRttMs": 150, "safetyMargin": 0.95, "burstWindowMs": 10},
+              "connection": {"url": "http://localhost:9001", "probePath": "/health", "connectTimeoutMs": 1000, "readTimeoutMs": 3000},
+              "limits": {"maxTps": 80, "baselineRttMs": 150, "baselineP95Ms": 300, "safetyMargin": 0.95, "burstWindowMs": 10},
               "response": {
                 "statusCodes": {"2xx": "SUCCESS", "5xx": "SERVER_ERROR"},
                 "resultField": "/resultCode",
@@ -66,6 +67,8 @@ class PolicyAdminControllerTest {
         management = mock(PolicyManagementUseCase.class);
         mockMvc = MockMvcBuilders.standaloneSetup(new PolicyAdminController(management))
                 .setControllerAdvice(new PolicyAdminExceptionHandler())
+                .addFilters(AdminKeys.filter())
+                .defaultRequest(AdminKeys.authorized())
                 .build();
     }
 
@@ -105,7 +108,7 @@ class PolicyAdminControllerTest {
                 ((PolicyContent) invocation.getArgument(1)).toPolicy("target-d", 1));
 
         mockMvc.perform(post("/admin/policies").contentType(MediaType.APPLICATION_JSON).content("""
-                        {"targetSystemId": "target-d", "policy": %s, "changedBy": "hyuk", "reason": "새 기관"}
+                        {"targetSystemId": "target-d", "policy": %s, "reason": "새 기관"}
                         """.formatted(POLICY_JSON)))
                 .andExpect(status().isCreated())
                 .andExpect(header().string("Location", "/admin/policies/target-d"))
@@ -114,8 +117,30 @@ class PolicyAdminControllerTest {
         ArgumentCaptor<PolicyContent> content = ArgumentCaptor.forClass(PolicyContent.class);
         verify(management).create(eq("target-d"), content.capture(), eq(new ChangeNote("hyuk", "새 기관")));
         assertThat(content.getValue().limits().maxTps()).isEqualTo(80);
+        assertThat(content.getValue().limits().baselineP95()).isEqualTo(Duration.ofMillis(300));
         assertThat(content.getValue().connection().readTimeout()).isEqualTo(Duration.ofSeconds(3));
+        assertThat(content.getValue().connection().path()).isEqualTo("/call");
         assertThat(content.getValue().response().resultField()).isEqualTo("/resultCode");
+    }
+
+    @Test
+    @DisplayName("path 를 보내면 그 path 로 넘기고, / 로 시작하지 않으면 400 이다")
+    void createsWithPath() throws Exception {
+        when(management.create(eq("target-d"), any(), any())).thenAnswer(invocation ->
+                ((PolicyContent) invocation.getArgument(1)).toPolicy("target-d", 1));
+        String withPath = POLICY_JSON.replace("\"url\": \"http://localhost:9001\",",
+                "\"url\": \"http://localhost:9001\", \"path\": \"/api/v1/payments\",");
+
+        mockMvc.perform(post("/admin/policies").contentType(MediaType.APPLICATION_JSON).content("""
+                        {"targetSystemId": "target-d", "policy": %s, "reason": "새 기관"}
+                        """.formatted(withPath)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.policy.connection.path").value("/api/v1/payments"));
+
+        mockMvc.perform(post("/admin/policies").contentType(MediaType.APPLICATION_JSON).content("""
+                        {"targetSystemId": "target-d", "policy": %s, "reason": "새 기관"}
+                        """.formatted(withPath.replace("/api/v1/payments", "api/v1/payments"))))
+                .andExpect(status().isBadRequest());
     }
 
     @Test
@@ -130,7 +155,7 @@ class PolicyAdminControllerTest {
                 }""");
 
         mockMvc.perform(post("/admin/policies").contentType(MediaType.APPLICATION_JSON).content("""
-                        {"targetSystemId": "target-d", "policy": %s, "changedBy": "hyuk", "reason": "점검 등록"}
+                        {"targetSystemId": "target-d", "policy": %s, "reason": "점검 등록"}
                         """.formatted(policy)))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.policy.maintenance.recurring[0].days[0]").value("SATURDAY"))
@@ -153,7 +178,7 @@ class PolicyAdminControllerTest {
                 ((PolicyContent) invocation.getArgument(1)).toPolicy("target-d", 1));
 
         mockMvc.perform(post("/admin/policies").contentType(MediaType.APPLICATION_JSON).content("""
-                        {"targetSystemId": "target-d", "policy": %s, "changedBy": "hyuk", "reason": "새 기관"}
+                        {"targetSystemId": "target-d", "policy": %s, "reason": "새 기관"}
                         """.formatted(POLICY_JSON)))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.policy.maintenance.recurring").isEmpty())
@@ -171,7 +196,7 @@ class PolicyAdminControllerTest {
                 {"oneTime": [{"start": "2026-10-20T05:00:00", "end": "2026-10-20T01:00:00"}]}""");
 
         mockMvc.perform(post("/admin/policies").contentType(MediaType.APPLICATION_JSON).content("""
-                        {"targetSystemId": "target-d", "policy": %s, "changedBy": "hyuk", "reason": "잘못된 점검"}
+                        {"targetSystemId": "target-d", "policy": %s, "reason": "잘못된 점검"}
                         """.formatted(policy)))
                 .andExpect(status().isBadRequest());
 
@@ -188,7 +213,7 @@ class PolicyAdminControllerTest {
         when(management.create(eq("target-a"), any(), any())).thenThrow(new PolicyAlreadyExistsException("target-a"));
 
         mockMvc.perform(post("/admin/policies").contentType(MediaType.APPLICATION_JSON).content("""
-                        {"targetSystemId": "target-a", "policy": %s, "changedBy": "hyuk", "reason": "중복"}
+                        {"targetSystemId": "target-a", "policy": %s, "reason": "중복"}
                         """.formatted(POLICY_JSON)))
                 .andExpect(status().isConflict());
     }
@@ -197,25 +222,32 @@ class PolicyAdminControllerTest {
     @DisplayName("값이 빠졌거나 잘못됐으면 400 이고 저장하지 않는다")
     void rejectsInvalidBody() throws Exception {
         mockMvc.perform(put("/admin/policies/target-a").contentType(MediaType.APPLICATION_JSON).content("""
-                        {"policy": %s, "changedBy": "hyuk", "reason": "버전 없음"}
+                        {"policy": %s, "reason": "버전 없음"}
                         """.formatted(POLICY_JSON)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.detail").value("expectedVersion 는 필수입니다"));
 
         mockMvc.perform(put("/admin/policies/target-a").contentType(MediaType.APPLICATION_JSON).content("""
-                        {"expectedVersion": 1, "policy": %s, "changedBy": "", "reason": "사람 없음"}
-                        """.formatted(POLICY_JSON)))
-                .andExpect(status().isBadRequest());
-
-        mockMvc.perform(put("/admin/policies/target-a").contentType(MediaType.APPLICATION_JSON).content("""
-                        {"expectedVersion": 1, "policy": %s, "changedBy": "hyuk", "reason": "0 tps"}
+                        {"expectedVersion": 1, "policy": %s, "reason": "0 tps"}
                         """.formatted(POLICY_JSON.replace("\"maxTps\": 80", "\"maxTps\": 0"))))
                 .andExpect(status().isBadRequest());
 
         mockMvc.perform(put("/admin/policies/target-a").contentType(MediaType.APPLICATION_JSON).content("""
-                        {"expectedVersion": 1, "policy": %s, "changedBy": "hyuk", "reason": "없는 결과"}
+                        {"expectedVersion": 1, "policy": %s, "reason": "없는 결과"}
                         """.formatted(POLICY_JSON.replace("SERVER_ERROR", "NOPE"))))
                 .andExpect(status().isBadRequest());
+
+        mockMvc.perform(put("/admin/policies/target-a").contentType(MediaType.APPLICATION_JSON).content("""
+                        {"expectedVersion": 1, "policy": %s, "reason": "p95 없음"}
+                        """.formatted(POLICY_JSON.replace("\"baselineP95Ms\": 300, ", ""))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value("limits.baselineP95Ms 는 필수입니다"));
+
+        mockMvc.perform(put("/admin/policies/target-a").contentType(MediaType.APPLICATION_JSON).content("""
+                        {"expectedVersion": 1, "policy": %s, "reason": "probe 없음"}
+                        """.formatted(POLICY_JSON.replace("\"probePath\": \"/health\", ", ""))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value("connection.probePath 는 필수입니다"));
 
         verify(management, never()).update(any(), any(), anyLong(), any());
     }
@@ -227,7 +259,7 @@ class PolicyAdminControllerTest {
                 .thenThrow(new PolicyVersionConflictException("target-a", 1));
 
         mockMvc.perform(put("/admin/policies/target-a").contentType(MediaType.APPLICATION_JSON).content("""
-                        {"expectedVersion": 1, "policy": %s, "changedBy": "hyuk", "reason": "한도"}
+                        {"expectedVersion": 1, "policy": %s, "reason": "한도"}
                         """.formatted(POLICY_JSON)))
                 .andExpect(status().isConflict());
     }
@@ -239,7 +271,7 @@ class PolicyAdminControllerTest {
                 .thenReturn(Policies.policy("target-a", 4).withEnabled(false));
 
         mockMvc.perform(put("/admin/policies/target-a/enabled").contentType(MediaType.APPLICATION_JSON).content("""
-                        {"enabled": false, "expectedVersion": 3, "changedBy": "hyuk", "reason": "점검"}
+                        {"enabled": false, "expectedVersion": 3, "reason": "점검"}
                         """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.version").value(4))
@@ -267,7 +299,7 @@ class PolicyAdminControllerTest {
                 .thenReturn(Policies.policy("target-a", 4));
 
         mockMvc.perform(post("/admin/policies/target-a/rollback").contentType(MediaType.APPLICATION_JSON).content("""
-                        {"toVersion": 1, "expectedVersion": 3, "changedBy": "hyuk", "reason": "되돌림"}
+                        {"toVersion": 1, "expectedVersion": 3, "reason": "되돌림"}
                         """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.version").value(4));

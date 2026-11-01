@@ -5,9 +5,12 @@ import com.hyuk.flow_control.adapter.kafka.RequestTopics;
 import com.hyuk.flow_control.application.port.in.RequestHandlingUseCase;
 import com.hyuk.flow_control.application.port.out.PolicyChangeListener;
 import com.hyuk.flow_control.application.port.out.RequestIntakeControl;
+import com.hyuk.flow_control.application.port.out.RequesterChangeListener;
 import com.hyuk.flow_control.application.service.PolicyRegistry;
+import com.hyuk.flow_control.application.service.RequesterRegistry;
 import com.hyuk.flow_control.config.IntakeProperties;
 import com.hyuk.flow_control.domain.policy.ManagedPolicy;
+import com.hyuk.flow_control.domain.requester.Requester;
 import com.hyuk.flow_control.domain.retry.RetryStage;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -31,18 +34,19 @@ import tools.jackson.databind.json.JsonMapper;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Component
 @Order(Ordered.LOWEST_PRECEDENCE)
-public class KafkaRequestIntakeContainers implements SmartLifecycle, PolicyChangeListener, RequestIntakeControl {
+public class KafkaRequestIntakeContainers
+        implements SmartLifecycle, PolicyChangeListener, RequesterChangeListener, RequestIntakeControl {
     private static final Logger log = LoggerFactory.getLogger(KafkaRequestIntakeContainers.class);
 
-    static final String REQUEST_GROUP_ID = "flow-control";
-    static final Duration RETRY_MAX_POLL_INTERVAL = Duration.ofMinutes(15);
     static final Duration ERROR_BACKOFF = Duration.ofSeconds(1);
 
     private final ConsumerFactory<String, String> consumerFactory;
@@ -50,30 +54,37 @@ public class KafkaRequestIntakeContainers implements SmartLifecycle, PolicyChang
     private final JsonMapper jsonMapper;
     private final KafkaAdmin kafkaAdmin;
     private final PolicyRegistry policies;
+    private final RequesterRegistry requesters;
     private final MeterRegistry meterRegistry;
+    private final String requestGroupId;
     private final boolean autoStartup;
     private final int topicReplicas;
+    private final Duration retryMaxPollInterval;
     private final Map<String, TargetContainers> targets = new ConcurrentHashMap<>();
-    private final Map<String, Long> warnedVersions = new ConcurrentHashMap<>();
     private volatile boolean running;
 
     public KafkaRequestIntakeContainers(
             ConsumerFactory<String, String> consumerFactory,
             PolicyRegistry policies,
+            RequesterRegistry requesters,
             RequestHandlingUseCase handling,
             JsonMapper jsonMapper,
             KafkaAdmin kafkaAdmin,
             MeterRegistry meterRegistry,
             IntakeProperties intakeProperties,
+            @Value("${spring.kafka.consumer.group-id}") String requestGroupId,
             @Value("${flow-control.intake.auto-startup:true}") boolean autoStartup) {
         this.consumerFactory = consumerFactory;
         this.handling = handling;
         this.jsonMapper = jsonMapper;
         this.kafkaAdmin = kafkaAdmin;
         this.policies = policies;
+        this.requesters = requesters;
         this.meterRegistry = meterRegistry;
+        this.requestGroupId = requestGroupId;
         this.autoStartup = autoStartup;
         this.topicReplicas = intakeProperties.topicReplicas();
+        this.retryMaxPollInterval = RetryStage.longestDelay().plus(intakeProperties.retryProcessingMargin());
 
         policies.policies().forEach(this::register);
     }
@@ -85,9 +96,7 @@ public class KafkaRequestIntakeContainers implements SmartLifecycle, PolicyChang
             return;
         }
 
-        List<NewTopic> topics = RequestTopicDefinitions.forTarget(targetSystemId, policy.limits().concurrencyLimit(),
-                topicReplicas);
-        kafkaAdmin.createOrModifyTopics(topics.toArray(NewTopic[]::new));
+        createTopics(targetSystemId, policy.limits().concurrencyLimit());
 
         TargetContainers created = register(policy);
         if (running && created.enabled) {
@@ -116,13 +125,33 @@ public class KafkaRequestIntakeContainers implements SmartLifecycle, PolicyChang
             }
         }
 
-        warnIfRedeployRequired(after, target);
+        growIfNeeded(after, target);
+    }
+
+    @Override
+    public synchronized void onRequesterChanged(Requester before, Requester after) {
+        createTopics(after);
+
+        Set<String> affected = new LinkedHashSet<>(after.targetSystemIds());
+        if (before != null) {
+            affected.addAll(before.targetSystemIds());
+        }
+
+        affected.forEach(targetSystemId -> {
+            TargetContainers target = targets.get(targetSystemId);
+            if (target != null) {
+                refreshRequestContainer(targetSystemId, target);
+            }
+        });
     }
 
     public Map<String, Integer> concurrencyByTopic() {
         Map<String, Integer> result = new HashMap<>();
-        targets.values().forEach(target -> target.containers.forEach(container ->
-                result.put(container.getContainerProperties().getTopics()[0], container.getConcurrency())));
+        targets.values().forEach(target -> target.all().forEach(container -> {
+            for (String topic : container.getContainerProperties().getTopics()) {
+                result.put(topic, container.getConcurrency());
+            }
+        }));
         return Map.copyOf(result);
     }
 
@@ -144,12 +173,12 @@ public class KafkaRequestIntakeContainers implements SmartLifecycle, PolicyChang
 
     public boolean isPaused(String targetSystemId) {
         TargetContainers target = targets.get(targetSystemId);
-        return target != null && target.containers.stream().allMatch(ConcurrentMessageListenerContainer::isPauseRequested);
+        return target != null && target.all().stream().allMatch(ConcurrentMessageListenerContainer::isPauseRequested);
     }
 
     public boolean isConsuming(String targetSystemId) {
         TargetContainers target = targets.get(targetSystemId);
-        return target != null && target.containers.stream().allMatch(ConcurrentMessageListenerContainer::isRunning);
+        return target != null && target.all().stream().allMatch(ConcurrentMessageListenerContainer::isRunning);
     }
 
     @Override
@@ -183,53 +212,133 @@ public class KafkaRequestIntakeContainers implements SmartLifecycle, PolicyChang
         int concurrency = policy.limits().concurrencyLimit();
         List<ConcurrentMessageListenerContainer<String, String>> containers = new ArrayList<>();
 
-        containers.add(container(RequestTopics.of(targetSystemId), REQUEST_GROUP_ID, concurrency,
-                new KafkaRequestListener(targetSystemId, null, handling, jsonMapper), null));
-
         for (RetryStage stage : RetryStage.values()) {
-            String topic = RequestTopics.retry(stage, targetSystemId);
-            Properties retryConsumer = new Properties();
-            retryConsumer.put(ConsumerConfig.MAX_POLL_INTERVAL_MS_CONFIG,
-                    String.valueOf(RETRY_MAX_POLL_INTERVAL.toMillis()));
-
-            containers.add(container(topic, topic, concurrency,
-                    new KafkaRequestListener(targetSystemId, stage, handling, jsonMapper), retryConsumer));
+            containers.add(retryContainer(targetSystemId, stage, concurrency));
         }
 
         TargetContainers target = new TargetContainers(List.copyOf(containers), concurrency, policy.enabled());
+        List<String> requestTopics = requestTopicsOf(targetSystemId);
+        target.requestTopics = requestTopics;
+        target.request = requestContainer(targetSystemId, requestTopics, concurrency);
         targets.put(targetSystemId, target);
         registerGauges(targetSystemId, target);
         return target;
+    }
+
+    private ConcurrentMessageListenerContainer<String, String> retryContainer(
+            String targetSystemId, RetryStage stage, int concurrency) {
+        String topic = RequestTopics.retry(stage, targetSystemId);
+        Properties retryConsumer = new Properties();
+        retryConsumer.put(ConsumerConfig.MAX_POLL_INTERVAL_MS_CONFIG,
+                String.valueOf(retryMaxPollInterval.toMillis()));
+
+        return container(topic, topic, concurrency,
+                new KafkaRequestListener(targetSystemId, stage, handling, jsonMapper), retryConsumer);
+    }
+
+    private void createTopics(String targetSystemId, int partitions) {
+        List<NewTopic> topics = new ArrayList<>(RequestTopicDefinitions.forTarget(targetSystemId, partitions,
+                topicReplicas));
+        requesters.requesterIdsOf(targetSystemId).forEach(requesterId ->
+                topics.add(RequestTopicDefinitions.request(targetSystemId, requesterId, partitions, topicReplicas)));
+        kafkaAdmin.createOrModifyTopics(topics.toArray(NewTopic[]::new));
+    }
+
+    private void growIfNeeded(ManagedPolicy policy, TargetContainers target) {
+        String targetSystemId = policy.targetSystemId();
+        int required = policy.limits().concurrencyLimit();
+        if (required <= target.concurrency) {
+            return;
+        }
+
+        createTopics(targetSystemId, required);
+        int previous = target.concurrency;
+        target.concurrency = required;
+
+        RetryStage[] stages = RetryStage.values();
+        for (int i = 0; i < stages.length; i++) {
+            replace(target, target.retries.get(i), target.withRetry(i, retryContainer(targetSystemId, stages[i], required)));
+        }
+        ConcurrentMessageListenerContainer<String, String> request = target.request;
+        target.request = requestContainer(targetSystemId, target.requestTopics, required);
+        replace(target, request, target.request);
+
+        log.info("읽기 스레드 수를 늘려 요청 읽기를 다시 띄웁니다 : {} ({} -> {})", targetSystemId, previous, required);
+    }
+
+    private void replace(TargetContainers target,
+                         ConcurrentMessageListenerContainer<String, String> previous,
+                         ConcurrentMessageListenerContainer<String, String> next) {
+        if (previous != null && previous.isRunning()) {
+            previous.stop(() -> startReplacement(target, next));
+        } else {
+            startReplacement(target, next);
+        }
+    }
+
+    private void createTopics(Requester requester) {
+        List<NewTopic> topics = new ArrayList<>();
+        topics.add(RequestTopicDefinitions.result(requester.requesterId(), topicReplicas));
+        requester.targetSystemIds().stream()
+                .filter(targets::containsKey)
+                .forEach(targetSystemId -> topics.add(RequestTopicDefinitions.request(targetSystemId,
+                        requester.requesterId(), policies.read(targetSystemId).concurrencyLimit(), topicReplicas)));
+        kafkaAdmin.createOrModifyTopics(topics.toArray(NewTopic[]::new));
+    }
+
+    private List<String> requestTopicsOf(String targetSystemId) {
+        return requesters.enabledRequesterIdsOf(targetSystemId).stream()
+                .map(requesterId -> RequestTopics.of(targetSystemId, requesterId))
+                .toList();
+    }
+
+    private ConcurrentMessageListenerContainer<String, String> requestContainer(
+            String targetSystemId, List<String> topics, int concurrency) {
+        if (topics.isEmpty()) {
+            return null;
+        }
+        return container(topics.toArray(String[]::new), requestGroupId, concurrency,
+                new KafkaRequestListener(targetSystemId, null, handling, jsonMapper), null);
+    }
+
+    private void refreshRequestContainer(String targetSystemId, TargetContainers target) {
+        List<String> topics = requestTopicsOf(targetSystemId);
+        if (topics.equals(target.requestTopics)) {
+            return;
+        }
+
+        ConcurrentMessageListenerContainer<String, String> previous = target.request;
+        ConcurrentMessageListenerContainer<String, String> next =
+                requestContainer(targetSystemId, topics, target.concurrency);
+        target.requestTopics = topics;
+        target.request = next;
+        log.info("요청 토픽 읽기를 다시 띄웁니다 : {} {}", targetSystemId, topics);
+
+        replace(target, previous, next);
+    }
+
+    private synchronized void startReplacement(TargetContainers target,
+                                               ConcurrentMessageListenerContainer<String, String> next) {
+        if (next != null && target.all().contains(next) && running && target.enabled) {
+            target.startOne(next);
+        }
     }
 
     private void registerGauges(String targetSystemId, TargetContainers target) {
         Gauge.builder("flow.control.intake.consumers", () -> target.concurrency)
                 .tag("target", targetSystemId)
                 .register(meterRegistry);
-        Gauge.builder("flow.control.intake.redeploy.required",
-                        () -> policies.read(targetSystemId).concurrencyLimit() > target.concurrency ? 1 : 0)
-                .tag("target", targetSystemId)
-                .register(meterRegistry);
-    }
-
-    private void warnIfRedeployRequired(ManagedPolicy policy, TargetContainers target) {
-        int required = policy.limits().concurrencyLimit();
-
-        if (required <= target.concurrency) {
-            warnedVersions.remove(policy.targetSystemId());
-            return;
-        }
-
-        Long warned = warnedVersions.put(policy.targetSystemId(), policy.version());
-        if (warned == null || warned != policy.version()) {
-            log.warn("concurrency 가 읽기 스레드 수를 넘었습니다. 재배포해야 올린 한도가 모두 반영됩니다 : {} (필요 {}, 지금 {})",
-                    policy.targetSystemId(), required, target.concurrency);
-        }
     }
 
     private ConcurrentMessageListenerContainer<String, String> container(
             String topic, String groupId, int concurrency, KafkaRequestListener listener, Properties consumerOverrides) {
-        ContainerProperties properties = new ContainerProperties(topic);
+        return container(new String[]{topic}, groupId, concurrency, listener, consumerOverrides);
+    }
+
+    private ConcurrentMessageListenerContainer<String, String> container(
+            String[] topics, String groupId, int concurrency, KafkaRequestListener listener,
+            Properties consumerOverrides) {
+        ContainerProperties properties = new ContainerProperties(topics);
         properties.setGroupId(groupId);
         properties.setAckMode(ContainerProperties.AckMode.RECORD);
         properties.setMessageListener(listener);
@@ -240,7 +349,7 @@ public class KafkaRequestIntakeContainers implements SmartLifecycle, PolicyChang
         ConcurrentMessageListenerContainer<String, String> container =
                 new ConcurrentMessageListenerContainer<>(consumerFactory, properties);
         container.setConcurrency(concurrency);
-        container.setBeanName("intake-" + topic);
+        container.setBeanName("intake-" + String.join(",", topics));
         container.setCommonErrorHandler(new DefaultErrorHandler(
                 new FixedBackOff(ERROR_BACKOFF.toMillis(), FixedBackOff.UNLIMITED_ATTEMPTS)));
 
@@ -248,27 +357,61 @@ public class KafkaRequestIntakeContainers implements SmartLifecycle, PolicyChang
     }
 
     private static final class TargetContainers {
-        private final List<ConcurrentMessageListenerContainer<String, String>> containers;
-        private final int concurrency;
+        private volatile List<ConcurrentMessageListenerContainer<String, String>> retries;
+        private volatile int concurrency;
+        private volatile ConcurrentMessageListenerContainer<String, String> request;
+        private volatile List<String> requestTopics = List.of();
         private volatile boolean enabled;
+        private volatile boolean paused;
 
-        private TargetContainers(List<ConcurrentMessageListenerContainer<String, String>> containers,
+        private TargetContainers(List<ConcurrentMessageListenerContainer<String, String>> retries,
                                  int concurrency, boolean enabled) {
-            this.containers = containers;
+            this.retries = retries;
             this.concurrency = concurrency;
             this.enabled = enabled;
         }
 
+        private ConcurrentMessageListenerContainer<String, String> withRetry(
+                int index, ConcurrentMessageListenerContainer<String, String> next) {
+            List<ConcurrentMessageListenerContainer<String, String>> replaced = new ArrayList<>(retries);
+            replaced.set(index, next);
+            retries = List.copyOf(replaced);
+            return next;
+        }
+
+        private List<ConcurrentMessageListenerContainer<String, String>> all() {
+            List<ConcurrentMessageListenerContainer<String, String>> all = new ArrayList<>(retries);
+            ConcurrentMessageListenerContainer<String, String> current = request;
+            if (current != null) {
+                all.add(current);
+            }
+            return all;
+        }
+
         private void start() {
-            containers.forEach(container -> {
-                if (!container.isRunning()) {
-                    container.start();
-                }
-            });
+            retries.forEach(this::startOne);
+            startRequest();
+        }
+
+        private void startRequest() {
+            ConcurrentMessageListenerContainer<String, String> current = request;
+            if (current != null) {
+                startOne(current);
+            }
+        }
+
+        private void startOne(ConcurrentMessageListenerContainer<String, String> container) {
+            if (container.isRunning()) {
+                return;
+            }
+            if (paused && !container.isPauseRequested()) {
+                container.pause();
+            }
+            container.start();
         }
 
         private void stop() {
-            containers.forEach(container -> {
+            all().forEach(container -> {
                 if (container.isRunning()) {
                     container.stop();
                 }
@@ -276,7 +419,8 @@ public class KafkaRequestIntakeContainers implements SmartLifecycle, PolicyChang
         }
 
         private void pause() {
-            containers.forEach(container -> {
+            paused = true;
+            all().forEach(container -> {
                 if (!container.isPauseRequested()) {
                     container.pause();
                 }
@@ -284,7 +428,8 @@ public class KafkaRequestIntakeContainers implements SmartLifecycle, PolicyChang
         }
 
         private void resume() {
-            containers.forEach(container -> {
+            paused = false;
+            all().forEach(container -> {
                 if (container.isPauseRequested()) {
                     container.resume();
                 }
@@ -292,7 +437,7 @@ public class KafkaRequestIntakeContainers implements SmartLifecycle, PolicyChang
         }
 
         private void stopInBackground() {
-            containers.forEach(container -> {
+            all().forEach(container -> {
                 if (container.isRunning()) {
                     container.stop(() -> { });
                 }
