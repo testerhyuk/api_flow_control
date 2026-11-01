@@ -6,7 +6,6 @@ import com.hyuk.flow_control.application.port.out.TargetSystemRateLimiter;
 import com.hyuk.flow_control.config.ControlProperties;
 import com.hyuk.flow_control.config.HealthProperties;
 import com.hyuk.flow_control.config.LimitAdjustmentProperties;
-import com.hyuk.flow_control.config.MaintenanceProperties;
 import com.hyuk.flow_control.domain.health.HealthGrade;
 import com.hyuk.flow_control.domain.health.HealthMode;
 import com.hyuk.flow_control.domain.health.HealthSnapshot;
@@ -216,12 +215,13 @@ class TargetSystemLimitAdjusterTest {
     }
 
     @Test
-    @DisplayName("점검이 끝나면 직전 rate 와 최대치의 절반 중 작은 값에서 다시 시작한다")
-    void lowersRateAfterMaintenance() {
+    @DisplayName("점검이 끝나면 점검 전 rate 와 상관없이 바닥 rate 에서 다시 시작한다")
+    void startsFromFloorAfterMaintenance() {
         TargetSystemLimitAdjuster adjuster = adjuster(50);
+        assertThat(adjuster.rateOf(TARGET_A)).isEqualTo(95.0);
 
         adjuster.onMaintenanceEnded(TARGET_A);
-        assertThat(adjuster.rateOf(TARGET_A)).isEqualTo(47.5);
+        assertThat(adjuster.rateOf(TARGET_A)).isEqualTo(5.0);
 
         when(evaluator.snapshotOf(TARGET_A)).thenReturn(snapshot(HealthState.CRITICAL, 100));
         adjuster.adjust(TARGET_A);
@@ -552,7 +552,7 @@ class TargetSystemLimitAdjusterTest {
 
         return new TargetSystemLimitAdjuster(evaluator, policyReader, rateLimiter, semaphore, sharedRates,
                 baselines, maintenance, metrics, adjustmentProperties, healthProperties,
-                new MaintenanceProperties(Duration.ofSeconds(30), 0.5), new ControlProperties(mode));
+                new ControlProperties(mode));
     }
 
     private static HealthSnapshot snapshot(HealthState state, int newSamples) {

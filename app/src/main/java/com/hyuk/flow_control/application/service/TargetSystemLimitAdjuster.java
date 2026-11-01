@@ -9,7 +9,6 @@ import com.hyuk.flow_control.application.port.out.TargetSystemRateLimiter;
 import com.hyuk.flow_control.config.ControlProperties;
 import com.hyuk.flow_control.config.HealthProperties;
 import com.hyuk.flow_control.config.LimitAdjustmentProperties;
-import com.hyuk.flow_control.config.MaintenanceProperties;
 import com.hyuk.flow_control.domain.health.HealthMode;
 import com.hyuk.flow_control.domain.health.HealthSnapshot;
 import com.hyuk.flow_control.domain.health.HealthState;
@@ -45,7 +44,6 @@ public class TargetSystemLimitAdjuster implements PolicyChangeListener {
     private final MaintenanceMonitor maintenance;
     private final RateAdjustmentRule rule;
     private final ControlMode controlMode;
-    private final double resumeRateRatio;
     private final Map<String, Double> rates = new ConcurrentHashMap<>();
     private final Map<String, Double> appliedRates = new ConcurrentHashMap<>();
     private final Map<String, Integer> servers = new ConcurrentHashMap<>();
@@ -64,7 +62,6 @@ public class TargetSystemLimitAdjuster implements PolicyChangeListener {
             FlowControlMetrics metrics,
             LimitAdjustmentProperties adjustmentProperties,
             HealthProperties healthProperties,
-            MaintenanceProperties maintenanceProperties,
             ControlProperties controlProperties) {
         this.evaluator = evaluator;
         this.policyReader = policyReader;
@@ -76,7 +73,6 @@ public class TargetSystemLimitAdjuster implements PolicyChangeListener {
         this.metrics = metrics;
         this.rule = ruleOf(adjustmentProperties, healthProperties);
         this.controlMode = controlProperties.controlMode();
-        this.resumeRateRatio = maintenanceProperties.resumeRateRatio();
 
         policyReader.readAll().forEach(this::register);
 
@@ -120,10 +116,10 @@ public class TargetSystemLimitAdjuster implements PolicyChangeListener {
         }
 
         TargetSystemPolicy policy = policyReader.read(targetSystemId);
-        double resumed = rule.bounded(Math.min(rateOf(targetSystemId), policy.effectiveRate() * resumeRateRatio), policy);
+        double resumed = rule.floor(policy);
         rates.put(targetSystemId, resumed);
         samplesSinceChange.put(targetSystemId, 0);
-        log.info("점검이 끝나 rate 를 낮춰 다시 시작합니다 : {} {}", targetSystemId, resumed);
+        log.info("점검이 끝나 바닥 rate 에서 다시 시작합니다 : {} {}", targetSystemId, resumed);
     }
 
     public void adjustAll() {
