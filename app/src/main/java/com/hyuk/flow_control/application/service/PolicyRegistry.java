@@ -11,13 +11,15 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
+import org.springframework.util.ClassUtils;
 
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.function.Consumer;
 
 @Component
 public class PolicyRegistry implements TargetSystemPolicyReader {
@@ -28,6 +30,7 @@ public class PolicyRegistry implements TargetSystemPolicyReader {
     private final FlowControlMetrics metrics;
     private final Map<String, ManagedPolicy> current = new ConcurrentHashMap<>();
     private final Map<String, Long> reportedInvalidVersions = new ConcurrentHashMap<>();
+    private final Map<String, Map<PolicyChangeListener, Change>> failedChanges = new HashMap<>();
 
     public PolicyRegistry(PolicyRepository repository,
                           ObjectProvider<PolicyChangeListener> listeners,
@@ -78,21 +81,24 @@ public class PolicyRegistry implements TargetSystemPolicyReader {
     }
 
     public synchronized void refresh() {
+        Set<String> notified = new HashSet<>();
         List<LoadedPolicy> loaded;
         try {
             loaded = repository.loadAll();
         } catch (RuntimeException e) {
             metrics.recordPolicyRefreshFailure();
             log.warn("정책을 다시 읽지 못했습니다. 마지막으로 읽은 정책을 계속 씁니다", e);
+            retryFailed(notified);
             return;
         }
 
         for (LoadedPolicy policy : loaded) {
             switch (policy) {
-                case LoadedPolicy.Valid valid -> apply(valid.policy());
+                case LoadedPolicy.Valid valid -> apply(valid.policy(), notified);
                 case LoadedPolicy.Invalid invalid -> reportInvalid(invalid, current.containsKey(invalid.targetSystemId()));
             }
         }
+        retryFailed(notified);
     }
 
     private static void warnIfNoMaintenanceCode(ManagedPolicy policy) {
@@ -102,7 +108,7 @@ public class PolicyRegistry implements TargetSystemPolicyReader {
         }
     }
 
-    private void apply(ManagedPolicy policy) {
+    private void apply(ManagedPolicy policy, Set<String> notified) {
         String targetSystemId = policy.targetSystemId();
         ManagedPolicy before = current.get(targetSystemId);
         reportedInvalidVersions.remove(targetSystemId);
@@ -111,7 +117,8 @@ public class PolicyRegistry implements TargetSystemPolicyReader {
             current.put(targetSystemId, policy);
             log.info("대상 시스템 정책을 추가했습니다 : {} 버전 {}", targetSystemId, policy.version());
             warnIfNoMaintenanceCode(policy);
-            notifyEach(listener -> listener.onPolicyAdded(policy), targetSystemId);
+            notified.add(targetSystemId);
+            notifyEach(targetSystemId, new Change.Added(policy));
             return;
         }
 
@@ -122,7 +129,8 @@ public class PolicyRegistry implements TargetSystemPolicyReader {
         current.put(targetSystemId, policy);
         log.info("대상 시스템 정책을 바꿨습니다 : {} 버전 {} -> {}", targetSystemId, before.version(), policy.version());
         warnIfNoMaintenanceCode(policy);
-        notifyEach(listener -> listener.onPolicyChanged(before, policy), targetSystemId);
+        notified.add(targetSystemId);
+        notifyEach(targetSystemId, new Change.Changed(before, policy));
     }
 
     private void reportInvalid(LoadedPolicy.Invalid invalid, boolean keepingLast) {
@@ -141,13 +149,76 @@ public class PolicyRegistry implements TargetSystemPolicyReader {
         }
     }
 
-    private void notifyEach(Consumer<PolicyChangeListener> action, String targetSystemId) {
+    private void notifyEach(String targetSystemId, Change change) {
+        Map<PolicyChangeListener, Change> failed = failedChanges.getOrDefault(targetSystemId, Map.of());
         listeners.orderedStream().forEach(listener -> {
-            try {
-                action.accept(listener);
-            } catch (RuntimeException e) {
-                log.error("정책 변경을 반영하지 못했습니다 : {} {}", targetSystemId, listener.getClass().getSimpleName(), e);
-            }
+            Change last = failed.get(listener);
+            deliver(targetSystemId, listener, last == null ? change : last.mergedWith(change), false);
         });
+    }
+
+    private void retryFailed(Set<String> notified) {
+        List.copyOf(failedChanges.keySet()).stream()
+                .filter(targetSystemId -> !notified.contains(targetSystemId))
+                .forEach(targetSystemId -> listeners.orderedStream().forEach(listener -> {
+                    Change failed = failedChanges.getOrDefault(targetSystemId, Map.of()).get(listener);
+                    if (failed != null) {
+                        deliver(targetSystemId, listener, failed, true);
+                    }
+                }));
+    }
+
+    private void deliver(String targetSystemId, PolicyChangeListener listener, Change change, boolean retry) {
+        String name = ClassUtils.getUserClass(listener).getSimpleName();
+        try {
+            change.deliverTo(listener);
+        } catch (RuntimeException e) {
+            failedChanges.computeIfAbsent(targetSystemId, id -> new HashMap<>()).put(listener, change);
+            metrics.recordPolicyApplyFailure(targetSystemId, name);
+            if (!retry) {
+                log.error("정책 변경을 반영하지 못했습니다. 다음 읽기 때 다시 알립니다 : {} {} 버전 {}",
+                        targetSystemId, name, change.version(), e);
+            }
+            return;
+        }
+
+        Map<PolicyChangeListener, Change> failed = failedChanges.get(targetSystemId);
+        if (failed != null && failed.remove(listener) != null && failed.isEmpty()) {
+            failedChanges.remove(targetSystemId);
+        }
+        if (retry) {
+            log.info("정책 변경을 다시 알려서 반영했습니다 : {} {} 버전 {}", targetSystemId, name, change.version());
+        }
+    }
+
+    private sealed interface Change {
+        void deliverTo(PolicyChangeListener listener);
+
+        ManagedPolicy latest();
+
+        default long version() {
+            return latest().version();
+        }
+
+        default Change mergedWith(Change next) {
+            return switch (this) {
+                case Added added -> new Added(next.latest());
+                case Changed changed -> new Changed(changed.before(), next.latest());
+            };
+        }
+
+        record Added(ManagedPolicy latest) implements Change {
+            @Override
+            public void deliverTo(PolicyChangeListener listener) {
+                listener.onPolicyAdded(latest);
+            }
+        }
+
+        record Changed(ManagedPolicy before, ManagedPolicy latest) implements Change {
+            @Override
+            public void deliverTo(PolicyChangeListener listener) {
+                listener.onPolicyChanged(before, latest);
+            }
+        }
     }
 }

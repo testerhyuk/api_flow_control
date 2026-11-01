@@ -128,6 +128,15 @@ public class MicrometerFlowControlMetrics implements FlowControlMetrics {
     }
 
     @Override
+    public void recordPolicyApplyFailure(String targetSystemId, String listener) {
+        Counter.builder("flow.control.policy.apply.failures")
+                .tag("target", targetSystemId)
+                .tag("listener", listener)
+                .register(registry)
+                .increment();
+    }
+
+    @Override
     public void recordDryRunObserved(String targetSystemId) {
         dryRunCounter("flow.control.dryrun.observed", targetSystemId).register(registry).increment();
     }

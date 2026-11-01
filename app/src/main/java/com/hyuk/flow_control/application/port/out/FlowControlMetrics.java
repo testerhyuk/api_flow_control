@@ -34,6 +34,8 @@ public interface FlowControlMetrics {
 
     void recordInvalidPolicy(String targetSystemId);
 
+    void recordPolicyApplyFailure(String targetSystemId, String listener);
+
     void recordDryRunObserved(String targetSystemId);
 
     void recordDryRunBlockedBySemaphore(String targetSystemId);

@@ -24,6 +24,7 @@ import java.util.stream.Stream;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
@@ -177,6 +178,60 @@ class PolicyRegistryTest {
         registry.refresh();
 
         verify(second).onPolicyChanged(A_V1, v2);
+    }
+
+    @Test
+    @DisplayName("반영에 실패한 곳에만 다음 읽기 때 같은 변경을 다시 알리고, 성공하면 더 알리지 않는다")
+    void retriesOnlyFailedListener() {
+        when(repository.loadAll()).thenReturn(List.of(new LoadedPolicy.Valid(A_V1)));
+        PolicyRegistry registry = new PolicyRegistry(repository, listeners, metrics);
+        ManagedPolicy v2 = A_V1.withVersion(2);
+        doThrow(new IllegalStateException("boom")).doNothing().when(first).onPolicyChanged(A_V1, v2);
+        when(repository.loadAll()).thenReturn(List.of(new LoadedPolicy.Valid(v2)));
+
+        registry.refresh();
+        registry.refresh();
+        registry.refresh();
+
+        verify(first, times(2)).onPolicyChanged(A_V1, v2);
+        verify(second, times(1)).onPolicyChanged(A_V1, v2);
+        verify(metrics, times(1)).recordPolicyApplyFailure(eq("target-a"), any());
+    }
+
+    @Test
+    @DisplayName("다시 알리기 전에 새 버전이 오면 마지막으로 성공한 버전에서 최신 버전으로 한 번에 알린다")
+    void mergesFailedChangeWithNewVersion() {
+        when(repository.loadAll()).thenReturn(List.of(new LoadedPolicy.Valid(A_V1)));
+        PolicyRegistry registry = new PolicyRegistry(repository, listeners, metrics);
+        ManagedPolicy v2 = A_V1.withVersion(2);
+        ManagedPolicy v3 = A_V1.withVersion(3);
+        doThrow(new IllegalStateException("boom")).when(first).onPolicyChanged(A_V1, v2);
+
+        when(repository.loadAll()).thenReturn(List.of(new LoadedPolicy.Valid(v2)));
+        registry.refresh();
+        when(repository.loadAll()).thenReturn(List.of(new LoadedPolicy.Valid(v3)));
+        registry.refresh();
+        registry.refresh();
+
+        verify(first).onPolicyChanged(A_V1, v3);
+        verify(first, never()).onPolicyChanged(v2, v3);
+        verify(second).onPolicyChanged(v2, v3);
+    }
+
+    @Test
+    @DisplayName("추가 알림에 실패하면 DB 를 못 읽은 회차에도 다시 추가 알림을 보낸다")
+    void retriesAddedEvenWhenDatabaseFails() {
+        when(repository.loadAll()).thenReturn(List.of());
+        PolicyRegistry registry = new PolicyRegistry(repository, listeners, metrics);
+        doThrow(new IllegalStateException("boom")).doNothing().when(second).onPolicyAdded(A_V1);
+
+        when(repository.loadAll()).thenReturn(List.of(new LoadedPolicy.Valid(A_V1)));
+        registry.refresh();
+        when(repository.loadAll()).thenThrow(new IllegalStateException("db down"));
+        registry.refresh();
+
+        verify(first, times(1)).onPolicyAdded(A_V1);
+        verify(second, times(2)).onPolicyAdded(A_V1);
     }
 
     @Test
