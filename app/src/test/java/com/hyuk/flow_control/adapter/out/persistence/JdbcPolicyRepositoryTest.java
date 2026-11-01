@@ -4,6 +4,7 @@ import com.hyuk.flow_control.domain.maintenance.MaintenanceSchedule;
 import com.hyuk.flow_control.domain.maintenance.OneTimeMaintenance;
 import com.hyuk.flow_control.domain.maintenance.RecurringMaintenance;
 import com.hyuk.flow_control.domain.policy.ChangeNote;
+import com.hyuk.flow_control.domain.policy.ConnectionSettings;
 import com.hyuk.flow_control.domain.policy.LoadedPolicy;
 import com.hyuk.flow_control.domain.policy.ManagedPolicy;
 import com.hyuk.flow_control.domain.policy.PolicyAlreadyExistsException;
@@ -21,6 +22,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 import javax.sql.DataSource;
 import java.time.DayOfWeek;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -60,6 +62,7 @@ class JdbcPolicyRepositoryTest {
         assertThat(targetA.limits().concurrencyLimit()).isEqualTo(15);
         assertThat(targetA.response().resultField()).isEqualTo("/resultCode");
         assertThat(targetA.maintenance()).isEqualTo(MaintenanceSchedule.none());
+        assertThat(targetA.connection().path()).isEqualTo("/call");
         assertThat(repository.history("target-a")).hasSize(1);
     }
 
@@ -75,6 +78,18 @@ class JdbcPolicyRepositoryTest {
         assertThat(history).hasSize(1);
         assertThat(history.getFirst().note()).isEqualTo(NOTE);
         assertThat(history.getFirst().changedAt()).isEqualTo(AT);
+    }
+
+    @Test
+    @DisplayName("path 를 바꾼 정책도 그대로 저장하고 읽는다")
+    void storesPath() {
+        ManagedPolicy policy = Policies.withConnection(Policies.policy("target-d"), new ConnectionSettings(
+                "http://localhost:9001", "/api/v1/payments", Duration.ofSeconds(1), Duration.ofSeconds(3)));
+
+        repository.insert(policy, NOTE, AT);
+
+        assertThat(repository.load("target-d")).contains(new LoadedPolicy.Valid(policy));
+        assertThat(repository.history("target-d").getFirst().policy()).isEqualTo(policy);
     }
 
     @Test

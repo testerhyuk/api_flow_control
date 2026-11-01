@@ -66,7 +66,7 @@ public class TargetSystemConnections implements PolicyChangeListener {
         });
     }
 
-    public record Connection(RestClient restClient, HttpClient httpClient, ResponseRules rules) {
+    public record Connection(RestClient restClient, HttpClient httpClient, String path, ResponseRules rules) {
 
         static Connection open(ManagedPolicy policy) {
             ConnectionSettings settings = policy.connection();
@@ -85,11 +85,11 @@ public class TargetSystemConnections implements PolicyChangeListener {
                     .defaultHeader(HttpHeaders.ACCEPT, MediaType.APPLICATION_JSON_VALUE)
                     .build();
 
-            return new Connection(restClient, httpClient, new ResponseRules(policy.response()));
+            return new Connection(restClient, httpClient, settings.path(), new ResponseRules(policy.response()));
         }
 
         Connection withRules(ResponseRules newRules) {
-            return new Connection(restClient, httpClient, newRules);
+            return new Connection(restClient, httpClient, path, newRules);
         }
     }
 }

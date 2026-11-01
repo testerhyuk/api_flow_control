@@ -274,6 +274,18 @@ class HttpTargetSystemClientTest {
     }
 
     @Test
+    @DisplayName("정책의 path 로 보낸다")
+    void sendsToPolicyPath() {
+        respond(200, null);
+        client = clientFor(new ConnectionSettings("http://127.0.0.1:" + server.getAddress().getPort(),
+                "/api/v1/payments", CONNECT_TIMEOUT, READ_TIMEOUT));
+
+        client.call(REQUEST);
+
+        assertThat(receivedPath).isEqualTo("/api/v1/payments");
+    }
+
+    @Test
     @DisplayName("응답 시간을 잰다")
     void measuresLatency() {
         respond(200, null);
@@ -416,7 +428,10 @@ class HttpTargetSystemClientTest {
     }
 
     private static HttpTargetSystemClient clientFor(String url, Duration connectTimeout, Duration readTimeout) {
-        ConnectionSettings connection = new ConnectionSettings(url, connectTimeout, readTimeout);
+        return clientFor(new ConnectionSettings(url, connectTimeout, readTimeout));
+    }
+
+    private static HttpTargetSystemClient clientFor(ConnectionSettings connection) {
         TargetSystemPolicy limits = new TargetSystemPolicy(100, Duration.ofMillis(100), 0.95, Duration.ofMillis(10));
         PolicyRegistry policies = mock(PolicyRegistry.class);
         when(policies.policies()).thenReturn(List.of(

@@ -42,7 +42,7 @@ public class HttpTargetSystemClient implements TargetSystemClient {
 
         try {
             ResponseEntity<String> response = restClient.post()
-                    .uri("/call")
+                    .uri(connection.path())
                     .header(REQUEST_ID_HEADER, request.requestId())
                     .body(request.payload())
                     .retrieve()

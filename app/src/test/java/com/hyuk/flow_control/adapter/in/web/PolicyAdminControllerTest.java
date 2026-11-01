@@ -115,7 +115,28 @@ class PolicyAdminControllerTest {
         verify(management).create(eq("target-d"), content.capture(), eq(new ChangeNote("hyuk", "새 기관")));
         assertThat(content.getValue().limits().maxTps()).isEqualTo(80);
         assertThat(content.getValue().connection().readTimeout()).isEqualTo(Duration.ofSeconds(3));
+        assertThat(content.getValue().connection().path()).isEqualTo("/call");
         assertThat(content.getValue().response().resultField()).isEqualTo("/resultCode");
+    }
+
+    @Test
+    @DisplayName("path 를 보내면 그 path 로 넘기고, / 로 시작하지 않으면 400 이다")
+    void createsWithPath() throws Exception {
+        when(management.create(eq("target-d"), any(), any())).thenAnswer(invocation ->
+                ((PolicyContent) invocation.getArgument(1)).toPolicy("target-d", 1));
+        String withPath = POLICY_JSON.replace("\"url\": \"http://localhost:9001\",",
+                "\"url\": \"http://localhost:9001\", \"path\": \"/api/v1/payments\",");
+
+        mockMvc.perform(post("/admin/policies").contentType(MediaType.APPLICATION_JSON).content("""
+                        {"targetSystemId": "target-d", "policy": %s, "changedBy": "hyuk", "reason": "새 기관"}
+                        """.formatted(withPath)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.policy.connection.path").value("/api/v1/payments"));
+
+        mockMvc.perform(post("/admin/policies").contentType(MediaType.APPLICATION_JSON).content("""
+                        {"targetSystemId": "target-d", "policy": %s, "changedBy": "hyuk", "reason": "새 기관"}
+                        """.formatted(withPath.replace("/api/v1/payments", "api/v1/payments"))))
+                .andExpect(status().isBadRequest());
     }
 
     @Test

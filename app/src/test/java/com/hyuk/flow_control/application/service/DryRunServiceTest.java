@@ -88,6 +88,17 @@ class DryRunServiceTest {
     }
 
     @Test
+    @DisplayName("path 를 바꾸는 새 정책은 dry-run 할 수 없다")
+    void rejectsPathChange() {
+        ConnectionSettings current = Policies.CONNECTION;
+        PolicyContent content = new PolicyContent(true,
+                new ConnectionSettings(current.url(), "/api/v1/payments", current.connectTimeout(), current.readTimeout()),
+                NEW_LIMITS, Policies.STATUS_RULES);
+
+        assertThatThrownBy(() -> service.start(TARGET, content, 3, NOTE)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     @DisplayName("enabled 를 바꾸는 새 정책은 dry-run 할 수 없다")
     void rejectsEnabledChange() {
         PolicyContent content = new PolicyContent(false, Policies.CONNECTION, NEW_LIMITS, Policies.STATUS_RULES);

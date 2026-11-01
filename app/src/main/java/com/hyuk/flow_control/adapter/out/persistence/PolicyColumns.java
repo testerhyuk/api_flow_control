@@ -30,18 +30,18 @@ final class PolicyColumns {
     };
 
     static final String NAMES = """
-            target_system_id, enabled, url, connect_timeout_ms, read_timeout_ms,
+            target_system_id, enabled, url, path, connect_timeout_ms, read_timeout_ms,
             max_tps, baseline_rtt_ms, safety_margin, burst_window_ms,
             status_codes, result_field, result_codes, maintenance""";
 
     static final String VALUES = """
-            :targetSystemId, :enabled, :url, :connectTimeoutMs, :readTimeoutMs,
+            :targetSystemId, :enabled, :url, :path, :connectTimeoutMs, :readTimeoutMs,
             :maxTps, :baselineRttMs, :safetyMargin, :burstWindowMs,
             cast(:statusCodes as jsonb), :resultField, cast(:resultCodes as jsonb),
             cast(:maintenance as jsonb)""";
 
     static final String ASSIGNMENTS = """
-            enabled = :enabled, url = :url,
+            enabled = :enabled, url = :url, path = :path,
             connect_timeout_ms = :connectTimeoutMs, read_timeout_ms = :readTimeoutMs,
             max_tps = :maxTps, baseline_rtt_ms = :baselineRttMs, safety_margin = :safetyMargin,
             burst_window_ms = :burstWindowMs,
@@ -62,6 +62,7 @@ final class PolicyColumns {
                 .param("targetSystemId", policy.targetSystemId())
                 .param("enabled", policy.enabled())
                 .param("url", policy.connection().url())
+                .param("path", policy.connection().path())
                 .param("connectTimeoutMs", policy.connection().connectTimeout().toMillis())
                 .param("readTimeoutMs", policy.connection().readTimeout().toMillis())
                 .param("maxTps", policy.limits().maxTps())
@@ -81,6 +82,7 @@ final class PolicyColumns {
                 rs.getBoolean("enabled"),
                 new ConnectionSettings(
                         rs.getString("url"),
+                        rs.getString("path"),
                         Duration.ofMillis(rs.getLong("connect_timeout_ms")),
                         Duration.ofMillis(rs.getLong("read_timeout_ms"))),
                 new TargetSystemPolicy(
