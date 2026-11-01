@@ -5,9 +5,11 @@ import com.hyuk.flow_control.application.port.in.RequestIntakeUseCase;
 import com.hyuk.flow_control.application.port.out.FailedRequestPublisher;
 import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
 import com.hyuk.flow_control.application.port.out.ResultPublisher;
+import com.hyuk.flow_control.config.ControlProperties;
 import com.hyuk.flow_control.config.IntakeProperties;
 import com.hyuk.flow_control.domain.expiry.ExpiryPoint;
 import com.hyuk.flow_control.domain.expiry.RequestTtl;
+import com.hyuk.flow_control.domain.limit.ControlMode;
 import com.hyuk.flow_control.domain.request.IntakeResult;
 import com.hyuk.flow_control.domain.request.OutboundRequest;
 import com.hyuk.flow_control.domain.request.OutboundResult;
@@ -36,18 +38,21 @@ public class RequestHandlingService implements RequestHandlingUseCase {
     private final ResultPublisher results;
     private final FlowControlMetrics metrics;
     private final RequestTtl ttl;
+    private final boolean maintenanceAware;
 
     public RequestHandlingService(
             RequestIntakeUseCase intake,
             FailedRequestPublisher publisher,
             ResultPublisher results,
             FlowControlMetrics metrics,
-            IntakeProperties intakeProperties) {
+            IntakeProperties intakeProperties,
+            ControlProperties controlProperties) {
         this.intake = intake;
         this.publisher = publisher;
         this.results = results;
         this.metrics = metrics;
         this.ttl = new RequestTtl(intakeProperties.requestTtl());
+        this.maintenanceAware = controlProperties.controlMode() == ControlMode.ADAPTIVE;
     }
 
     @Override
@@ -120,7 +125,7 @@ public class RequestHandlingService implements RequestHandlingUseCase {
 
     private HandlingOutcome retry(OutboundRequest request, DeliveryContext failed, OutboundResult result) {
         OutcomeKind kind = result.kind();
-        Optional<RetryStage> next = RetryStage.firstAfter(failed.stage(), minimumDelay(result.retryAfter()));
+        Optional<RetryStage> next = RetryStage.firstAfter(failed.stage(), minimumDelayOf(result));
 
         if (next.isEmpty()) {
             return deadLetter(request, failed, DeadLetterReason.RETRY_EXHAUSTED, result, null);
@@ -170,6 +175,13 @@ public class RequestHandlingService implements RequestHandlingUseCase {
             return;
         }
         results.publish(context.requesterId(), result);
+    }
+
+    private Duration minimumDelayOf(OutboundResult result) {
+        if (maintenanceAware && result.kind() == OutcomeKind.UNDER_MAINTENANCE) {
+            return Duration.ZERO;
+        }
+        return minimumDelay(result.retryAfter());
     }
 
     private static Duration minimumDelay(Instant retryAfter) {

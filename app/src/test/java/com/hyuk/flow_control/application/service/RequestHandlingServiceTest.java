@@ -4,8 +4,10 @@ import com.hyuk.flow_control.application.port.in.RequestIntakeUseCase;
 import com.hyuk.flow_control.application.port.out.FailedRequestPublisher;
 import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
 import com.hyuk.flow_control.application.port.out.ResultPublisher;
+import com.hyuk.flow_control.config.ControlProperties;
 import com.hyuk.flow_control.config.IntakeProperties;
 import com.hyuk.flow_control.domain.expiry.ExpiryPoint;
+import com.hyuk.flow_control.domain.limit.ControlMode;
 import com.hyuk.flow_control.domain.request.IntakeResult;
 import com.hyuk.flow_control.domain.request.OutboundRequest;
 import com.hyuk.flow_control.domain.request.OutboundResult;
@@ -59,8 +61,12 @@ class RequestHandlingServiceTest {
         publisher = mock(FailedRequestPublisher.class);
         results = mock(ResultPublisher.class);
         metrics = mock(FlowControlMetrics.class);
-        service = new RequestHandlingService(intake, publisher, results, metrics,
-                new IntakeProperties(TTL, Duration.ofSeconds(5)));
+        service = serviceIn(ControlMode.ADAPTIVE);
+    }
+
+    private RequestHandlingService serviceIn(ControlMode mode) {
+        return new RequestHandlingService(intake, publisher, results, metrics,
+                new IntakeProperties(TTL, Duration.ofSeconds(5)), new ControlProperties(mode));
     }
 
     private void verifyOnlyAgeRecorded() {
@@ -174,9 +180,29 @@ class RequestHandlingServiceTest {
     @DisplayName("알려 준 대기 시간이 마지막 단계보다 길면 재시도 소진으로 DLQ 에 보낸다")
     void retryAfterLongerThanLastStage() {
         when(intake.process(eq(REQUEST), any())).thenReturn(new IntakeResult.Called(
+                result(OutcomeKind.TOO_MANY_REQUESTS, Instant.now().plusSeconds(3600))));
+
+        assertThat(service.handle(REQUEST, FIRST))
+                .isEqualTo(new HandlingOutcome.DeadLettered(DeadLetterReason.RETRY_EXHAUSTED));
+    }
+
+    @Test
+    @DisplayName("자동 조절에서 점검 응답이면 Retry-After 를 보지 않고 다음 단계로 보낸다")
+    void maintenanceIgnoresRetryAfter() {
+        when(intake.process(eq(REQUEST), any())).thenReturn(new IntakeResult.Called(
                 result(OutcomeKind.UNDER_MAINTENANCE, Instant.now().plusSeconds(3600))));
 
         assertThat(service.handle(REQUEST, FIRST))
+                .isEqualTo(new HandlingOutcome.RetryScheduled(RetryStage.FIRST, OutcomeKind.UNDER_MAINTENANCE));
+    }
+
+    @Test
+    @DisplayName("자동 조절이 아니면 점검 응답도 Retry-After 로 단계를 고른다")
+    void maintenanceUsesRetryAfterOutsideAdaptive() {
+        when(intake.process(eq(REQUEST), any())).thenReturn(new IntakeResult.Called(
+                result(OutcomeKind.UNDER_MAINTENANCE, Instant.now().plusSeconds(3600))));
+
+        assertThat(serviceIn(ControlMode.FIXED).handle(REQUEST, FIRST))
                 .isEqualTo(new HandlingOutcome.DeadLettered(DeadLetterReason.RETRY_EXHAUSTED));
     }
 
