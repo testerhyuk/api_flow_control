@@ -176,7 +176,7 @@ public class TargetSystemLimitAdjuster implements PolicyChangeListener {
         double before = appliedRateOf(targetSystemId);
         Duration baselineRtt = controlMode == ControlMode.FIXED
                 ? policy.baselineRtt()
-                : baselines.effective(targetSystemId);
+                : baselines.effective(targetSystemId).mean();
         int concurrency = policy.concurrencyLimitAt(shared.rate(), baselineRtt);
 
         rateLimiter.changeRate(targetSystemId, shared.bucketRate());

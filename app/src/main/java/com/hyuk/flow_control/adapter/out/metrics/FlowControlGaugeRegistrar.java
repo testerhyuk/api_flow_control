@@ -99,12 +99,10 @@ public class FlowControlGaugeRegistrar implements PolicyChangeListener {
                 () -> secondsOrNaN(evaluator.snapshotOf(targetSystemId).p95()));
         register("flow.control.health.samples", targetSystemId, null,
                 () -> evaluator.snapshotOf(targetSystemId).sampleCount());
-        register("flow.control.health.baseline.rtt", targetSystemId, "seconds",
-                () -> toSeconds(baselines.effective(targetSystemId)));
         register("flow.control.health.latency.threshold", targetSystemId, "seconds",
-                () -> toSeconds(thresholds.latencyThreshold(baselines.effective(targetSystemId))));
+                () -> toSeconds(thresholds.latencyThreshold(baselines.effective(targetSystemId).p95())));
         register("flow.control.health.latency.recovery.threshold", targetSystemId, "seconds",
-                () -> toSeconds(thresholds.recoveryLatencyThreshold(baselines.effective(targetSystemId))));
+                () -> toSeconds(thresholds.recoveryLatencyThreshold(baselines.effective(targetSystemId).p95())));
         register("flow.control.health.degraded.streak", targetSystemId, null,
                 () -> evaluator.snapshotOf(targetSystemId).degradedStreak());
         register("flow.control.health.window.span", targetSystemId, "seconds",
@@ -118,19 +116,11 @@ public class FlowControlGaugeRegistrar implements PolicyChangeListener {
                     .register(registry);
         }
 
-        register("flow.control.health.baseline.policy", targetSystemId, "seconds",
-                () -> toSeconds(policies.read(targetSystemId).baselineRtt()));
-        register("flow.control.health.baseline.learned", targetSystemId, "seconds",
-                () -> baselines.learned(targetSystemId).map(FlowControlGaugeRegistrar::toSeconds).orElse(Double.NaN));
         register("flow.control.health.baseline.samples", targetSystemId, null,
                 () -> baselines.sampleCount(targetSystemId));
 
-        for (BaselineEstimator.Bound bound : BaselineEstimator.Bound.values()) {
-            Gauge.builder("flow.control.health.baseline.clamped",
-                            () -> baselines.clampedBound(targetSystemId).filter(bound::equals).isPresent() ? 1 : 0)
-                    .tag("target", targetSystemId)
-                    .tag("bound", bound.label())
-                    .register(registry);
+        for (BaselineEstimator.Kind kind : BaselineEstimator.Kind.values()) {
+            registerBaseline(targetSystemId, kind);
         }
 
         for (MaintenanceSource source : MaintenanceSource.values()) {
@@ -179,6 +169,40 @@ public class FlowControlGaugeRegistrar implements PolicyChangeListener {
                 () -> dryRuns.concurrencyLimitOf(targetSystemId).map(Integer::doubleValue).orElse(Double.NaN));
         register("flow.control.dryrun.overlap", targetSystemId, "seconds",
                 () -> dryRuns.overlapOf(targetSystemId).map(FlowControlGaugeRegistrar::toSeconds).orElse(Double.NaN));
+    }
+
+    private void registerBaseline(String targetSystemId, BaselineEstimator.Kind kind) {
+        Gauge.builder("flow.control.health.baseline.rtt",
+                        () -> toSeconds(kind == BaselineEstimator.Kind.MEAN
+                                ? baselines.effective(targetSystemId).mean()
+                                : baselines.effective(targetSystemId).p95()))
+                .tag("target", targetSystemId)
+                .tag("kind", kind.label())
+                .baseUnit("seconds")
+                .register(registry);
+        Gauge.builder("flow.control.health.baseline.policy",
+                        () -> toSeconds(kind.policyValueOf(policies.read(targetSystemId))))
+                .tag("target", targetSystemId)
+                .tag("kind", kind.label())
+                .baseUnit("seconds")
+                .register(registry);
+        Gauge.builder("flow.control.health.baseline.learned",
+                        () -> baselines.learned(targetSystemId, kind)
+                                .map(FlowControlGaugeRegistrar::toSeconds)
+                                .orElse(Double.NaN))
+                .tag("target", targetSystemId)
+                .tag("kind", kind.label())
+                .baseUnit("seconds")
+                .register(registry);
+
+        for (BaselineEstimator.Bound bound : BaselineEstimator.Bound.values()) {
+            Gauge.builder("flow.control.health.baseline.clamped",
+                            () -> baselines.clampedBound(targetSystemId, kind).filter(bound::equals).isPresent() ? 1 : 0)
+                    .tag("target", targetSystemId)
+                    .tag("kind", kind.label())
+                    .tag("bound", bound.label())
+                    .register(registry);
+        }
     }
 
     private void register(String name, String targetSystemId, String baseUnit, Supplier<Number> value) {

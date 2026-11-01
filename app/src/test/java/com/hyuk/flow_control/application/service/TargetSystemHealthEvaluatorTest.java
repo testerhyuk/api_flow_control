@@ -60,8 +60,8 @@ class TargetSystemHealthEvaluatorTest {
         when(policyReader.readAll()).thenReturn(Map.of(TARGET_A, policyA, TARGET_B, policyB));
         when(policyReader.read(TARGET_A)).thenReturn(policyA);
         when(policyReader.read(TARGET_B)).thenReturn(policyB);
-        when(baselines.effective(TARGET_A)).thenReturn(BASELINE_A);
-        when(baselines.effective(TARGET_B)).thenReturn(BASELINE_B);
+        when(baselines.effective(TARGET_A)).thenReturn(new BaselineEstimator.Baselines(BASELINE_A, BASELINE_A));
+        when(baselines.effective(TARGET_B)).thenReturn(new BaselineEstimator.Baselines(BASELINE_B, BASELINE_B));
         when(recorder.window(TARGET_A)).thenReturn(OutcomeWindow.empty());
         when(recorder.window(TARGET_B)).thenReturn(OutcomeWindow.empty());
         when(recorder.drainEvents(any())).thenReturn(Set.of());
@@ -206,16 +206,17 @@ class TargetSystemHealthEvaluatorTest {
     }
 
     @Test
-    @DisplayName("판정 기준 latency 는 정책 값이 아니라 지금 쓰는 baseline 으로 계산한다")
+    @DisplayName("판정 기준 latency 는 정책 값이 아니라 지금 쓰는 p95 baseline 으로 계산한다")
     void usesEffectiveBaseline() {
-        when(baselines.effective(TARGET_A)).thenReturn(Duration.ofMillis(150));
+        when(baselines.effective(TARGET_A))
+                .thenReturn(new BaselineEstimator.Baselines(Duration.ofMillis(100), Duration.ofMillis(150)));
         when(recorder.window(TARGET_A)).thenReturn(successes(100, Duration.ofMillis(250)));
         TargetSystemHealthEvaluator evaluator = plainEvaluator();
 
         evaluator.evaluate(TARGET_A);
 
         assertThat(evaluator.snapshotOf(TARGET_A).state()).isEqualTo(HealthState.HEALTHY);
-        assertThat(evaluator.snapshotOf(TARGET_A).baselineRtt()).isEqualTo(Duration.ofMillis(150));
+        assertThat(evaluator.snapshotOf(TARGET_A).baselineP95()).isEqualTo(Duration.ofMillis(150));
     }
 
     @Test
@@ -236,7 +237,7 @@ class TargetSystemHealthEvaluatorTest {
         assertThat(snapshot.evaluatedAt()).isBetween(before, after);
         assertThat(snapshot.mode()).isEqualTo(HealthMode.ADAPTIVE);
         assertThat(snapshot.windowSpan()).isEqualTo(Duration.ofMillis(800));
-        assertThat(snapshot.baselineRtt()).isEqualTo(BASELINE_A);
+        assertThat(snapshot.baselineP95()).isEqualTo(BASELINE_A);
     }
 
     @Test

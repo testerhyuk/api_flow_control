@@ -203,10 +203,26 @@ class ShadowEvaluationTest {
             evaluation.complete(response(OutcomeKind.SUCCESS, 200, 150), NOW);
         }
 
-        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1, Duration.ofMillis(100));
+        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1,
+                new BaselineEstimator.Baselines(Duration.ofMillis(100), Duration.ofMillis(100)));
 
         assertThat(evaluation.state()).isEqualTo(HealthState.HEALTHY);
         assertThat(evaluation.concurrencyLimit()).isEqualTo(10);
+    }
+
+    @Test
+    @DisplayName("상태는 p95 baseline 으로 판정하고, 동시 처리 한도는 평균 baseline 으로 계산한다")
+    void usesP95ForJudgmentAndMeanForConcurrency() {
+        ShadowEvaluation evaluation = evaluation(limits(100, 50), 95.0);
+        for (int i = 0; i < 10; i++) {
+            evaluation.complete(response(OutcomeKind.SUCCESS, 200, 150), NOW);
+        }
+
+        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1,
+                new BaselineEstimator.Baselines(Duration.ofMillis(50), Duration.ofMillis(100)));
+
+        assertThat(evaluation.state()).isEqualTo(HealthState.HEALTHY);
+        assertThat(evaluation.concurrencyLimit()).isEqualTo(5);
     }
 
     @Test
@@ -381,11 +397,11 @@ class ShadowEvaluationTest {
     private ShadowEvaluation evaluation(ManagedPolicy candidate, double actualRate, HealthStatus actualStatus) {
         DryRun dryRun = new DryRun(candidate, 1, NOW, NOW.plus(Duration.ofMinutes(30)), new ChangeNote("hyuk", "test"));
         return new ShadowEvaluation(dryRun, BASE, actualStatus, actualRate, judge, RULES, RATE_RULE,
-                Duration.ofSeconds(10), 10, candidate.limits().baselineRtt(), metrics, NOW, 0L);
+                Duration.ofSeconds(10), 10, BaselineEstimator.Baselines.of(candidate.limits()), metrics, NOW, 0L);
     }
 
-    private static Duration baselineOf(ShadowEvaluation evaluation) {
-        return evaluation.dryRun().candidate().limits().baselineRtt();
+    private static BaselineEstimator.Baselines baselineOf(ShadowEvaluation evaluation) {
+        return BaselineEstimator.Baselines.of(evaluation.dryRun().candidate().limits());
     }
 
     private static ManagedPolicy limits(int maxTps, long baselineMillis) {
@@ -393,7 +409,8 @@ class ShadowEvaluationTest {
     }
 
     private static TargetSystemPolicy limitsOf(int maxTps, long baselineMillis) {
-        return new TargetSystemPolicy(maxTps, Duration.ofMillis(baselineMillis), 0.95, Duration.ofMillis(10));
+        return new TargetSystemPolicy(maxTps, Duration.ofMillis(baselineMillis), Duration.ofMillis(baselineMillis), 0.95,
+                Duration.ofMillis(10));
     }
 
     private static ManagedPolicy candidateOf(TargetSystemPolicy limits) {

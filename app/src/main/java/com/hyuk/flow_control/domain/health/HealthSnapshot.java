@@ -12,7 +12,7 @@ public record HealthSnapshot(
         HealthMode mode,
         Duration windowSpan,
         int degradedStreak,
-        Duration baselineRtt
+        Duration baselineP95
 ) {
     public HealthSnapshot {
         if (state == null) {
@@ -42,6 +42,6 @@ public record HealthSnapshot(
 
     public HealthSnapshot withState(HealthState newState) {
         return new HealthSnapshot(newState, sampleCount, failureRate, p95, evaluatedAt, mode, windowSpan,
-                degradedStreak, baselineRtt);
+                degradedStreak, baselineP95);
     }
 }

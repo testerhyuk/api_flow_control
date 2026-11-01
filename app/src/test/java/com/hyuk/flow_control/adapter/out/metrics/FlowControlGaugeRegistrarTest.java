@@ -29,6 +29,8 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -59,9 +61,10 @@ class FlowControlGaugeRegistrarTest {
         HealthProperties healthProperties = new HealthProperties(
                 Duration.ofSeconds(10), Duration.ofSeconds(1), 50, 0.10, 0.50, 2.0, Duration.ofSeconds(30));
         when(evaluator.rules()).thenReturn(healthProperties.rules());
-        when(baselines.effective(TARGET)).thenAnswer(invocation -> policies.read(TARGET).baselineRtt());
-        when(baselines.learned(TARGET)).thenReturn(Optional.empty());
-        when(baselines.clampedBound(TARGET)).thenReturn(Optional.empty());
+        when(baselines.effective(TARGET))
+                .thenAnswer(invocation -> BaselineEstimator.Baselines.of(policies.read(TARGET)));
+        when(baselines.learned(eq(TARGET), any())).thenReturn(Optional.empty());
+        when(baselines.clampedBound(eq(TARGET), any())).thenReturn(Optional.empty());
 
         ManagedPolicy policy = Policies.withLimits(Policies.policy(TARGET, 3), POLICY);
         when(policies.readAll()).thenReturn(Map.of(TARGET, POLICY));
@@ -103,30 +106,36 @@ class FlowControlGaugeRegistrarTest {
     }
 
     @Test
-    @DisplayName("latency 복귀 기준선은 지금 쓰는 baseline 에 복귀 배수를 곱한 값이다")
+    @DisplayName("latency 기준선은 지금 쓰는 p95 baseline 에 배수를 곱한 값이고, baseline 은 평균과 p95 를 따로 낸다")
     void exposesRecoveryThreshold() {
-        when(baselines.effective(TARGET)).thenReturn(Duration.ofMillis(120));
+        when(baselines.effective(TARGET))
+                .thenReturn(new BaselineEstimator.Baselines(Duration.ofMillis(80), Duration.ofMillis(120)));
 
-        assertThat(gauge("flow.control.health.baseline.rtt")).isCloseTo(0.12, within(1e-9));
+        assertThat(baselineGauge("flow.control.health.baseline.rtt", "mean")).isCloseTo(0.08, within(1e-9));
+        assertThat(baselineGauge("flow.control.health.baseline.rtt", "p95")).isCloseTo(0.12, within(1e-9));
         assertThat(gauge("flow.control.health.latency.threshold")).isCloseTo(0.24, within(1e-9));
         assertThat(gauge("flow.control.health.latency.recovery.threshold")).isCloseTo(0.18, within(1e-9));
-        assertThat(gauge("flow.control.health.baseline.policy")).isCloseTo(0.1, within(1e-9));
+        assertThat(baselineGauge("flow.control.health.baseline.policy", "mean")).isCloseTo(0.1, within(1e-9));
+        assertThat(baselineGauge("flow.control.health.baseline.policy", "p95")).isCloseTo(0.2, within(1e-9));
     }
 
     @Test
     @DisplayName("배운 baseline 이 없으면 값이 없음(NaN)이고, 있으면 그 값과 한계에 닿았는지를 낸다")
     void exposesLearnedBaseline() {
-        assertThat(gauge("flow.control.health.baseline.learned")).isNaN();
-        assertThat(clamped("upper")).isZero();
+        assertThat(baselineGauge("flow.control.health.baseline.learned", "p95")).isNaN();
+        assertThat(clamped("p95", "upper")).isZero();
 
-        when(baselines.learned(TARGET)).thenReturn(Optional.of(Duration.ofMillis(400)));
-        when(baselines.clampedBound(TARGET)).thenReturn(Optional.of(BaselineEstimator.Bound.UPPER));
+        when(baselines.learned(TARGET, BaselineEstimator.Kind.P95)).thenReturn(Optional.of(Duration.ofMillis(400)));
+        when(baselines.clampedBound(TARGET, BaselineEstimator.Kind.P95))
+                .thenReturn(Optional.of(BaselineEstimator.Bound.UPPER));
         when(baselines.sampleCount(TARGET)).thenReturn(150);
 
-        assertThat(gauge("flow.control.health.baseline.learned")).isCloseTo(0.4, within(1e-9));
+        assertThat(baselineGauge("flow.control.health.baseline.learned", "p95")).isCloseTo(0.4, within(1e-9));
+        assertThat(baselineGauge("flow.control.health.baseline.learned", "mean")).isNaN();
         assertThat(gauge("flow.control.health.baseline.samples")).isEqualTo(150.0);
-        assertThat(clamped("upper")).isEqualTo(1.0);
-        assertThat(clamped("lower")).isZero();
+        assertThat(clamped("p95", "upper")).isEqualTo(1.0);
+        assertThat(clamped("p95", "lower")).isZero();
+        assertThat(clamped("mean", "upper")).isZero();
     }
 
     @Test
@@ -144,9 +153,14 @@ class FlowControlGaugeRegistrarTest {
         return registry.get("flow.control.health.mode").tags("target", TARGET, "mode", mode).gauge().value();
     }
 
-    private double clamped(String bound) {
-        return registry.get("flow.control.health.baseline.clamped").tags("target", TARGET, "bound", bound)
+    private double clamped(String kind, String bound) {
+        return registry.get("flow.control.health.baseline.clamped")
+                .tags("target", TARGET, "kind", kind, "bound", bound)
                 .gauge().value();
+    }
+
+    private double baselineGauge(String name, String kind) {
+        return registry.get(name).tags("target", TARGET, "kind", kind).gauge().value();
     }
 
     @Test
@@ -191,10 +205,11 @@ class FlowControlGaugeRegistrarTest {
     }
 
     @Test
-    @DisplayName("기준선으로 baseline-rtt, DEGRADED latency 기준, 처음 rate 를 낸다")
+    @DisplayName("기준선으로 평소 응답 시간(평균, p95), DEGRADED latency 기준, 처음 rate 를 낸다")
     void exposesBaselines() {
-        assertThat(gauge("flow.control.health.baseline.rtt")).isCloseTo(0.1, within(1e-9));
-        assertThat(gauge("flow.control.health.latency.threshold")).isCloseTo(0.2, within(1e-9));
+        assertThat(baselineGauge("flow.control.health.baseline.rtt", "mean")).isCloseTo(0.1, within(1e-9));
+        assertThat(baselineGauge("flow.control.health.baseline.rtt", "p95")).isCloseTo(0.2, within(1e-9));
+        assertThat(gauge("flow.control.health.latency.threshold")).isCloseTo(0.4, within(1e-9));
         assertThat(gauge("flow.control.limit.rate.max")).isCloseTo(95.0, within(1e-9));
     }
 
@@ -214,7 +229,8 @@ class FlowControlGaugeRegistrarTest {
     @DisplayName("시간 지표는 초 단위로 등록한다")
     void secondsUnit() {
         assertThat(registry.get("flow.control.health.p95").gauge().getId().getBaseUnit()).isEqualTo("seconds");
-        assertThat(registry.get("flow.control.health.baseline.rtt").gauge().getId().getBaseUnit()).isEqualTo("seconds");
+        assertThat(registry.get("flow.control.health.baseline.rtt").tags("kind", "mean").gauge().getId().getBaseUnit())
+                .isEqualTo("seconds");
     }
 
     @Test
@@ -229,7 +245,7 @@ class FlowControlGaugeRegistrarTest {
         when(policies.read(TARGET)).thenReturn(
                 new TargetSystemPolicy(50, Duration.ofMillis(200), 0.9, Duration.ofMillis(10)));
 
-        assertThat(gauge("flow.control.health.baseline.rtt")).isCloseTo(0.2, within(1e-9));
+        assertThat(baselineGauge("flow.control.health.baseline.rtt", "mean")).isCloseTo(0.2, within(1e-9));
         assertThat(gauge("flow.control.limit.rate.max")).isCloseTo(45.0, within(1e-9));
     }
 

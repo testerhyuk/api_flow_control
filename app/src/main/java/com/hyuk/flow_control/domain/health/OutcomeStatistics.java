@@ -66,8 +66,14 @@ public record OutcomeStatistics(
         }
 
         List<Duration> sorted = latencies.stream().sorted().toList();
-        int index = (int) Math.ceil(sorted.size() * 0.95) - 1;
 
-        return sorted.get(index);
+        return sorted.get(percentile95Index(sorted.size()));
+    }
+
+    public static int percentile95Index(int size) {
+        if (size <= 0) {
+            throw new IllegalArgumentException("size 는 0보다 커야 합니다");
+        }
+        return (int) Math.ceil(size * 0.95) - 1;
     }
 }

@@ -1246,7 +1246,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "flow_control_health_baseline_rtt_seconds{target=\"$target\"}",
+          "expr": "flow_control_health_baseline_rtt_seconds{target=\"$target\",kind=\"p95\"}",
           "legendFormat": "쓰는 baseline",
           "refId": "B"
         },
@@ -1255,7 +1255,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "flow_control_health_baseline_policy_seconds{target=\"$target\"}",
+          "expr": "flow_control_health_baseline_policy_seconds{target=\"$target\",kind=\"p95\"}",
           "legendFormat": "정책 baseline",
           "refId": "C"
         },
@@ -1264,7 +1264,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "flow_control_health_baseline_learned_seconds{target=\"$target\"}",
+          "expr": "flow_control_health_baseline_learned_seconds{target=\"$target\",kind=\"p95\"}",
           "legendFormat": "배운 baseline",
           "refId": "D"
         },
@@ -1526,7 +1526,7 @@
             "uid": "prometheus"
           },
           "expr": "flow_control_health_baseline_clamped{target=\"$target\",bound=\"upper\"}",
-          "legendFormat": "위쪽 한계에 닿음",
+          "legendFormat": "{{kind}} 위쪽 한계에 닿음",
           "refId": "C"
         },
         {
@@ -1535,7 +1535,7 @@
             "uid": "prometheus"
           },
           "expr": "flow_control_health_baseline_clamped{target=\"$target\",bound=\"lower\"}",
-          "legendFormat": "아래쪽 한계에 닿음",
+          "legendFormat": "{{kind}} 아래쪽 한계에 닿음",
           "refId": "D"
         }
       ],

@@ -74,9 +74,9 @@ class TargetSystemLimitAdjusterTest {
         when(policyReader.read(TARGET_A)).thenReturn(POLICY_A);
         when(policyReader.read(LOW)).thenReturn(POLICY_LOW);
         when(policyReader.read(TINY)).thenReturn(POLICY_TINY);
-        when(baselines.effective(TARGET_A)).thenReturn(POLICY_A.baselineRtt());
-        when(baselines.effective(LOW)).thenReturn(POLICY_LOW.baselineRtt());
-        when(baselines.effective(TINY)).thenReturn(POLICY_TINY.baselineRtt());
+        when(baselines.effective(TARGET_A)).thenReturn(meanBaseline(POLICY_A.baselineRtt()));
+        when(baselines.effective(LOW)).thenReturn(meanBaseline(POLICY_LOW.baselineRtt()));
+        when(baselines.effective(TINY)).thenReturn(meanBaseline(POLICY_TINY.baselineRtt()));
         semaphore = spy(new TargetSystemSemaphore(policyReader));
         when(evaluator.snapshotOf(TARGET_A)).thenReturn(HealthSnapshot.initial());
         when(evaluator.snapshotOf(LOW)).thenReturn(HealthSnapshot.initial());
@@ -120,7 +120,7 @@ class TargetSystemLimitAdjusterTest {
     @DisplayName("concurrency 는 지금 쓰는 baseline 으로 계산한다")
     void usesEffectiveBaselineForConcurrency() {
         when(evaluator.snapshotOf(TARGET_A)).thenReturn(snapshot(HealthState.HEALTHY, 100));
-        when(baselines.effective(TARGET_A)).thenReturn(Duration.ofMillis(200));
+        when(baselines.effective(TARGET_A)).thenReturn(meanBaseline(Duration.ofMillis(200)));
         TargetSystemLimitAdjuster adjuster = adjuster(50);
 
         adjuster.adjust(TARGET_A);
@@ -132,7 +132,7 @@ class TargetSystemLimitAdjusterTest {
     @DisplayName("고정 한도에서는 상태가 나빠도 정책의 rate 와 정책 baseline 으로 계산한 concurrency 를 그대로 쓴다")
     void fixedModeKeepsPolicyLimits() {
         when(evaluator.snapshotOf(TARGET_A)).thenReturn(snapshot(HealthState.CRITICAL, 100));
-        when(baselines.effective(TARGET_A)).thenReturn(Duration.ofMillis(200));
+        when(baselines.effective(TARGET_A)).thenReturn(meanBaseline(Duration.ofMillis(200)));
         TargetSystemLimitAdjuster adjuster = adjuster(50, ControlMode.FIXED);
 
         adjuster.adjust(TARGET_A);
@@ -497,5 +497,9 @@ class TargetSystemLimitAdjusterTest {
 
     private static HealthSnapshot lowTraffic(HealthState state) {
         return new HealthSnapshot(state, 3, 0.0, null, Instant.now(), HealthMode.LOW_TRAFFIC, null, 0, null);
+    }
+
+    private static BaselineEstimator.Baselines meanBaseline(Duration mean) {
+        return new BaselineEstimator.Baselines(mean, mean.multipliedBy(2));
     }
 }

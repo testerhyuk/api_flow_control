@@ -107,7 +107,7 @@ public class TargetSystemHealthEvaluator implements PolicyChangeListener {
         changeMode(targetSystemId, target, HealthMode.ADAPTIVE);
         HealthSnapshot last = target.snapshot;
         target.snapshot = new HealthSnapshot(HealthState.RECOVERING, last.sampleCount(), last.failureRate(), last.p95(),
-                Instant.now(), HealthMode.ADAPTIVE, last.windowSpan(), 0, last.baselineRtt());
+                Instant.now(), HealthMode.ADAPTIVE, last.windowSpan(), 0, last.baselineP95());
 
         recordTransition(targetSystemId, before, target.status);
     }
@@ -125,7 +125,7 @@ public class TargetSystemHealthEvaluator implements PolicyChangeListener {
 
         OutcomeWindow window = recorder.window(targetSystemId);
         OutcomeStatistics statistics = window.statistics();
-        Duration baselineRtt = baselines.effective(targetSystemId);
+        Duration baselineP95 = baselines.effective(targetSystemId).p95();
         Set<LowTrafficEvent> events = recorder.drainEvents(targetSystemId);
         HealthStatus current = target.status;
         boolean enough = statistics.sampleCount() >= minimumCalls;
@@ -149,7 +149,7 @@ public class TargetSystemHealthEvaluator implements PolicyChangeListener {
 
         HealthStatus next = target.mode == HealthMode.LOW_TRAFFIC
                 ? inLowTraffic(targetSystemId, target, current, events)
-                : judge(targetSystemId, current, statistics, baselineRtt);
+                : judge(targetSystemId, current, statistics, baselineP95);
 
         target.status = next;
         target.snapshot = new HealthSnapshot(
@@ -161,14 +161,14 @@ public class TargetSystemHealthEvaluator implements PolicyChangeListener {
                 target.mode,
                 window.span(),
                 next.degradedStreak(),
-                baselineRtt);
+                baselineP95);
 
         recordTransition(targetSystemId, current, next);
     }
 
     private HealthStatus judge(String targetSystemId, HealthStatus current, OutcomeStatistics statistics,
-                               Duration baselineRtt) {
-        HealthRules.Judgment judgment = rules.judge(current, statistics, baselineRtt,
+                               Duration baselineP95) {
+        HealthRules.Judgment judgment = rules.judge(current, statistics, baselineP95,
                 recorder.drainNewSamples(targetSystemId));
         judgment.suppressedBy().ifPresent(reason -> metrics.recordSuppressed(targetSystemId, reason));
         return judgment.next();

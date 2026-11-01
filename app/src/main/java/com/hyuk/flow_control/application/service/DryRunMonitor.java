@@ -207,8 +207,8 @@ public class DryRunMonitor {
         log.info("dry-run 을 시작했습니다 : {} 버전 {} 기준, {} 까지", targetSystemId, dryRun.baseVersion(), dryRun.expiresAt());
     }
 
-    private Duration candidateBaseline(DryRun dryRun) {
-        return baselines.effective(dryRun.targetSystemId(), dryRun.candidate().limits().baselineRtt());
+    private BaselineEstimator.Baselines candidateBaseline(DryRun dryRun) {
+        return baselines.effective(dryRun.targetSystemId(), dryRun.candidate().limits());
     }
 
     private void stop(String targetSystemId, String reason) {

@@ -52,7 +52,8 @@ class DryRunMonitorTest {
         when(adjuster.appliedRateOf(TARGET)).thenReturn(95.0);
         when(adjuster.serversOf(TARGET)).thenReturn(1);
         BaselineEstimator baselines = mock(BaselineEstimator.class);
-        when(baselines.effective(eq(TARGET), any(Duration.class))).thenAnswer(invocation -> invocation.getArgument(1));
+        when(baselines.effective(eq(TARGET), any(TargetSystemPolicy.class)))
+                .thenAnswer(invocation -> BaselineEstimator.Baselines.of(invocation.getArgument(1)));
 
         monitor = new DryRunMonitor(repository, policies, evaluator, adjuster, baselines,
                 mock(MaintenanceMonitor.class), mock(ResponseJudge.class),

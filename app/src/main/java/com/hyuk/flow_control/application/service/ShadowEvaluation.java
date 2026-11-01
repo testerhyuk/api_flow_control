@@ -66,7 +66,7 @@ class ShadowEvaluation {
 
     ShadowEvaluation(DryRun dryRun, ManagedPolicy base, HealthStatus actualStatus, double actualRate,
                      ResponseJudge judge, HealthRules rules, RateAdjustmentRule rateRule,
-                     Duration window, int maxSamples, Duration baselineRtt, FlowControlMetrics metrics,
+                     Duration window, int maxSamples, BaselineEstimator.Baselines baselines, FlowControlMetrics metrics,
                      Instant now, long nowNanos) {
         if (base.version() != dryRun.baseVersion()) {
             throw new IllegalArgumentException("dry-run 기준 버전과 지금 정책 버전이 다릅니다");
@@ -87,7 +87,7 @@ class ShadowEvaluation {
         TargetSystemPolicy limits = candidate.limits();
         this.status = actualStatus;
         this.rate = Math.min(actualRate, limits.effectiveRate());
-        this.concurrencyLimit = limits.concurrencyLimitAt(rate, baselineRtt);
+        this.concurrencyLimit = limits.concurrencyLimitAt(rate, baselines.mean());
         this.bucket = new CountingTokenBucket(rate, limits.burstCapacityAt(rate), nowNanos);
     }
 
@@ -149,11 +149,11 @@ class ShadowEvaluation {
         metrics.recordDryRunWaited(dryRun.targetSystemId());
     }
 
-    synchronized void evaluate(Instant now, long nowNanos, int servers, Duration baselineRtt) {
-        evaluate(now, nowNanos, servers, baselineRtt, false, false);
+    synchronized void evaluate(Instant now, long nowNanos, int servers, BaselineEstimator.Baselines baselines) {
+        evaluate(now, nowNanos, servers, baselines, false, false);
     }
 
-    synchronized void evaluate(Instant now, long nowNanos, int servers, Duration baselineRtt,
+    synchronized void evaluate(Instant now, long nowNanos, int servers, BaselineEstimator.Baselines baselines,
                                boolean underMaintenance, boolean actualLowTraffic) {
         Duration elapsed = Duration.between(lastEvaluatedAt, now);
         if (servers > 1) {
@@ -174,7 +174,7 @@ class ShadowEvaluation {
 
         OutcomeStatistics current = OutcomeWindow.latest(outcomes.descendingIterator(), maxSamples, since).statistics();
         HealthStatus before = status;
-        HealthStatus next = rules.judge(before, current, baselineRtt, samples).next();
+        HealthStatus next = rules.judge(before, current, baselines.p95(), samples).next();
 
         timeInState.merge(before.state(), Duration.between(lastEvaluatedAt, now), Duration::plus);
         lastEvaluatedAt = now;
@@ -188,7 +188,7 @@ class ShadowEvaluation {
         statistics = current;
 
         double nextRate = rateRule.next(rate, next.state(), current.sampleCount(), candidate.limits());
-        int nextConcurrency = candidate.limits().concurrencyLimitAt(nextRate, baselineRtt);
+        int nextConcurrency = candidate.limits().concurrencyLimitAt(nextRate, baselines.mean());
         if (nextRate != rate) {
             bucket.change(nextRate, candidate.limits().burstCapacityAt(nextRate), nowNanos);
         }

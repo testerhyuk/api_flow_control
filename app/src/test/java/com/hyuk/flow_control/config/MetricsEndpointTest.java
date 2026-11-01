@@ -56,7 +56,8 @@ class MetricsEndpointTest {
                 .contains("flow_control_health_failure_rate{target=\"target-a\"}")
                 .contains("flow_control_health_p95_seconds{target=\"target-a\"}")
                 .contains("flow_control_health_samples{target=\"target-a\"}")
-                .contains("flow_control_health_baseline_rtt_seconds{target=\"target-a\"}")
+                .contains("flow_control_health_baseline_rtt_seconds{kind=\"mean\",target=\"target-a\"}")
+                .contains("flow_control_health_baseline_rtt_seconds{kind=\"p95\",target=\"target-a\"}")
                 .contains("flow_control_health_latency_threshold_seconds{target=\"target-a\"}")
                 .contains("flow_control_limit_rate{target=\"target-a\"}")
                 .contains("flow_control_limit_rate_max{target=\"target-a\"}")
@@ -75,10 +76,10 @@ class MetricsEndpointTest {
                 .contains("flow_control_health_window_span_seconds{target=\"target-a\"}")
                 .contains("flow_control_health_degraded_streak{target=\"target-a\"}")
                 .contains("flow_control_health_latency_recovery_threshold_seconds{target=\"target-a\"}")
-                .contains("flow_control_health_baseline_policy_seconds{target=\"target-a\"}")
-                .contains("flow_control_health_baseline_learned_seconds{target=\"target-a\"} NaN")
+                .contains("flow_control_health_baseline_policy_seconds{kind=\"p95\",target=\"target-a\"}")
+                .contains("flow_control_health_baseline_learned_seconds{kind=\"p95\",target=\"target-a\"} NaN")
                 .contains("flow_control_health_baseline_samples{target=\"target-a\"}")
-                .contains("flow_control_health_baseline_clamped{bound=\"upper\",target=\"target-a\"} 0.0")
+                .contains("flow_control_health_baseline_clamped{bound=\"upper\",kind=\"mean\",target=\"target-a\"} 0.0")
                 .contains("flow_control_maintenance_active{source=\"schedule\",target=\"target-a\"} 0.0");
     }
 
