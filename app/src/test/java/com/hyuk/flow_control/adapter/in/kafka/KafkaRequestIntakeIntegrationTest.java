@@ -52,6 +52,7 @@ import static org.mockito.Mockito.when;
 @EmbeddedKafka
 @Import(TestcontainersConfiguration.class)
 class KafkaRequestIntakeIntegrationTest {
+    private static final String RESULTS = "flow-control.results.record-ingestor";
     private static final OutboundResult SUCCESS =
             new OutboundResult(OutcomeKind.SUCCESS, Duration.ofMillis(120), null, null, null, null);
 
@@ -105,6 +106,8 @@ class KafkaRequestIntakeIntegrationTest {
         send("flow-control.requests.target-b.record-ingestor", requestId, json(requestId, "target-b"));
 
         verify(outboundCall, timeout(15000)).send(argThat(r -> r != null && requestId.equals(r.requestId())));
+        ConsumerRecord<String, String> result = awaitRecord(RESULTS, requestId);
+        assertThat(result.value()).contains("\"outcome\":\"completed\"", "\"targetSystemId\":\"target-b\"");
     }
 
     @Test
@@ -152,6 +155,8 @@ class KafkaRequestIntakeIntegrationTest {
         assertThat(FailureHeaders.read(dead.headers(), FailureHeaders.ORIGIN))
                 .startsWith("flow-control.requests.target-b.record-ingestor-");
         assertThat(FailureHeaders.read(dead.headers(), FailureHeaders.REQUESTER)).isEqualTo("record-ingestor");
+        assertThat(awaitRecord(RESULTS, requestId).value())
+                .contains("\"outcome\":\"dead_lettered\"", "\"deadLetterReason\":\"dlq_kind\"");
     }
 
     @Test
@@ -167,6 +172,8 @@ class KafkaRequestIntakeIntegrationTest {
         assertThat(FailureHeaders.read(expired.headers(), FailureHeaders.EXPIRED_WHERE)).isEqualTo("intake");
         assertThat(FailureHeaders.read(expired.headers(), FailureHeaders.EXPIRY_REASON)).isEqualTo("ttl_exceeded");
         assertThat(FailureHeaders.read(expired.headers(), FailureHeaders.REQUESTER)).isEqualTo("record-ingestor");
+        assertThat(awaitRecord(RESULTS, requestId).value())
+                .contains("\"outcome\":\"expired\"", "\"expiredWhere\":\"intake\"");
         verify(outboundCall, never()).send(argThat(r -> r != null && requestId.equals(r.requestId())));
     }
 
@@ -208,6 +215,8 @@ class KafkaRequestIntakeIntegrationTest {
         ConsumerRecord<String, String> dead = awaitRecordWithValue("flow-control.dlq.target-c", marker);
         assertThat(FailureHeaders.read(dead.headers(), FailureHeaders.DEAD_LETTER_REASON)).isEqualTo("invalid_message");
         verify(outboundCall, never()).send(argThat(r -> r != null && marker.equals(r.requestId())));
+        assertThat(await(RESULTS, record -> record.value().contains(marker)).value())
+                .contains("\"deadLetterReason\":\"invalid_message\"", "\"rawMessage\":\"" + marker + "\"");
     }
 
     private static String uniqueId() {

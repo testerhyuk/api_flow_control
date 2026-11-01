@@ -3,12 +3,15 @@ package com.hyuk.flow_control.application.service;
 import com.hyuk.flow_control.application.port.in.RequestIntakeUseCase;
 import com.hyuk.flow_control.application.port.out.FailedRequestPublisher;
 import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
+import com.hyuk.flow_control.application.port.out.ResultPublisher;
 import com.hyuk.flow_control.config.IntakeProperties;
 import com.hyuk.flow_control.domain.expiry.ExpiryPoint;
 import com.hyuk.flow_control.domain.request.IntakeResult;
 import com.hyuk.flow_control.domain.request.OutboundRequest;
 import com.hyuk.flow_control.domain.request.OutboundResult;
 import com.hyuk.flow_control.domain.request.OutcomeKind;
+import com.hyuk.flow_control.domain.result.FinalOutcome;
+import com.hyuk.flow_control.domain.result.RequestResult;
 import com.hyuk.flow_control.domain.retry.DeadLetterReason;
 import com.hyuk.flow_control.domain.retry.DeliveryContext;
 import com.hyuk.flow_control.domain.retry.HandlingOutcome;
@@ -40,10 +43,13 @@ class RequestHandlingServiceTest {
     private static final String TARGET = "target-a";
     private static final OutboundRequest REQUEST = new OutboundRequest("req-1", TARGET, "{}", Instant.now());
     private static final DeliveryContext FIRST = DeliveryContext.first("flow-control.requests.target-a-0@7");
+    private static final DeliveryContext FROM_LOAN =
+            DeliveryContext.first("flow-control.requests.target-a.loan-0@7", "loan");
     private static final Duration TTL = Duration.ofMinutes(10);
 
     private RequestIntakeUseCase intake;
     private FailedRequestPublisher publisher;
+    private ResultPublisher results;
     private FlowControlMetrics metrics;
     private RequestHandlingService service;
 
@@ -51,8 +57,9 @@ class RequestHandlingServiceTest {
     void setUp() {
         intake = mock(RequestIntakeUseCase.class);
         publisher = mock(FailedRequestPublisher.class);
+        results = mock(ResultPublisher.class);
         metrics = mock(FlowControlMetrics.class);
-        service = new RequestHandlingService(intake, publisher, metrics,
+        service = new RequestHandlingService(intake, publisher, results, metrics,
                 new IntakeProperties(TTL, Duration.ofSeconds(5)));
     }
 
@@ -62,7 +69,7 @@ class RequestHandlingServiceTest {
     }
 
     @Test
-    @DisplayName("성공하면 끝내고 아무 데도 보내지 않는다")
+    @DisplayName("성공하면 끝내고 재시도·DLQ·만료 토픽에 보내지 않는다")
     void completesOnSuccess() {
         when(intake.process(eq(REQUEST), any())).thenReturn(new IntakeResult.Called(result(OutcomeKind.SUCCESS, null)));
 
@@ -84,7 +91,7 @@ class RequestHandlingServiceTest {
     }
 
     @Test
-    @DisplayName("BUSINESS_REJECTED 는 폐기하고 아무 데도 보내지 않는다")
+    @DisplayName("BUSINESS_REJECTED 는 폐기하고 재시도·DLQ·만료 토픽에 보내지 않는다")
     void discardsBusinessRejected() {
         when(intake.process(eq(REQUEST), any())).thenReturn(new IntakeResult.Called(result(OutcomeKind.BUSINESS_REJECTED, null)));
 
@@ -326,6 +333,116 @@ class RequestHandlingServiceTest {
 
         assertThat(service.handle(old, secondStage))
                 .isEqualTo(new HandlingOutcome.RetryScheduled(RetryStage.THIRD, OutcomeKind.TIMEOUT));
+    }
+
+    @Test
+    @DisplayName("성공하면 외부 서버 응답과 시도 횟수를 요청자의 결과로 보낸다")
+    void reportsCompleted() {
+        OutboundResult success = new OutboundResult(
+                OutcomeKind.SUCCESS, Duration.ofMillis(100), null, "{\"grade\":1}", 200, "0000");
+        when(intake.process(eq(REQUEST), any())).thenReturn(new IntakeResult.Called(success));
+        DeliveryContext retry = FROM_LOAN.afterFailure(Instant.now()).movedTo(RetryStage.FIRST);
+
+        service.handle(REQUEST, retry);
+
+        RequestResult sent = capturedResult("loan");
+        assertThat(sent.requestId()).isEqualTo("req-1");
+        assertThat(sent.targetSystemId()).isEqualTo(TARGET);
+        assertThat(sent.outcome()).isEqualTo(FinalOutcome.COMPLETED);
+        assertThat(sent.kind()).isEqualTo(OutcomeKind.SUCCESS);
+        assertThat(sent.statusCode()).isEqualTo(200);
+        assertThat(sent.resultCode()).isEqualTo("0000");
+        assertThat(sent.responseBody()).isEqualTo("{\"grade\":1}");
+        assertThat(sent.attempts()).isEqualTo(2);
+        assertThat(sent.finishedAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("폐기하면 폐기 결과를 보낸다")
+    void reportsDiscarded() {
+        when(intake.process(eq(REQUEST), any()))
+                .thenReturn(new IntakeResult.Called(result(OutcomeKind.BUSINESS_REJECTED, null)));
+
+        service.handle(REQUEST, FROM_LOAN);
+
+        RequestResult sent = capturedResult("loan");
+        assertThat(sent.outcome()).isEqualTo(FinalOutcome.DISCARDED);
+        assertThat(sent.kind()).isEqualTo(OutcomeKind.BUSINESS_REJECTED);
+        assertThat(sent.attempts()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("재시도로 넘길 때는 결과를 보내지 않는다")
+    void doesNotReportRetry() {
+        when(intake.process(eq(REQUEST), any())).thenReturn(new IntakeResult.Called(result(OutcomeKind.TIMEOUT, null)));
+
+        service.handle(REQUEST, FROM_LOAN);
+
+        verifyNoInteractions(results);
+    }
+
+    @Test
+    @DisplayName("재시도를 다 쓰면 실패 보관 이유와 마지막 응답을 결과로 보낸다")
+    void reportsDeadLettered() {
+        DeliveryContext lastStage = new DeliveryContext(RetryStage.FOURTH, 4, Instant.now(), Instant.now(), "o",
+                OutcomeKind.TIMEOUT, "loan");
+        OutboundResult failed = new OutboundResult(
+                OutcomeKind.SERVER_ERROR, Duration.ofMillis(100), null, "<html>503</html>", 503, null);
+        when(intake.process(eq(REQUEST), any())).thenReturn(new IntakeResult.Called(failed));
+
+        service.handle(REQUEST, lastStage);
+
+        RequestResult sent = capturedResult("loan");
+        assertThat(sent.outcome()).isEqualTo(FinalOutcome.DEAD_LETTERED);
+        assertThat(sent.deadLetterReason()).isEqualTo(DeadLetterReason.RETRY_EXHAUSTED);
+        assertThat(sent.kind()).isEqualTo(OutcomeKind.SERVER_ERROR);
+        assertThat(sent.statusCode()).isEqualTo(503);
+        assertThat(sent.attempts()).isEqualTo(5);
+    }
+
+    @Test
+    @DisplayName("꺼낸 순간 만료되면 호출 횟수는 그전까지의 횟수로 보낸다")
+    void reportsExpired() {
+        OutboundRequest old = new OutboundRequest("req-old", TARGET, "{}", Instant.now().minus(Duration.ofMinutes(11)));
+        DeliveryContext retry = new DeliveryContext(RetryStage.SECOND, 2, Instant.now(), Instant.now(), "o",
+                OutcomeKind.TIMEOUT, "loan");
+
+        service.handle(old, retry);
+
+        RequestResult sent = capturedResult("loan");
+        assertThat(sent.outcome()).isEqualTo(FinalOutcome.EXPIRED);
+        assertThat(sent.expiredWhere()).isEqualTo(ExpiryPoint.INTAKE);
+        assertThat(sent.kind()).isEqualTo(OutcomeKind.TIMEOUT);
+        assertThat(sent.attempts()).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("잘못된 메시지는 요청 ID 없이 원래 값을 담아 결과로 보낸다")
+    void reportsInvalidMessage() {
+        service.rejectInvalid(TARGET, "not-json", FROM_LOAN, "JSON 이 아닙니다");
+
+        RequestResult sent = capturedResult("loan");
+        assertThat(sent.requestId()).isNull();
+        assertThat(sent.outcome()).isEqualTo(FinalOutcome.DEAD_LETTERED);
+        assertThat(sent.deadLetterReason()).isEqualTo(DeadLetterReason.INVALID_MESSAGE);
+        assertThat(sent.rawMessage()).isEqualTo("not-json");
+        assertThat(sent.attempts()).isZero();
+    }
+
+    @Test
+    @DisplayName("요청자를 모르면 결과를 보내지 않고 처리는 그대로 한다")
+    void skipsResultWithoutRequester() {
+        when(intake.process(eq(REQUEST), any())).thenReturn(new IntakeResult.Called(result(OutcomeKind.INVALID_REQUEST, null)));
+
+        assertThat(service.handle(REQUEST, FIRST)).isEqualTo(new HandlingOutcome.DeadLettered(DeadLetterReason.DLQ_KIND));
+        verify(publisher).deadLetter(eq(REQUEST), any(), eq(DeadLetterReason.DLQ_KIND), any(), isNull());
+        verifyNoInteractions(results);
+    }
+
+    private RequestResult capturedResult(String requesterId) {
+        ArgumentCaptor<RequestResult> result = ArgumentCaptor.forClass(RequestResult.class);
+        verify(results).publish(eq(requesterId), result.capture());
+        return result.getValue();
     }
 
     private DeliveryContext capturedRetryContext(OutcomeKind kind) {
