@@ -5,14 +5,20 @@ import com.hyuk.flow_control.application.port.out.PolicyChangeListener;
 import com.hyuk.flow_control.application.port.out.PolicyRepository;
 import com.hyuk.flow_control.domain.policy.LoadedPolicy;
 import com.hyuk.flow_control.domain.policy.ManagedPolicy;
+import com.hyuk.flow_control.domain.policy.ResponseRuleSet;
+import com.hyuk.flow_control.domain.request.OutcomeKind;
 import com.hyuk.flow_control.support.Policies;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InOrder;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -27,9 +33,12 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+@ExtendWith(OutputCaptureExtension.class)
 class PolicyRegistryTest {
     private static final ManagedPolicy A_V1 = Policies.policy("target-a", 1);
     private static final ManagedPolicy B_V1 = Policies.policy("target-b", 1);
+    private static final ResponseRuleSet NO_MAINTENANCE_CODE =
+            new ResponseRuleSet(Map.of("2xx", OutcomeKind.SUCCESS, "5xx", OutcomeKind.SERVER_ERROR), null, null);
 
     private PolicyRepository repository;
     private PolicyChangeListener first;
@@ -121,6 +130,28 @@ class PolicyRegistryTest {
     }
 
     @Test
+    @DisplayName("점검 코드가 없는 정책은 처음 읽을 때, 추가될 때, 버전이 바뀔 때 한 번씩 경고를 남긴다")
+    void warnsWithoutMaintenanceCode(CapturedOutput output) {
+        ManagedPolicy noCodeV1 = Policies.withResponse(Policies.policy("target-c", 1), NO_MAINTENANCE_CODE);
+        ManagedPolicy noCodeV2 = Policies.withResponse(Policies.policy("target-c", 2), NO_MAINTENANCE_CODE);
+        ManagedPolicy noCodeD = Policies.withResponse(Policies.policy("target-d", 1), NO_MAINTENANCE_CODE);
+        when(repository.loadAll()).thenReturn(List.of(new LoadedPolicy.Valid(A_V1), new LoadedPolicy.Valid(noCodeV1)));
+        PolicyRegistry registry = new PolicyRegistry(repository, listeners, metrics);
+
+        registry.refresh();
+        assertThat(warningsIn(output, "target-c")).isEqualTo(1);
+
+        when(repository.loadAll()).thenReturn(List.of(new LoadedPolicy.Valid(A_V1), new LoadedPolicy.Valid(noCodeV2),
+                new LoadedPolicy.Valid(noCodeD)));
+        registry.refresh();
+        registry.refresh();
+
+        assertThat(warningsIn(output, "target-c")).isEqualTo(2);
+        assertThat(warningsIn(output, "target-d")).isEqualTo(1);
+        assertThat(warningsIn(output, "target-a")).isZero();
+    }
+
+    @Test
     @DisplayName("새로 생긴 대상은 추가하고 알린다")
     void addsNewTarget() {
         when(repository.loadAll()).thenReturn(List.of(new LoadedPolicy.Valid(A_V1)));
@@ -174,5 +205,11 @@ class PolicyRegistryTest {
         assertThat(registry.policyOf("target-a")).isEqualTo(A_V1);
         verify(metrics, times(1)).recordInvalidPolicy("target-a");
         verify(first, never()).onPolicyChanged(any(), any());
+    }
+
+    private static long warningsIn(CapturedOutput output, String targetSystemId) {
+        return output.getAll().lines()
+                .filter(line -> line.contains("점검(UNDER_MAINTENANCE) 코드가 없어서") && line.contains(targetSystemId + " 버전"))
+                .count();
     }
 }

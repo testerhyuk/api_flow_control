@@ -49,4 +49,9 @@ public record ResponseRuleSet(
         resultField = hasResultField ? resultField : null;
         resultCodes = hasResultCodes ? Map.copyOf(resultCodes) : Map.of();
     }
+
+    public boolean hasMaintenanceCode() {
+        return statusCodes.containsValue(OutcomeKind.UNDER_MAINTENANCE)
+                || resultCodes.containsValue(OutcomeKind.UNDER_MAINTENANCE);
+    }
 }

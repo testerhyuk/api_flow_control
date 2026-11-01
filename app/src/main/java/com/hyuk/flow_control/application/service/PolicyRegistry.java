@@ -38,7 +38,10 @@ public class PolicyRegistry implements TargetSystemPolicyReader {
 
         for (LoadedPolicy loaded : repository.loadAll()) {
             switch (loaded) {
-                case LoadedPolicy.Valid valid -> current.put(valid.targetSystemId(), valid.policy());
+                case LoadedPolicy.Valid valid -> {
+                    current.put(valid.targetSystemId(), valid.policy());
+                    warnIfNoMaintenanceCode(valid.policy());
+                }
                 case LoadedPolicy.Invalid invalid -> reportInvalid(invalid, false);
             }
         }
@@ -92,6 +95,13 @@ public class PolicyRegistry implements TargetSystemPolicyReader {
         }
     }
 
+    private static void warnIfNoMaintenanceCode(ManagedPolicy policy) {
+        if (!policy.response().hasMaintenanceCode()) {
+            log.warn("응답 규칙에 점검(UNDER_MAINTENANCE) 코드가 없어서 점검 응답을 알아채지 못합니다. 점검 일정으로만 점검을 압니다 : {} 버전 {}",
+                    policy.targetSystemId(), policy.version());
+        }
+    }
+
     private void apply(ManagedPolicy policy) {
         String targetSystemId = policy.targetSystemId();
         ManagedPolicy before = current.get(targetSystemId);
@@ -100,6 +110,7 @@ public class PolicyRegistry implements TargetSystemPolicyReader {
         if (before == null) {
             current.put(targetSystemId, policy);
             log.info("대상 시스템 정책을 추가했습니다 : {} 버전 {}", targetSystemId, policy.version());
+            warnIfNoMaintenanceCode(policy);
             notifyEach(listener -> listener.onPolicyAdded(policy), targetSystemId);
             return;
         }
@@ -110,6 +121,7 @@ public class PolicyRegistry implements TargetSystemPolicyReader {
 
         current.put(targetSystemId, policy);
         log.info("대상 시스템 정책을 바꿨습니다 : {} 버전 {} -> {}", targetSystemId, before.version(), policy.version());
+        warnIfNoMaintenanceCode(policy);
         notifyEach(listener -> listener.onPolicyChanged(before, policy), targetSystemId);
     }
 
