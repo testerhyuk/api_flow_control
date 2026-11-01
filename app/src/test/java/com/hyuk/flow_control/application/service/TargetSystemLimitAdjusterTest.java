@@ -279,17 +279,20 @@ class TargetSystemLimitAdjusterTest {
     }
 
     @Test
-    @DisplayName("CRITICAL 에서 DEGRADED 가 되어도 rate 를 올리지 않는다")
-    void doesNotRaiseOnDegradedAfterCritical() {
+    @DisplayName("CRITICAL 에서 DEGRADED 가 되면 건수가 충분할 때 recovery-step 만큼 올리고, 건수가 모자라면 그대로 둔다")
+    void raisesByStepOnDegradedAfterCritical() {
         when(evaluator.snapshotOf(TARGET_A)).thenReturn(
                 snapshot(HealthState.CRITICAL, 100),
-                snapshot(HealthState.DEGRADED, 100));
+                snapshot(HealthState.DEGRADED, 100),
+                snapshot(HealthState.DEGRADED, 10));
         TargetSystemLimitAdjuster adjuster = adjuster(50);
 
         adjuster.adjust(TARGET_A);
         adjuster.adjust(TARGET_A);
+        assertThat(adjuster.rateOf(TARGET_A)).isCloseTo(9.75, within(1e-9));
 
-        assertThat(adjuster.rateOf(TARGET_A)).isEqualTo(5.0);
+        adjuster.adjust(TARGET_A);
+        assertThat(adjuster.rateOf(TARGET_A)).isCloseTo(9.75, within(1e-9));
     }
 
     @Test

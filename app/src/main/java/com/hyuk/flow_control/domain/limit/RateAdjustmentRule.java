@@ -15,13 +15,20 @@ public record RateAdjustmentRule(
 
         double next = switch (state) {
             case CRITICAL -> floor;
-            case DEGRADED -> Math.min(current, effectiveRate * degradedRatio);
-            case RECOVERING, HEALTHY -> sampleCount >= minimumCalls
-                    ? Math.min(effectiveRate, current + effectiveRate * recoveryStep)
-                    : current;
+            case DEGRADED -> raised(current, sampleCount, effectiveRate, effectiveRate * degradedRatio);
+            case RECOVERING, HEALTHY -> raised(current, sampleCount, effectiveRate, effectiveRate);
         };
 
         return Math.min(effectiveRate, Math.max(floor, next));
+    }
+
+    private double raised(double current, int sampleCount, double effectiveRate, double ceiling) {
+        if (current >= ceiling) {
+            return ceiling;
+        }
+        return sampleCount >= minimumCalls
+                ? Math.min(ceiling, current + effectiveRate * recoveryStep)
+                : current;
     }
 
     public double floor(TargetSystemPolicy policy) {

@@ -28,9 +28,28 @@ class RateAdjustmentRuleTest {
     }
 
     @Test
-    @DisplayName("DEGRADED 인데 이미 더 낮으면 그대로 둔다")
-    void degradedKeepsLower() {
-        assertThat(RULE.next(20, HealthState.DEGRADED, 100, POLICY)).isEqualTo(20);
+    @DisplayName("DEGRADED 인데 더 낮으면 판정할 만큼 호출이 있을 때 최대치의 5% 씩 올린다")
+    void degradedRaisesFromBelow() {
+        assertThat(RULE.next(5, HealthState.DEGRADED, 50, POLICY)).isCloseTo(9.75, within(1e-9));
+    }
+
+    @Test
+    @DisplayName("DEGRADED 에서 올려도 최대치의 절반을 넘지 않는다")
+    void degradedRaisesUpToHalf() {
+        assertThat(RULE.next(45, HealthState.DEGRADED, 50, POLICY)).isCloseTo(47.5, within(1e-9));
+        assertThat(RULE.next(47.5, HealthState.DEGRADED, 50, POLICY)).isCloseTo(47.5, within(1e-9));
+    }
+
+    @Test
+    @DisplayName("DEGRADED 인데 더 낮고 판정할 만큼 호출이 없으면 그대로 둔다")
+    void degradedKeepsLowerWhenNotGraded() {
+        assertThat(RULE.next(20, HealthState.DEGRADED, 49, POLICY)).isEqualTo(20);
+    }
+
+    @Test
+    @DisplayName("DEGRADED 면 판정할 만큼 호출이 없어도 최대치의 절반으로 바로 내린다")
+    void degradedCutsWithoutGrade() {
+        assertThat(RULE.next(95, HealthState.DEGRADED, 0, POLICY)).isCloseTo(47.5, within(1e-9));
     }
 
     @Test
