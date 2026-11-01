@@ -57,6 +57,16 @@ class HealthRulesTest {
     }
 
     @Test
+    @DisplayName("묶음이 다 차지 않아 세지 않은 악화 등급도 연속 관측이 막았다고 알려준다")
+    void streakSuppressesWithinBatch() {
+        HealthRules.Judgment judgment = ON.judge(new HealthStatus(HealthState.HEALTHY, 0, 1), statistics(80, 20),
+                BASELINE, 5);
+
+        assertThat(judgment.next()).isEqualTo(new HealthStatus(HealthState.HEALTHY, 0, 1, 5));
+        assertThat(judgment.suppressedBy()).contains(SuppressedBy.CONSECUTIVE);
+    }
+
+    @Test
     @DisplayName("진동 방지를 끄면 복귀 기준과 진입 기준이 같고 악화 등급 한 번에 바뀐다")
     void offUsesPlainRules() {
         HealthRules.Judgment degraded = OFF.judge(HealthStatus.initial(), statistics(80, 20), BASELINE);

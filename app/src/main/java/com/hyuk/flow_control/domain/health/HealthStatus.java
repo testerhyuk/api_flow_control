@@ -47,23 +47,30 @@ public record HealthStatus(
 
     public HealthStatus next(HealthGrade grade, int requiredGoodCount, int requiredDegradedStreak,
                              int newSamples, int batchSize) {
+        boolean freshBatch = uncountedSamples + newSamples >= batchSize;
+
         return switch (state) {
-            case HEALTHY -> afterHealthy(grade, requiredDegradedStreak);
+            case HEALTHY -> afterHealthy(grade, requiredDegradedStreak, freshBatch, newSamples);
             case DEGRADED -> afterTrouble(grade, HealthState.DEGRADED);
             case CRITICAL -> afterTrouble(grade, HealthState.CRITICAL);
-            case RECOVERING -> afterRecovering(grade, requiredGoodCount, requiredDegradedStreak,
-                    uncountedSamples + newSamples >= batchSize, newSamples);
+            case RECOVERING -> afterRecovering(grade, requiredGoodCount, requiredDegradedStreak, freshBatch,
+                    newSamples);
         };
     }
 
     public HealthStatus withNewSamples(int newSamples) {
-        if (state != HealthState.RECOVERING) {
+        if (state != HealthState.RECOVERING && degradedStreak == 0) {
             return this;
         }
         return new HealthStatus(state, consecutiveGoodCount, degradedStreak, uncountedSamples + newSamples);
     }
 
-    private HealthStatus afterHealthy(HealthGrade grade, int requiredDegradedStreak) {
+    private HealthStatus afterHealthy(HealthGrade grade, int requiredDegradedStreak, boolean freshBatch,
+                                      int newSamples) {
+        if (grade != HealthGrade.CRITICAL && degradedStreak > 0 && !freshBatch) {
+            return withNewSamples(newSamples);
+        }
+
         return switch (grade) {
             case GOOD, HOLD -> of(HealthState.HEALTHY);
             case DEGRADED -> degradedOrStay(HealthState.HEALTHY, 0, requiredDegradedStreak);
@@ -82,17 +89,19 @@ public record HealthStatus(
 
     private HealthStatus afterRecovering(HealthGrade grade, int requiredGoodCount, int requiredDegradedStreak,
                                          boolean freshBatch, int newSamples) {
+        boolean firstDegraded = grade == HealthGrade.DEGRADED && degradedStreak == 0;
+        if (grade != HealthGrade.CRITICAL && !firstDegraded && !freshBatch) {
+            return withNewSamples(newSamples);
+        }
+
         return switch (grade) {
             case GOOD -> {
-                if (!freshBatch) {
-                    yield withNewSamples(newSamples);
-                }
                 int goodCount = consecutiveGoodCount + 1;
                 yield goodCount >= requiredGoodCount
                         ? of(HealthState.HEALTHY)
                         : new HealthStatus(HealthState.RECOVERING, goodCount, 0);
             }
-            case HOLD -> freshBatch ? of(HealthState.RECOVERING) : withNewSamples(newSamples);
+            case HOLD -> of(HealthState.RECOVERING);
             case DEGRADED -> degradedOrStay(HealthState.RECOVERING, 0, requiredDegradedStreak);
             case CRITICAL -> of(HealthState.CRITICAL);
         };

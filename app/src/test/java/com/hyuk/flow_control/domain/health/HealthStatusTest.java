@@ -140,6 +140,53 @@ class HealthStatusTest {
     }
 
     @Test
+    @DisplayName("첫 DEGRADED 는 바로 세고, 그 뒤로는 새 호출 결과가 판정 개수만큼 쌓였을 때만 센다")
+    void countsDegradedStreakOncePerBatch() {
+        HealthStatus first = HealthStatus.initial().next(HealthGrade.DEGRADED, REQUIRED_GOOD_COUNT, 3, 5, 10);
+        HealthStatus waiting = first.next(HealthGrade.DEGRADED, REQUIRED_GOOD_COUNT, 3, 5, 10);
+        HealthStatus second = waiting.next(HealthGrade.DEGRADED, REQUIRED_GOOD_COUNT, 3, 5, 10);
+        HealthStatus third = second.next(HealthGrade.DEGRADED, REQUIRED_GOOD_COUNT, 3, 5, 10)
+                .next(HealthGrade.DEGRADED, REQUIRED_GOOD_COUNT, 3, 5, 10);
+
+        assertThat(first).isEqualTo(new HealthStatus(HealthState.HEALTHY, 0, 1));
+        assertThat(waiting).isEqualTo(new HealthStatus(HealthState.HEALTHY, 0, 1, 5));
+        assertThat(second).isEqualTo(new HealthStatus(HealthState.HEALTHY, 0, 2));
+        assertThat(third).isEqualTo(HealthStatus.of(HealthState.DEGRADED));
+    }
+
+    @Test
+    @DisplayName("DEGRADED 연속 중 새 호출 결과가 판정 개수만큼 쌓이지 않은 GOOD 은 연속 횟수를 바꾸지 않는다")
+    void ignoresGoodWithinDegradedBatch() {
+        HealthStatus streak = new HealthStatus(HealthState.HEALTHY, 0, 1);
+
+        HealthStatus waiting = streak.next(HealthGrade.GOOD, REQUIRED_GOOD_COUNT, 3, 5, 10);
+        HealthStatus reset = waiting.next(HealthGrade.GOOD, REQUIRED_GOOD_COUNT, 3, 5, 10);
+
+        assertThat(waiting).isEqualTo(new HealthStatus(HealthState.HEALTHY, 0, 1, 5));
+        assertThat(reset).isEqualTo(HealthStatus.initial());
+    }
+
+    @Test
+    @DisplayName("CRITICAL 은 새 호출 결과가 판정 개수만큼 쌓이지 않아도 바로 위험이 된다")
+    void criticalIgnoresBatch() {
+        HealthStatus streak = new HealthStatus(HealthState.HEALTHY, 0, 1);
+
+        assertThat(streak.next(HealthGrade.CRITICAL, REQUIRED_GOOD_COUNT, 3, 5, 10))
+                .isEqualTo(HealthStatus.of(HealthState.CRITICAL));
+    }
+
+    @Test
+    @DisplayName("회복 중 첫 DEGRADED 는 바로 세고, 두 번째부터는 판정 개수만큼 쌓였을 때만 센다")
+    void countsDegradedStreakOncePerBatchWhileRecovering() {
+        HealthStatus first = new HealthStatus(HealthState.RECOVERING, 2, 0, 5)
+                .next(HealthGrade.DEGRADED, REQUIRED_GOOD_COUNT, 3, 1, 10);
+        HealthStatus waiting = first.next(HealthGrade.DEGRADED, REQUIRED_GOOD_COUNT, 3, 5, 10);
+
+        assertThat(first).isEqualTo(new HealthStatus(HealthState.RECOVERING, 0, 1));
+        assertThat(waiting).isEqualTo(new HealthStatus(HealthState.RECOVERING, 0, 1, 5));
+    }
+
+    @Test
     @DisplayName("상태가 없으면 만들 수 없다")
     void rejectsNullState() {
         assertThatThrownBy(() -> new HealthStatus(null, 0))

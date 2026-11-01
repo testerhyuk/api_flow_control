@@ -343,6 +343,18 @@ class TargetSystemHealthEvaluatorTest {
     }
 
     @Test
+    @DisplayName("저하 연속 횟수는 첫 저하는 바로, 그 뒤로는 새 호출 결과가 판정 개수만큼 쌓였을 때만 센다")
+    void countsDegradedStreakOncePerBatch() {
+        when(recorder.drainNewSamples(TARGET_A)).thenReturn(5);
+        when(recorder.window(TARGET_A)).thenReturn(degraded());
+        TargetSystemHealthEvaluator evaluator = antiOscillationEvaluator();
+
+        assertThat(statesAfterEvaluations(evaluator, 5)).containsExactly(
+                HealthState.HEALTHY, HealthState.HEALTHY, HealthState.HEALTHY, HealthState.HEALTHY,
+                HealthState.DEGRADED);
+    }
+
+    @Test
     @DisplayName("회복 중 좋음은 새 호출 결과가 판정 개수만큼 쌓였을 때만 센다")
     void countsGoodOncePerBatch() {
         when(recorder.drainNewSamples(TARGET_A)).thenReturn(5);

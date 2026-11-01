@@ -40,7 +40,10 @@ public record HealthRules(
         }
 
         HealthGrade plainGrade = plain.gradeOf(statistics, baselineRtt, current.state()).orElseThrow();
-        HealthStatus plainNext = current.next(plainGrade, requiredGoodCount, 1, newSamples, thresholds.minimumCalls());
+        HealthStatus withoutStreak = new HealthStatus(current.state(), current.consecutiveGoodCount(), 0,
+                current.uncountedSamples());
+        HealthStatus plainNext = withoutStreak.next(plainGrade, requiredGoodCount, 1, newSamples,
+                thresholds.minimumCalls());
 
         if (plainNext.state() == next.state()) {
             return new Judgment(next, grade, Optional.empty());
