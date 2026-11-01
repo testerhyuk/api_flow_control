@@ -32,6 +32,7 @@ public class PolicyRegistry implements TargetSystemPolicyReader {
     private final Map<String, Long> reportedInvalidVersions = new ConcurrentHashMap<>();
     private final Map<String, Map<PolicyChangeListener, Change>> failedChanges = new HashMap<>();
     private final Set<String> removed = new HashSet<>();
+    private final Set<String> reportedTargets = new HashSet<>();
 
     public PolicyRegistry(PolicyRepository repository,
                           ObjectProvider<PolicyChangeListener> listeners,
@@ -40,7 +41,8 @@ public class PolicyRegistry implements TargetSystemPolicyReader {
         this.listeners = listeners;
         this.metrics = metrics;
 
-        for (LoadedPolicy loaded : repository.loadAll()) {
+        List<LoadedPolicy> loadedAtStart = repository.loadAll();
+        for (LoadedPolicy loaded : loadedAtStart) {
             switch (loaded) {
                 case LoadedPolicy.Valid valid -> {
                     current.put(valid.targetSystemId(), valid.policy());
@@ -49,6 +51,7 @@ public class PolicyRegistry implements TargetSystemPolicyReader {
                 case LoadedPolicy.Invalid invalid -> reportInvalid(invalid, false);
             }
         }
+        reportLatestInvalid(loadedAtStart);
 
         if (current.isEmpty()) {
             log.warn("DB 에 올바른 대상 시스템 정책이 하나도 없습니다");
@@ -114,7 +117,21 @@ public class PolicyRegistry implements TargetSystemPolicyReader {
             }
         }
         disableRemoved(present, notified);
+        reportLatestInvalid(loaded);
         retryFailed(notified);
+    }
+
+    private void reportLatestInvalid(List<LoadedPolicy> loaded) {
+        Set<String> present = new HashSet<>();
+        for (LoadedPolicy policy : loaded) {
+            present.add(policy.targetSystemId());
+            metrics.recordLatestPolicyInvalid(policy.targetSystemId(), policy instanceof LoadedPolicy.Invalid);
+        }
+        reportedTargets.stream()
+                .filter(targetSystemId -> !present.contains(targetSystemId))
+                .forEach(targetSystemId -> metrics.recordLatestPolicyInvalid(targetSystemId, false));
+        reportedTargets.clear();
+        reportedTargets.addAll(present);
     }
 
     private void disableRemoved(Set<String> present, Set<String> notified) {

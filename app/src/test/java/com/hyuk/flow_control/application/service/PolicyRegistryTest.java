@@ -271,6 +271,27 @@ class PolicyRegistryTest {
     }
 
     @Test
+    @DisplayName("읽을 때마다 외부 서버별로 최신 정책이 잘못됐는지 알리고, 고쳐지거나 줄이 사라지면 0 으로 돌린다")
+    void reportsLatestPolicyInvalid() {
+        when(repository.loadAll()).thenReturn(List.of(
+                new LoadedPolicy.Valid(A_V1), new LoadedPolicy.Invalid("target-b", 1, "max-tps")));
+        PolicyRegistry registry = new PolicyRegistry(repository, listeners, metrics);
+
+        verify(metrics).recordLatestPolicyInvalid("target-a", false);
+        verify(metrics).recordLatestPolicyInvalid("target-b", true);
+
+        when(repository.loadAll()).thenReturn(List.of(new LoadedPolicy.Valid(A_V1), new LoadedPolicy.Valid(B_V1)));
+        registry.refresh();
+        verify(metrics).recordLatestPolicyInvalid("target-b", false);
+
+        when(repository.loadAll()).thenReturn(List.of(
+                new LoadedPolicy.Valid(A_V1), new LoadedPolicy.Invalid("target-c", 1, "max-tps")));
+        registry.refresh();
+        verify(metrics, times(2)).recordLatestPolicyInvalid("target-b", false);
+        verify(metrics).recordLatestPolicyInvalid("target-c", true);
+    }
+
+    @Test
     @DisplayName("잘못된 정책 줄은 사라진 것으로 보지 않는다")
     void invalidRowIsNotRemoved() {
         when(repository.loadAll()).thenReturn(List.of(new LoadedPolicy.Valid(A_V1)));

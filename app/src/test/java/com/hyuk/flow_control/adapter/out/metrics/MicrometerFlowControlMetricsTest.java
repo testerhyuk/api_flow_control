@@ -140,6 +140,18 @@ class MicrometerFlowControlMetricsTest {
     }
 
     @Test
+    @DisplayName("외부 서버의 최신 정책이 잘못됐는지 0/1 로 보여준다")
+    void showsLatestPolicyInvalid() {
+        metrics.recordLatestPolicyInvalid("target-a", true);
+        assertThat(registry.get("flow.control.policy.invalid.latest").tags("target", "target-a").gauge().value())
+                .isEqualTo(1.0);
+
+        metrics.recordLatestPolicyInvalid("target-a", false);
+        assertThat(registry.get("flow.control.policy.invalid.latest").tags("target", "target-a").gauge().value())
+                .isEqualTo(0.0);
+    }
+
+    @Test
     @DisplayName("dry-run 에서 본 호출, 막혔을 호출, 기다린 호출을 센다")
     void countsDryRunCalls() {
         metrics.recordDryRunObserved("target-a");
