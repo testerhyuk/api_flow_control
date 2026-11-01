@@ -42,6 +42,7 @@ public class KafkaLagMonitor implements SmartLifecycle {
     private final PolicyRegistry policies;
     private final MeterRegistry meterRegistry;
     private final Duration interval;
+    private final String requestGroupId;
     private final boolean autoStartup;
     private final Map<String, Double> lags = new ConcurrentHashMap<>();
     private volatile ScheduledExecutorService executor;
@@ -53,11 +54,13 @@ public class KafkaLagMonitor implements SmartLifecycle {
             PolicyRegistry policies,
             MeterRegistry meterRegistry,
             IntakeProperties intakeProperties,
+            @Value("${spring.kafka.consumer.group-id}") String requestGroupId,
             @Value("${flow-control.intake.auto-startup:true}") boolean autoStartup) {
         this.kafkaAdmin = kafkaAdmin;
         this.policies = policies;
         this.meterRegistry = meterRegistry;
         this.interval = intakeProperties.lagInterval();
+        this.requestGroupId = requestGroupId;
         this.autoStartup = autoStartup;
     }
 
@@ -126,7 +129,7 @@ public class KafkaLagMonitor implements SmartLifecycle {
         for (ManagedPolicy policy : policies.policies()) {
             String targetSystemId = policy.targetSystemId();
             register(targetSystemId, RequestTopics.of(targetSystemId), REQUEST_STAGE);
-            groupsByTopic.put(RequestTopics.of(targetSystemId), KafkaRequestIntakeContainers.REQUEST_GROUP_ID);
+            groupsByTopic.put(RequestTopics.of(targetSystemId), requestGroupId);
 
             for (RetryStage stage : RetryStage.values()) {
                 String topic = RequestTopics.retry(stage, targetSystemId);

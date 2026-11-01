@@ -44,6 +44,7 @@ import static org.assertj.core.api.Assertions.assertThat;
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = {
                 "spring.kafka.bootstrap-servers=${spring.embedded.kafka.brokers}",
+                "flow-control.intake.topic-replicas=1",
                 "management.server.port=0",
                 "flow-control.policy.refresh-interval=200ms"
         })

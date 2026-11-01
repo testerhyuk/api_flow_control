@@ -41,8 +41,6 @@ import java.util.concurrent.ConcurrentHashMap;
 public class KafkaRequestIntakeContainers implements SmartLifecycle, PolicyChangeListener, RequestIntakeControl {
     private static final Logger log = LoggerFactory.getLogger(KafkaRequestIntakeContainers.class);
 
-    static final String REQUEST_GROUP_ID = "flow-control";
-    static final Duration RETRY_MAX_POLL_INTERVAL = Duration.ofMinutes(15);
     static final Duration ERROR_BACKOFF = Duration.ofSeconds(1);
 
     private final ConsumerFactory<String, String> consumerFactory;
@@ -51,10 +49,11 @@ public class KafkaRequestIntakeContainers implements SmartLifecycle, PolicyChang
     private final KafkaAdmin kafkaAdmin;
     private final PolicyRegistry policies;
     private final MeterRegistry meterRegistry;
+    private final String requestGroupId;
     private final boolean autoStartup;
     private final int topicReplicas;
+    private final Duration retryMaxPollInterval;
     private final Map<String, TargetContainers> targets = new ConcurrentHashMap<>();
-    private final Map<String, Long> warnedVersions = new ConcurrentHashMap<>();
     private volatile boolean running;
 
     public KafkaRequestIntakeContainers(
@@ -65,6 +64,7 @@ public class KafkaRequestIntakeContainers implements SmartLifecycle, PolicyChang
             KafkaAdmin kafkaAdmin,
             MeterRegistry meterRegistry,
             IntakeProperties intakeProperties,
+            @Value("${spring.kafka.consumer.group-id}") String requestGroupId,
             @Value("${flow-control.intake.auto-startup:true}") boolean autoStartup) {
         this.consumerFactory = consumerFactory;
         this.handling = handling;
@@ -72,8 +72,10 @@ public class KafkaRequestIntakeContainers implements SmartLifecycle, PolicyChang
         this.kafkaAdmin = kafkaAdmin;
         this.policies = policies;
         this.meterRegistry = meterRegistry;
+        this.requestGroupId = requestGroupId;
         this.autoStartup = autoStartup;
         this.topicReplicas = intakeProperties.topicReplicas();
+        this.retryMaxPollInterval = RetryStage.longestDelay().plus(intakeProperties.retryProcessingMargin());
 
         policies.policies().forEach(this::register);
     }
@@ -183,14 +185,14 @@ public class KafkaRequestIntakeContainers implements SmartLifecycle, PolicyChang
         int concurrency = policy.limits().concurrencyLimit();
         List<ConcurrentMessageListenerContainer<String, String>> containers = new ArrayList<>();
 
-        containers.add(container(RequestTopics.of(targetSystemId), REQUEST_GROUP_ID, concurrency,
+        containers.add(container(RequestTopics.of(targetSystemId), requestGroupId, concurrency,
                 new KafkaRequestListener(targetSystemId, null, handling, jsonMapper), null));
 
         for (RetryStage stage : RetryStage.values()) {
             String topic = RequestTopics.retry(stage, targetSystemId);
             Properties retryConsumer = new Properties();
             retryConsumer.put(ConsumerConfig.MAX_POLL_INTERVAL_MS_CONFIG,
-                    String.valueOf(RETRY_MAX_POLL_INTERVAL.toMillis()));
+                    String.valueOf(retryMaxPollInterval.toMillis()));
 
             containers.add(container(topic, topic, concurrency,
                     new KafkaRequestListener(targetSystemId, stage, handling, jsonMapper), retryConsumer));
@@ -216,15 +218,11 @@ public class KafkaRequestIntakeContainers implements SmartLifecycle, PolicyChang
         int required = policy.limits().concurrencyLimit();
 
         if (required <= target.concurrency) {
-            warnedVersions.remove(policy.targetSystemId());
             return;
         }
 
-        Long warned = warnedVersions.put(policy.targetSystemId(), policy.version());
-        if (warned == null || warned != policy.version()) {
-            log.warn("concurrency 가 읽기 스레드 수를 넘었습니다. 재배포해야 올린 한도가 모두 반영됩니다 : {} (필요 {}, 지금 {})",
-                    policy.targetSystemId(), required, target.concurrency);
-        }
+        log.warn("concurrency 가 읽기 스레드 수를 넘었습니다. 재배포해야 올린 한도가 모두 반영됩니다 : {} (필요 {}, 지금 {})",
+                policy.targetSystemId(), required, target.concurrency);
     }
 
     private ConcurrentMessageListenerContainer<String, String> container(

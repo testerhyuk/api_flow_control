@@ -11,7 +11,7 @@ spring:
       port: 6379
       timeout: ${flow-control.shared-limit.redis-timeout}
   kafka:
-    bootstrap-servers: localhost:9092
+    bootstrap-servers: localhost:9092,localhost:9094,localhost:9096
     consumer:
       group-id: flow-control
       auto-offset-reset: earliest
@@ -59,7 +59,8 @@ flow-control:
   intake:
     request-ttl: 10m
     lag-interval: 5s
-    topic-replicas: 1
+    topic-replicas: 3
+    retry-processing-margin: 10m
   limit-adjustment:
     degraded-ratio: 0.5
     recovery-step: 0.05

@@ -2,6 +2,7 @@ package com.hyuk.flow_control.domain.retry;
 
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.Optional;
 
 public enum RetryStage {
@@ -24,6 +25,13 @@ public enum RetryStage {
 
     public Duration delay() {
         return delay;
+    }
+
+    public static Duration longestDelay() {
+        return Arrays.stream(values())
+                .map(RetryStage::delay)
+                .max(Comparator.naturalOrder())
+                .orElseThrow();
     }
 
     public static Optional<RetryStage> firstAfter(RetryStage current, Duration minimumDelay) {

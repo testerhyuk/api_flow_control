@@ -44,6 +44,7 @@ import static org.mockito.Mockito.when;
 
 @SpringBootTest(properties = {
         "spring.kafka.bootstrap-servers=${spring.embedded.kafka.brokers}",
+        "flow-control.intake.topic-replicas=1",
         "management.server.port=0"
 })
 @EmbeddedKafka
