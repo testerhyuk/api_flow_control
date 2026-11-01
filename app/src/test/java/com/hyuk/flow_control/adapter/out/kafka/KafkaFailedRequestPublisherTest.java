@@ -9,6 +9,7 @@ import com.hyuk.flow_control.domain.retry.DeadLetterReason;
 import com.hyuk.flow_control.domain.retry.DeliveryContext;
 import com.hyuk.flow_control.domain.retry.RetryStage;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.KafkaException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -26,6 +27,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -152,14 +154,36 @@ class KafkaFailedRequestPublisherTest {
     }
 
     @Test
-    @DisplayName("Kafka 전송에 실패하면 예외를 낸다")
-    void throwsWhenSendFails() {
+    @DisplayName("Kafka 전송에 실패하면 예외 없이 성공할 때까지 다시 넣는다")
+    @SuppressWarnings("unchecked")
+    void retriesUntilSendSucceeds() {
+        when(kafkaTemplate.send(any(ProducerRecord.class)))
+                .thenReturn(CompletableFuture.failedFuture(new RuntimeException("브로커 없음")))
+                .thenThrow(new KafkaException("메타데이터 없음"))
+                .thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
+        publisher = new KafkaFailedRequestPublisher(kafkaTemplate, jsonMapper, Duration.ofMillis(1));
+
+        publisher.deadLetter(REQUEST, DeliveryContext.first("o"), DeadLetterReason.DLQ_KIND, null, null);
+
+        verify(kafkaTemplate, times(3)).send(any(ProducerRecord.class));
+    }
+
+    @Test
+    @DisplayName("다시 넣기를 기다리다 중단되면 예외를 내고 중단 표시를 남긴다")
+    void stopsRetryingWhenInterrupted() {
         when(kafkaTemplate.send(any(ProducerRecord.class)))
                 .thenReturn(CompletableFuture.failedFuture(new RuntimeException("브로커 없음")));
+        publisher = new KafkaFailedRequestPublisher(kafkaTemplate, jsonMapper, Duration.ofMinutes(1));
 
-        assertThatThrownBy(() -> publisher.deadLetter(REQUEST, DeliveryContext.first("o"),
-                DeadLetterReason.DLQ_KIND, null, null))
-                .isInstanceOf(IllegalStateException.class);
+        Thread.currentThread().interrupt();
+        try {
+            assertThatThrownBy(() -> publisher.deadLetter(REQUEST, DeliveryContext.first("o"),
+                    DeadLetterReason.DLQ_KIND, null, null))
+                    .isInstanceOf(IllegalStateException.class);
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+        } finally {
+            Thread.interrupted();
+        }
     }
 
     @SuppressWarnings("unchecked")
