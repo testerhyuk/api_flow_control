@@ -111,6 +111,7 @@ services:
       - "8080:8080"
       - "8081:8081"
     environment:
+      SPRING_PROFILES_ACTIVE: experiment
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/flow_control
       SPRING_DATA_REDIS_HOST: redis
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka-1:29092,kafka-2:29092,kafka-3:29092

@@ -20,12 +20,15 @@ class FailureHeadersTest {
     @DisplayName("실패 기록을 헤더에 쓰고 다시 읽으면 같은 값이 나온다")
     void roundTrip() {
         RecordHeaders headers = new RecordHeaders();
-        DeliveryContext context = new DeliveryContext(RetryStage.THIRD, 3, T1, T2, "flow-control.requests.target-a-2@9");
+        DeliveryContext context = new DeliveryContext(RetryStage.THIRD, 3, T1, T2,
+                "flow-control.requests.target-a.loan-2@9", null, "loan");
 
         FailureHeaders.writeContext(headers, context, OutcomeKind.SERVER_ERROR);
 
         assertThat(FailureHeaders.readContext(headers, RetryStage.THIRD, "fallback")).isEqualTo(new DeliveryContext(
-                RetryStage.THIRD, 3, T1, T2, "flow-control.requests.target-a-2@9", OutcomeKind.SERVER_ERROR));
+                RetryStage.THIRD, 3, T1, T2, "flow-control.requests.target-a.loan-2@9", OutcomeKind.SERVER_ERROR,
+                "loan"));
+        assertThat(FailureHeaders.read(headers, FailureHeaders.REQUESTER)).isEqualTo("loan");
         assertThat(FailureHeaders.read(headers, FailureHeaders.LAST_KIND)).isEqualTo("SERVER_ERROR");
         assertThat(FailureHeaders.read(headers, FailureHeaders.RETRY_STAGE)).isEqualTo("60s");
     }

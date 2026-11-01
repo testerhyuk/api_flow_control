@@ -207,7 +207,7 @@ public class RequestGenerator implements SmartLifecycle {
         private void sendOne() {
             try {
                 RequestMessage message = messageFactory.create(targetSystemId);
-                String topic = properties.topicPrefix() + targetSystemId;
+                String topic = properties.topicOf(targetSystemId);
 
                 kafkaTemplate.send(topic, message.requestId(), jsonMapper.writeValueAsString(message))
                         .whenComplete((result, error) -> {

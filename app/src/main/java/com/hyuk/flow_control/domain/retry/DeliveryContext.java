@@ -10,7 +10,8 @@ public record DeliveryContext(
         Instant firstFailedAt,
         Instant lastFailedAt,
         String origin,
-        OutcomeKind lastKind
+        OutcomeKind lastKind,
+        String requesterId
 ) {
     public DeliveryContext {
         if (failedAttempts < 0) {
@@ -23,11 +24,20 @@ public record DeliveryContext(
 
     public DeliveryContext(RetryStage stage, int failedAttempts, Instant firstFailedAt, Instant lastFailedAt,
                            String origin) {
-        this(stage, failedAttempts, firstFailedAt, lastFailedAt, origin, null);
+        this(stage, failedAttempts, firstFailedAt, lastFailedAt, origin, null, null);
+    }
+
+    public DeliveryContext(RetryStage stage, int failedAttempts, Instant firstFailedAt, Instant lastFailedAt,
+                           String origin, OutcomeKind lastKind) {
+        this(stage, failedAttempts, firstFailedAt, lastFailedAt, origin, lastKind, null);
     }
 
     public static DeliveryContext first(String origin) {
-        return new DeliveryContext(null, 0, null, null, origin, null);
+        return first(origin, null);
+    }
+
+    public static DeliveryContext first(String origin, String requesterId) {
+        return new DeliveryContext(null, 0, null, null, origin, null, requesterId);
     }
 
     public boolean isRetry() {
@@ -41,10 +51,11 @@ public record DeliveryContext(
                 firstFailedAt == null ? failedAt : firstFailedAt,
                 failedAt,
                 origin,
-                lastKind);
+                lastKind,
+                requesterId);
     }
 
     public DeliveryContext movedTo(RetryStage next) {
-        return new DeliveryContext(next, failedAttempts, firstFailedAt, lastFailedAt, origin, lastKind);
+        return new DeliveryContext(next, failedAttempts, firstFailedAt, lastFailedAt, origin, lastKind, requesterId);
     }
 }

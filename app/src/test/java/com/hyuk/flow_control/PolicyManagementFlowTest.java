@@ -1,6 +1,7 @@
 package com.hyuk.flow_control;
 
 import com.hyuk.flow_control.adapter.in.kafka.KafkaRequestIntakeContainers;
+import com.hyuk.flow_control.adapter.kafka.RequestTopics;
 import com.hyuk.flow_control.application.service.DryRunMonitor;
 import com.hyuk.flow_control.application.service.PolicyRegistry;
 import com.hyuk.flow_control.support.TestcontainersConfiguration;
@@ -19,6 +20,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.kafka.test.EmbeddedKafkaBroker;
 import org.springframework.kafka.test.context.EmbeddedKafka;
+import org.springframework.test.context.ActiveProfiles;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -40,6 +42,7 @@ import java.util.function.BooleanSupplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+@ActiveProfiles("experiment")
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = {
@@ -106,9 +109,10 @@ class PolicyManagementFlowTest {
 
         await(() -> containers.isConsuming(target));
         assertThat(policies.policyOf(target).version()).isEqualTo(1);
+        String requester = register(target);
 
         String requestId = UUID.randomUUID().toString();
-        produce(target, requestId);
+        produce(target, requester, requestId);
         await(() -> receivedRequestIds.contains(requestId));
 
         HttpResponse<String> disabled = send("PUT", "/admin/policies/" + target + "/enabled", """
@@ -140,6 +144,7 @@ class PolicyManagementFlowTest {
                 {"targetSystemId": "%s", "policy": %s, "changedBy": "hyuk", "reason": "새 기관"}
                 """.formatted(target, policyJson(10, 100, true)));
         await(() -> containers.isConsuming(target));
+        String requester = register(target);
 
         HttpResponse<String> urlChange = send("POST", "/admin/policies/" + target + "/dry-run", """
                 {"expectedVersion": 1, "policy": %s, "changedBy": "hyuk", "reason": "url"}
@@ -160,7 +165,7 @@ class PolicyManagementFlowTest {
 
         for (int i = 0; i < 3; i++) {
             String requestId = UUID.randomUUID().toString();
-            produce(target, requestId);
+            produce(target, requester, requestId);
             await(() -> receivedRequestIds.contains(requestId));
         }
 
@@ -178,6 +183,67 @@ class PolicyManagementFlowTest {
         assertThat(policies.policyOf(target).limits().maxTps()).isEqualTo(5);
         await(() -> !dryRunMonitor.isRunning(target));
         assertThat(send("GET", "/admin/policies/" + target + "/dry-run", null).statusCode()).isEqualTo(404);
+    }
+
+    @Test
+    @DisplayName("요청자를 끄면 그 요청자 토픽만 읽지 않고, 다시 켜면 쌓인 요청을 읽는다. 외부 서버를 더하고 빼면 읽는 토픽이 바뀐다")
+    void managesRequesterAtRuntime() throws Exception {
+        String target = createTarget("target-req-");
+        String other = createTarget("target-req-");
+        String requester = register(target);
+        String topic = RequestTopics.of(target, requester);
+
+        HttpResponse<String> disabled = send("PUT", "/admin/requesters/" + requester + "/enabled", """
+                {"enabled": false, "expectedVersion": 1, "changedBy": "hyuk", "reason": "중지"}
+                """);
+        assertThat(disabled.statusCode()).isEqualTo(200);
+        await(() -> !containers.concurrencyByTopic().containsKey(topic) && containers.isConsuming(target));
+
+        String pending = UUID.randomUUID().toString();
+        produce(target, requester, pending);
+        Thread.sleep(1_000);
+        assertThat(receivedRequestIds).doesNotContain(pending);
+
+        HttpResponse<String> stale = send("PUT", "/admin/requesters/" + requester + "/enabled", """
+                {"enabled": true, "expectedVersion": 1, "changedBy": "hyuk", "reason": "옛 버전"}
+                """);
+        assertThat(stale.statusCode()).isEqualTo(409);
+
+        HttpResponse<String> enabled = send("PUT", "/admin/requesters/" + requester + "/enabled", """
+                {"enabled": true, "expectedVersion": 2, "changedBy": "hyuk", "reason": "재개"}
+                """);
+        assertThat(enabled.statusCode()).isEqualTo(200);
+        await(() -> receivedRequestIds.contains(pending));
+
+        HttpResponse<String> added = send("PUT", "/admin/requesters/" + requester + "/targets/" + other, """
+                {"expectedVersion": 3, "changedBy": "hyuk", "reason": "외부 서버 추가"}
+                """);
+        assertThat(added.statusCode()).isEqualTo(200);
+        await(() -> isReading(other, requester));
+
+        String toOther = UUID.randomUUID().toString();
+        produce(other, requester, toOther);
+        await(() -> receivedRequestIds.contains(toOther));
+
+        HttpResponse<String> removed = send("DELETE", "/admin/requesters/" + requester + "/targets/" + other, """
+                {"expectedVersion": 4, "changedBy": "hyuk", "reason": "외부 서버 빼기"}
+                """);
+        assertThat(removed.statusCode()).isEqualTo(200);
+        await(() -> !containers.concurrencyByTopic().containsKey(RequestTopics.of(other, requester)));
+
+        JsonNode history = jsonMapper.readTree(
+                send("GET", "/admin/requesters/" + requester + "/history", null).body());
+        assertThat(history.size()).isEqualTo(5);
+    }
+
+    private String createTarget(String prefix) throws Exception {
+        String target = prefix + shortId();
+        HttpResponse<String> created = send("POST", "/admin/policies", """
+                {"targetSystemId": "%s", "policy": %s, "changedBy": "hyuk", "reason": "새 기관"}
+                """.formatted(target, policyJson(10, 100, true)));
+        assertThat(created.statusCode()).isEqualTo(201);
+        await(() -> containers.isConsuming(target));
+        return target;
     }
 
     private String policyJson(int maxTps, long baselineRttMs, boolean enabled) {
@@ -204,7 +270,22 @@ class PolicyManagementFlowTest {
         return httpClient.send(request.method(method, publisher).build(), HttpResponse.BodyHandlers.ofString());
     }
 
-    private void produce(String target, String requestId) {
+    private String register(String target) throws Exception {
+        String requester = "flow-" + shortId();
+        HttpResponse<String> registered = send("POST", "/admin/requesters", """
+                {"requesterId": "%s", "targetSystemIds": ["%s"], "changedBy": "hyuk", "reason": "새 요청자"}
+                """.formatted(requester, target));
+        assertThat(registered.statusCode()).isEqualTo(201);
+        await(() -> isReading(target, requester));
+        return requester;
+    }
+
+    private boolean isReading(String target, String requester) {
+        return containers.concurrencyByTopic().containsKey(RequestTopics.of(target, requester))
+                && containers.isConsuming(target);
+    }
+
+    private void produce(String target, String requester, String requestId) {
         String value = "{\"requestId\":\"" + requestId + "\",\"targetSystemId\":\"" + target
                 + "\",\"payload\":\"{}\",\"createdAt\":\"" + Instant.now() + "\"}";
 
@@ -212,7 +293,7 @@ class PolicyManagementFlowTest {
                 ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, broker.getBrokersAsString(),
                 ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class,
                 ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class))) {
-            producer.send(new ProducerRecord<>("flow-control.requests." + target, requestId, value));
+            producer.send(new ProducerRecord<>(RequestTopics.of(target, requester), requestId, value));
             producer.flush();
         }
     }

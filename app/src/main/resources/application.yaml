@@ -5,6 +5,8 @@ spring:
     url: jdbc:postgresql://localhost:5432/flow_control
     username: flow_control
     password: flow_control
+  flyway:
+    locations: classpath:db/migration
   data:
     redis:
       host: localhost

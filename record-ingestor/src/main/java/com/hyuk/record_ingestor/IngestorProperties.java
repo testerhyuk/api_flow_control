@@ -9,27 +9,36 @@ import java.util.Map;
 @ConfigurationProperties(prefix = "record-ingestor")
 public record IngestorProperties(
         String topicPrefix,
+        String requesterId,
         Map<String, Target> targets,
         boolean autoStart,
         long seed
 ) {
     @ConstructorBinding
-    public IngestorProperties(String topicPrefix, Map<String, Target> targets,
+    public IngestorProperties(String topicPrefix, String requesterId, Map<String, Target> targets,
                               @DefaultValue("true") boolean autoStart, @DefaultValue("0") long seed) {
         if (topicPrefix == null || topicPrefix.isBlank()) {
             throw new IllegalArgumentException("topic-prefix 는 필수입니다");
+        }
+        if (requesterId == null || requesterId.isBlank()) {
+            throw new IllegalArgumentException("requester-id 는 필수입니다");
         }
         if (targets == null || targets.isEmpty()) {
             throw new IllegalArgumentException("요청을 보낼 대상이 하나 이상 있어야 합니다");
         }
         this.topicPrefix = topicPrefix;
+        this.requesterId = requesterId;
         this.targets = Map.copyOf(targets);
         this.autoStart = autoStart;
         this.seed = seed;
     }
 
-    public IngestorProperties(String topicPrefix, Map<String, Target> targets) {
-        this(topicPrefix, targets, true, 0);
+    public IngestorProperties(String topicPrefix, String requesterId, Map<String, Target> targets) {
+        this(topicPrefix, requesterId, targets, true, 0);
+    }
+
+    public String topicOf(String targetSystemId) {
+        return topicPrefix + targetSystemId + "." + requesterId;
     }
 
     public record Target(double rate) {

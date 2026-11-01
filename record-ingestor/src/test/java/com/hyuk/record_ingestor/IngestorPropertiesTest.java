@@ -21,10 +21,11 @@ class IngestorPropertiesTest {
         contextRunner
                 .withPropertyValues(
                         "record-ingestor.topic-prefix=flow-control.requests.",
+                        "record-ingestor.requester-id=record-ingestor",
                         "record-ingestor.targets.target-a.rate=100",
                         "record-ingestor.targets.target-b.rate=2.5")
                 .run(context -> assertThat(context.getBean(IngestorProperties.class)).isEqualTo(
-                        new IngestorProperties("flow-control.requests.", Map.of(
+                        new IngestorProperties("flow-control.requests.", "record-ingestor", Map.of(
                                 "target-a", new IngestorProperties.Target(100),
                                 "target-b", new IngestorProperties.Target(2.5)))));
     }
@@ -35,6 +36,7 @@ class IngestorPropertiesTest {
         contextRunner
                 .withPropertyValues(
                         "record-ingestor.topic-prefix=flow-control.requests.",
+                        "record-ingestor.requester-id=record-ingestor",
                         "record-ingestor.targets.target-a.rate=100",
                         "record-ingestor.auto-start=false",
                         "record-ingestor.seed=42")
@@ -44,7 +46,7 @@ class IngestorPropertiesTest {
                     assertThat(properties.seed()).isEqualTo(42);
                 });
 
-        IngestorProperties defaults = new IngestorProperties("p.", Map.of("target-a", new IngestorProperties.Target(1)));
+        IngestorProperties defaults = new IngestorProperties("p.", "record-ingestor", Map.of("target-a", new IngestorProperties.Target(1)));
         assertThat(defaults.autoStart()).isTrue();
         assertThat(defaults.seed()).isZero();
     }
@@ -55,6 +57,7 @@ class IngestorPropertiesTest {
         contextRunner
                 .withPropertyValues(
                         "record-ingestor.topic-prefix=flow-control.requests.",
+                        "record-ingestor.requester-id=record-ingestor",
                         "record-ingestor.targets.target-a.rate=0")
                 .run(context -> assertThat(context).hasFailed());
     }
@@ -64,18 +67,38 @@ class IngestorPropertiesTest {
     void rejectsBlankTopicPrefix() {
         Map<String, IngestorProperties.Target> targets = Map.of("target-a", new IngestorProperties.Target(1));
 
-        assertThatThrownBy(() -> new IngestorProperties(null, targets))
+        assertThatThrownBy(() -> new IngestorProperties(null, "record-ingestor", targets))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new IngestorProperties(" ", targets))
+        assertThatThrownBy(() -> new IngestorProperties(" ", "record-ingestor", targets))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("요청자 ID 가 없으면 만들 수 없다")
+    void rejectsBlankRequesterId() {
+        Map<String, IngestorProperties.Target> targets = Map.of("target-a", new IngestorProperties.Target(1));
+
+        assertThatThrownBy(() -> new IngestorProperties("p.", null, targets))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new IngestorProperties("p.", " ", targets))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("요청 토픽은 접두어 + 외부 서버 + 요청자 ID 다")
+    void namesTopicWithRequester() {
+        IngestorProperties properties = new IngestorProperties("flow-control.requests.", "record-ingestor",
+                Map.of("target-a", new IngestorProperties.Target(1)));
+
+        assertThat(properties.topicOf("target-a")).isEqualTo("flow-control.requests.target-a.record-ingestor");
     }
 
     @Test
     @DisplayName("대상이 하나도 없으면 만들 수 없다")
     void rejectsEmptyTargets() {
-        assertThatThrownBy(() -> new IngestorProperties("p.", null))
+        assertThatThrownBy(() -> new IngestorProperties("p.", "record-ingestor", null))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new IngestorProperties("p.", Map.of()))
+        assertThatThrownBy(() -> new IngestorProperties("p.", "record-ingestor", Map.of()))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 

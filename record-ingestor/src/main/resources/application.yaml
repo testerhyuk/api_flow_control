@@ -9,6 +9,7 @@ server:
 
 record-ingestor:
   topic-prefix: flow-control.requests.
+  requester-id: record-ingestor
   auto-start: true
   seed: 42
   targets:
