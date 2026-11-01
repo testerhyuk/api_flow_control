@@ -99,6 +99,10 @@ public class TargetSystemOutcomeRecorder implements PolicyChangeListener {
         return outcomesOf(targetSystemId).drain();
     }
 
+    public int drainNewSamples(String targetSystemId) {
+        return outcomesOf(targetSystemId).newSamples.getAndSet(0);
+    }
+
     private void removeOlderThan(Deque<RecordedOutcome> deque, Instant threshold) {
         RecordedOutcome oldest = deque.peekFirst();
 
@@ -124,12 +128,15 @@ public class TargetSystemOutcomeRecorder implements PolicyChangeListener {
         private int failureStreak;
         private int timeoutStreak;
         private final AtomicInteger waiting = new AtomicInteger();
+        private final AtomicInteger newSamples = new AtomicInteger();
         private volatile Instant lastBlockedAt;
 
         private synchronized void track(OutcomeKind kind, HealthProperties.LowTraffic rules) {
             if (!OutcomeStatistics.isSample(kind)) {
                 return;
             }
+
+            newSamples.incrementAndGet();
 
             if (!OutcomeStatistics.isFailure(kind)) {
                 failureStreak = 0;

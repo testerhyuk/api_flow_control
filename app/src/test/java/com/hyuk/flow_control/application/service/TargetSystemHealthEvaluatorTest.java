@@ -65,6 +65,7 @@ class TargetSystemHealthEvaluatorTest {
         when(recorder.window(TARGET_A)).thenReturn(OutcomeWindow.empty());
         when(recorder.window(TARGET_B)).thenReturn(OutcomeWindow.empty());
         when(recorder.drainEvents(any())).thenReturn(Set.of());
+        when(recorder.drainNewSamples(any())).thenReturn(10);
     }
 
     @Test
@@ -342,6 +343,30 @@ class TargetSystemHealthEvaluatorTest {
     }
 
     @Test
+    @DisplayName("회복 중 좋음은 새 호출 결과가 판정 개수만큼 쌓였을 때만 센다")
+    void countsGoodOncePerBatch() {
+        when(recorder.drainNewSamples(TARGET_A)).thenReturn(5);
+        when(recorder.window(TARGET_A)).thenReturn(critical(), good(), good(), good(), good(), good());
+        TargetSystemHealthEvaluator evaluator = antiOscillationEvaluator();
+
+        assertThat(statesAfterEvaluations(evaluator, 6)).containsExactly(
+                HealthState.CRITICAL, HealthState.RECOVERING, HealthState.RECOVERING, HealthState.RECOVERING,
+                HealthState.RECOVERING, HealthState.HEALTHY);
+    }
+
+    @Test
+    @DisplayName("회복 중 새 호출 결과가 판정 개수만큼 쌓이지 않은 판정의 사이값은 연속 좋음 횟수를 바꾸지 않는다")
+    void ignoresHoldWithinBatch() {
+        when(recorder.drainNewSamples(TARGET_A)).thenReturn(5);
+        when(recorder.window(TARGET_A)).thenReturn(critical(), good(), window(93, 7), good(), good(), good());
+        TargetSystemHealthEvaluator evaluator = antiOscillationEvaluator();
+
+        assertThat(statesAfterEvaluations(evaluator, 6)).containsExactly(
+                HealthState.CRITICAL, HealthState.RECOVERING, HealthState.RECOVERING, HealthState.RECOVERING,
+                HealthState.RECOVERING, HealthState.HEALTHY);
+    }
+
+    @Test
     @DisplayName("건수가 모자라고 한도에 막힌 시도도 없는 판정이 3번 연속이면 저트래픽 모드로 들어간다")
     void entersLowTraffic() {
         when(recorder.window(TARGET_A)).thenReturn(window(5, 0));
@@ -444,6 +469,7 @@ class TargetSystemHealthEvaluatorTest {
 
         assertThat(evaluator.snapshotOf(TARGET_A)).isEqualTo(HealthSnapshot.initial());
         verify(recorder).drainEvents(TARGET_A);
+        verify(recorder).drainNewSamples(TARGET_A);
         verify(recorder, never()).window(TARGET_A);
     }
 

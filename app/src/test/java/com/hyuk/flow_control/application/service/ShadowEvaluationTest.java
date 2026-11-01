@@ -349,9 +349,38 @@ class ShadowEvaluationTest {
         assertThat(report.unknowns()).noneMatch(text -> text.contains("겹친"));
     }
 
+    @Test
+    @DisplayName("회복 중 좋음은 판정에 쓰는 새 호출 결과가 판정 개수만큼 쌓였을 때만 센다")
+    void countsGoodOncePerBatch() {
+        ShadowEvaluation evaluation = evaluation(limits(100, 150), 95.0, new HealthStatus(HealthState.RECOVERING, 1));
+        completeMany(evaluation, OutcomeKind.SUCCESS, 10, NOW);
+        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1, baselineOf(evaluation));
+
+        completeMany(evaluation, OutcomeKind.SUCCESS, 5, NOW.plusSeconds(1));
+        completeMany(evaluation, OutcomeKind.UNEXPECTED_RESPONSE, 10, NOW.plusSeconds(1));
+        evaluation.evaluate(NOW.plusSeconds(2), 2_000_000_000L, 1, baselineOf(evaluation));
+        HealthState waiting = evaluation.state();
+
+        completeMany(evaluation, OutcomeKind.SUCCESS, 5, NOW.plusSeconds(2));
+        evaluation.evaluate(NOW.plusSeconds(3), 3_000_000_000L, 1, baselineOf(evaluation));
+
+        assertThat(waiting).isEqualTo(HealthState.RECOVERING);
+        assertThat(evaluation.state()).isEqualTo(HealthState.HEALTHY);
+    }
+
+    private void completeMany(ShadowEvaluation evaluation, OutcomeKind kind, int count, Instant at) {
+        for (int i = 0; i < count; i++) {
+            evaluation.complete(response(kind, 200, 150), at);
+        }
+    }
+
     private ShadowEvaluation evaluation(ManagedPolicy candidate, double actualRate) {
+        return evaluation(candidate, actualRate, HealthStatus.initial());
+    }
+
+    private ShadowEvaluation evaluation(ManagedPolicy candidate, double actualRate, HealthStatus actualStatus) {
         DryRun dryRun = new DryRun(candidate, 1, NOW, NOW.plus(Duration.ofMinutes(30)), new ChangeNote("hyuk", "test"));
-        return new ShadowEvaluation(dryRun, BASE, HealthStatus.initial(), actualRate, judge, RULES, RATE_RULE,
+        return new ShadowEvaluation(dryRun, BASE, actualStatus, actualRate, judge, RULES, RATE_RULE,
                 Duration.ofSeconds(10), 10, candidate.limits().baselineRtt(), metrics, NOW, 0L);
     }
 

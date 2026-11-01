@@ -62,6 +62,7 @@ class ShadowEvaluation {
     private Duration overlap = Duration.ZERO;
     private Duration lowTraffic = Duration.ZERO;
     private Instant lastEvaluatedAt;
+    private int newSamples;
 
     ShadowEvaluation(DryRun dryRun, ManagedPolicy base, HealthStatus actualStatus, double actualRate,
                      ResponseJudge judge, HealthRules rules, RateAdjustmentRule rateRule,
@@ -138,6 +139,9 @@ class ShadowEvaluation {
         }
 
         outcomes.addLast(new RecordedOutcome(kind, latency, now));
+        if (OutcomeStatistics.isSample(kind)) {
+            countSample();
+        }
     }
 
     void recordWaited() {
@@ -161,6 +165,7 @@ class ShadowEvaluation {
         Instant since = now.minus(window);
         removeOlderThan(since);
 
+        int samples = drainNewSamples();
         if (underMaintenance) {
             timeInState.merge(status.state(), elapsed, Duration::plus);
             lastEvaluatedAt = now;
@@ -169,7 +174,7 @@ class ShadowEvaluation {
 
         OutcomeStatistics current = OutcomeWindow.latest(outcomes.descendingIterator(), maxSamples, since).statistics();
         HealthStatus before = status;
-        HealthStatus next = rules.judge(before, current, baselineRtt).next();
+        HealthStatus next = rules.judge(before, current, baselineRtt, samples).next();
 
         timeInState.merge(before.state(), Duration.between(lastEvaluatedAt, now), Duration::plus);
         lastEvaluatedAt = now;
@@ -189,6 +194,16 @@ class ShadowEvaluation {
         }
         rate = nextRate;
         concurrencyLimit = nextConcurrency;
+    }
+
+    private synchronized void countSample() {
+        newSamples++;
+    }
+
+    private int drainNewSamples() {
+        int drained = newSamples;
+        newSamples = 0;
+        return drained;
     }
 
     synchronized DryRunReport report(Instant now, HealthState actualState, double actualRate) {

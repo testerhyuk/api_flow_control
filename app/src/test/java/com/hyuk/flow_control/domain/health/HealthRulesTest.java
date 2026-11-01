@@ -29,6 +29,15 @@ class HealthRulesTest {
     }
 
     @Test
+    @DisplayName("회복 중 건수가 모자라 판정하지 못해도 새 호출 결과 개수는 쌓는다")
+    void accumulatesSamplesWithoutEnoughSamples() {
+        HealthRules.Judgment judgment = ON.judge(new HealthStatus(HealthState.RECOVERING, 1), statistics(5, 5),
+                BASELINE, 4);
+
+        assertThat(judgment.next()).isEqualTo(new HealthStatus(HealthState.RECOVERING, 1, 0, 4));
+    }
+
+    @Test
     @DisplayName("진동 방지가 켜져 있으면 사이값에서 악화를 유지하고, 히스테리시스가 막았다고 알려준다")
     void hysteresisSuppresses() {
         HealthRules.Judgment judgment = ON.judge(HealthStatus.of(HealthState.DEGRADED), statistics(93, 7), BASELINE);

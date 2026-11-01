@@ -242,6 +242,21 @@ class TargetSystemOutcomeRecorderTest {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
+    @Test
+    @DisplayName("판정에 쓰는 호출 결과만 새로 쌓인 개수로 세고, 꺼내면 0 부터 다시 센다")
+    void drainsNewSamples() {
+        TargetSystemOutcomeRecorder recorder = recorderWithWindow(Duration.ofSeconds(10));
+
+        recorder.record(TARGET_A, OutcomeKind.SUCCESS, Duration.ofMillis(120));
+        recorder.record(TARGET_A, OutcomeKind.SERVER_ERROR, Duration.ofMillis(50));
+        recorder.record(TARGET_A, OutcomeKind.UNEXPECTED_RESPONSE, Duration.ofMillis(80));
+        recorder.record(TARGET_B, OutcomeKind.SUCCESS, Duration.ofMillis(120));
+
+        assertThat(recorder.drainNewSamples(TARGET_A)).isEqualTo(2);
+        assertThat(recorder.drainNewSamples(TARGET_A)).isZero();
+        assertThat(recorder.drainNewSamples(TARGET_B)).isEqualTo(1);
+    }
+
     private static TargetSystemOutcomeRecorder recorderWithWindow(Duration window) {
         TargetSystemPolicyReader policyReader = mock(TargetSystemPolicyReader.class);
         TargetSystemPolicy policy = new TargetSystemPolicy(100, Duration.ofMillis(100), 0.95, Duration.ofMillis(10));

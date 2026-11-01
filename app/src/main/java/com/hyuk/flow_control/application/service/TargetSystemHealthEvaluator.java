@@ -118,6 +118,7 @@ public class TargetSystemHealthEvaluator implements PolicyChangeListener {
 
         if (maintenance.isActive(targetSystemId)) {
             recorder.drainEvents(targetSystemId);
+            recorder.drainNewSamples(targetSystemId);
             target.lowTrafficTicks = 0;
             return;
         }
@@ -166,7 +167,8 @@ public class TargetSystemHealthEvaluator implements PolicyChangeListener {
 
     private HealthStatus judge(String targetSystemId, HealthStatus current, OutcomeStatistics statistics,
                                Duration baselineRtt) {
-        HealthRules.Judgment judgment = rules.judge(current, statistics, baselineRtt);
+        HealthRules.Judgment judgment = rules.judge(current, statistics, baselineRtt,
+                recorder.drainNewSamples(targetSystemId));
         judgment.suppressedBy().ifPresent(reason -> metrics.recordSuppressed(targetSystemId, reason));
         return judgment.next();
     }
