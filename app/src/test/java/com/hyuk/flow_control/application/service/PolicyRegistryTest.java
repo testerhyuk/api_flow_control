@@ -248,6 +248,56 @@ class PolicyRegistryTest {
     }
 
     @Test
+    @DisplayName("DB 에서 사라진 정책은 꺼짐으로 바꿔 한 번만 알리고, 다시 넣으면 같은 버전이어도 반영한다")
+    void disablesRemovedPolicyAndRestoresIt() {
+        when(repository.loadAll()).thenReturn(List.of(new LoadedPolicy.Valid(A_V1), new LoadedPolicy.Valid(B_V1)));
+        PolicyRegistry registry = new PolicyRegistry(repository, listeners, metrics);
+        ManagedPolicy disabled = B_V1.withEnabled(false);
+
+        when(repository.loadAll()).thenReturn(List.of(new LoadedPolicy.Valid(A_V1)));
+        registry.refresh();
+        registry.refresh();
+
+        assertThat(registry.policyOf("target-b")).isEqualTo(disabled);
+        verify(first, times(1)).onPolicyChanged(B_V1, disabled);
+        verify(second, times(1)).onPolicyChanged(B_V1, disabled);
+
+        when(repository.loadAll()).thenReturn(List.of(new LoadedPolicy.Valid(A_V1), new LoadedPolicy.Valid(B_V1)));
+        registry.refresh();
+
+        assertThat(registry.policyOf("target-b")).isEqualTo(B_V1);
+        verify(first).onPolicyChanged(disabled, B_V1);
+        verify(second).onPolicyChanged(disabled, B_V1);
+    }
+
+    @Test
+    @DisplayName("잘못된 정책 줄은 사라진 것으로 보지 않는다")
+    void invalidRowIsNotRemoved() {
+        when(repository.loadAll()).thenReturn(List.of(new LoadedPolicy.Valid(A_V1)));
+        PolicyRegistry registry = new PolicyRegistry(repository, listeners, metrics);
+
+        when(repository.loadAll()).thenReturn(List.of(new LoadedPolicy.Invalid("target-a", 2, "max-tps")));
+        registry.refresh();
+
+        assertThat(registry.policyOf("target-a")).isEqualTo(A_V1);
+        verify(first, never()).onPolicyChanged(any(), any());
+    }
+
+    @Test
+    @DisplayName("지금 정책이 있는데 다시 읽은 결과가 비어 있으면 DB 를 못 읽은 것처럼 마지막 정책을 그대로 쓴다")
+    void ignoresEmptyResult() {
+        when(repository.loadAll()).thenReturn(List.of(new LoadedPolicy.Valid(A_V1)));
+        PolicyRegistry registry = new PolicyRegistry(repository, listeners, metrics);
+
+        when(repository.loadAll()).thenReturn(List.of());
+        registry.refresh();
+
+        assertThat(registry.policyOf("target-a")).isEqualTo(A_V1);
+        verify(metrics).recordPolicyRefreshFailure();
+        verify(first, never()).onPolicyChanged(any(), any());
+    }
+
+    @Test
     @DisplayName("다시 읽은 정책이 잘못됐으면 마지막 정책을 계속 쓰고, 같은 버전은 한 번만 지표에 남긴다")
     void keepsLastPolicyWhenInvalid() {
         when(repository.loadAll()).thenReturn(List.of(new LoadedPolicy.Valid(A_V1)));

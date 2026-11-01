@@ -31,6 +31,7 @@ public class PolicyRegistry implements TargetSystemPolicyReader {
     private final Map<String, ManagedPolicy> current = new ConcurrentHashMap<>();
     private final Map<String, Long> reportedInvalidVersions = new ConcurrentHashMap<>();
     private final Map<String, Map<PolicyChangeListener, Change>> failedChanges = new HashMap<>();
+    private final Set<String> removed = new HashSet<>();
 
     public PolicyRegistry(PolicyRepository repository,
                           ObjectProvider<PolicyChangeListener> listeners,
@@ -92,13 +93,43 @@ public class PolicyRegistry implements TargetSystemPolicyReader {
             return;
         }
 
+        if (loaded.isEmpty() && !current.isEmpty()) {
+            metrics.recordPolicyRefreshFailure();
+            log.warn("다시 읽은 정책이 하나도 없어서 무시합니다. 마지막으로 읽은 정책을 계속 씁니다");
+            retryFailed(notified);
+            return;
+        }
+
+        Set<String> present = new HashSet<>();
         for (LoadedPolicy policy : loaded) {
             switch (policy) {
-                case LoadedPolicy.Valid valid -> apply(valid.policy(), notified);
-                case LoadedPolicy.Invalid invalid -> reportInvalid(invalid, current.containsKey(invalid.targetSystemId()));
+                case LoadedPolicy.Valid valid -> {
+                    present.add(valid.targetSystemId());
+                    apply(valid.policy(), notified);
+                }
+                case LoadedPolicy.Invalid invalid -> {
+                    present.add(invalid.targetSystemId());
+                    reportInvalid(invalid, current.containsKey(invalid.targetSystemId()));
+                }
             }
         }
+        disableRemoved(present, notified);
         retryFailed(notified);
+    }
+
+    private void disableRemoved(Set<String> present, Set<String> notified) {
+        List.copyOf(current.keySet()).stream()
+                .filter(targetSystemId -> !present.contains(targetSystemId) && !removed.contains(targetSystemId))
+                .forEach(targetSystemId -> {
+                    ManagedPolicy before = current.get(targetSystemId);
+                    ManagedPolicy disabled = before.withEnabled(false);
+                    current.put(targetSystemId, disabled);
+                    removed.add(targetSystemId);
+                    log.warn("DB 에서 정책이 사라져서 끈 것으로 처리합니다. 다시 넣으면 이어서 처리합니다 : {} 버전 {}",
+                            targetSystemId, before.version());
+                    notified.add(targetSystemId);
+                    notifyEach(targetSystemId, new Change.Changed(before, disabled));
+                });
     }
 
     private static void warnIfNoMaintenanceCode(ManagedPolicy policy) {
@@ -122,7 +153,9 @@ public class PolicyRegistry implements TargetSystemPolicyReader {
             return;
         }
 
-        if (policy.version() <= before.version()) {
+        if (removed.remove(targetSystemId)) {
+            log.warn("DB 에서 사라졌던 정책이 다시 나타나서 반영합니다 : {} 버전 {}", targetSystemId, policy.version());
+        } else if (policy.version() <= before.version()) {
             return;
         }
 
