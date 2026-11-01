@@ -11,6 +11,7 @@ import com.hyuk.flow_control.domain.policy.PolicyAlreadyExistsException;
 import com.hyuk.flow_control.domain.policy.PolicyHistoryEntry;
 import com.hyuk.flow_control.domain.policy.PolicyVersionConflictException;
 import com.hyuk.flow_control.domain.policy.ResponseRuleSet;
+import com.hyuk.flow_control.domain.policy.TargetSystemPolicy;
 import com.hyuk.flow_control.domain.request.OutcomeKind;
 import com.hyuk.flow_control.support.Policies;
 import com.hyuk.flow_control.support.PostgresTestDatabase;
@@ -60,6 +61,7 @@ class JdbcPolicyRepositoryTest {
         ManagedPolicy targetA = ((LoadedPolicy.Valid) loaded.getFirst()).policy();
         assertThat(targetA.version()).isEqualTo(1);
         assertThat(targetA.limits().concurrencyLimit()).isEqualTo(15);
+        assertThat(targetA.limits().baselineP95()).isEqualTo(Duration.ofMillis(300));
         assertThat(targetA.response().resultField()).isEqualTo("/resultCode");
         assertThat(targetA.maintenance()).isEqualTo(MaintenanceSchedule.none());
         assertThat(targetA.connection().path()).isEqualTo("/call");
@@ -85,6 +87,18 @@ class JdbcPolicyRepositoryTest {
     void storesPath() {
         ManagedPolicy policy = Policies.withConnection(Policies.policy("target-d"), new ConnectionSettings(
                 "http://localhost:9001", "/api/v1/payments", Duration.ofSeconds(1), Duration.ofSeconds(3)));
+
+        repository.insert(policy, NOTE, AT);
+
+        assertThat(repository.load("target-d")).contains(new LoadedPolicy.Valid(policy));
+        assertThat(repository.history("target-d").getFirst().policy()).isEqualTo(policy);
+    }
+
+    @Test
+    @DisplayName("baseline-p95 를 baseline-rtt 와 따로 저장하고 읽는다")
+    void storesBaselineP95() {
+        ManagedPolicy policy = Policies.withLimits(Policies.policy("target-d"), new TargetSystemPolicy(
+                100, Duration.ofMillis(150), Duration.ofMillis(450), 0.95, Duration.ofMillis(10)));
 
         repository.insert(policy, NOTE, AT);
 

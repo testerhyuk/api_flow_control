@@ -5,6 +5,7 @@ import java.time.Duration;
 public record TargetSystemPolicy(
         int maxTps,
         Duration baselineRtt,
+        Duration baselineP95,
         double safetyMargin,
         Duration burstWindow
 ) {
@@ -15,12 +16,19 @@ public record TargetSystemPolicy(
         if (baselineRtt == null || !baselineRtt.isPositive()) {
             throw new IllegalArgumentException("baseline-rtt는 0보다 커야 합니다");
         }
+        if (baselineP95 == null || !baselineP95.isPositive()) {
+            throw new IllegalArgumentException("baseline-p95는 0보다 커야 합니다");
+        }
         if (safetyMargin <= 0 || safetyMargin > 1) {
             throw new IllegalArgumentException("safety-margin은 0보다 크고 1 이하여야 합니다");
         }
         if (burstWindow == null || !burstWindow.isPositive()) {
             throw new IllegalArgumentException("burst-window는 0보다 커야 합니다");
         }
+    }
+
+    public TargetSystemPolicy(int maxTps, Duration baselineRtt, double safetyMargin, Duration burstWindow) {
+        this(maxTps, baselineRtt, baselineRtt == null ? null : baselineRtt.multipliedBy(2), safetyMargin, burstWindow);
     }
 
     public double effectiveRate() {

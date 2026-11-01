@@ -50,7 +50,7 @@ class PolicyAdminControllerTest {
             {
               "enabled": true,
               "connection": {"url": "http://localhost:9001", "connectTimeoutMs": 1000, "readTimeoutMs": 3000},
-              "limits": {"maxTps": 80, "baselineRttMs": 150, "safetyMargin": 0.95, "burstWindowMs": 10},
+              "limits": {"maxTps": 80, "baselineRttMs": 150, "baselineP95Ms": 300, "safetyMargin": 0.95, "burstWindowMs": 10},
               "response": {
                 "statusCodes": {"2xx": "SUCCESS", "5xx": "SERVER_ERROR"},
                 "resultField": "/resultCode",
@@ -114,6 +114,7 @@ class PolicyAdminControllerTest {
         ArgumentCaptor<PolicyContent> content = ArgumentCaptor.forClass(PolicyContent.class);
         verify(management).create(eq("target-d"), content.capture(), eq(new ChangeNote("hyuk", "새 기관")));
         assertThat(content.getValue().limits().maxTps()).isEqualTo(80);
+        assertThat(content.getValue().limits().baselineP95()).isEqualTo(Duration.ofMillis(300));
         assertThat(content.getValue().connection().readTimeout()).isEqualTo(Duration.ofSeconds(3));
         assertThat(content.getValue().connection().path()).isEqualTo("/call");
         assertThat(content.getValue().response().resultField()).isEqualTo("/resultCode");
@@ -237,6 +238,12 @@ class PolicyAdminControllerTest {
                         {"expectedVersion": 1, "policy": %s, "changedBy": "hyuk", "reason": "없는 결과"}
                         """.formatted(POLICY_JSON.replace("SERVER_ERROR", "NOPE"))))
                 .andExpect(status().isBadRequest());
+
+        mockMvc.perform(put("/admin/policies/target-a").contentType(MediaType.APPLICATION_JSON).content("""
+                        {"expectedVersion": 1, "policy": %s, "changedBy": "hyuk", "reason": "p95 없음"}
+                        """.formatted(POLICY_JSON.replace("\"baselineP95Ms\": 300, ", ""))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value("limits.baselineP95Ms 는 필수입니다"));
 
         verify(management, never()).update(any(), any(), anyLong(), any());
     }

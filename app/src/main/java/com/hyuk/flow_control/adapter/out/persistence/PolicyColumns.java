@@ -31,19 +31,20 @@ final class PolicyColumns {
 
     static final String NAMES = """
             target_system_id, enabled, url, path, connect_timeout_ms, read_timeout_ms,
-            max_tps, baseline_rtt_ms, safety_margin, burst_window_ms,
+            max_tps, baseline_rtt_ms, baseline_p95_ms, safety_margin, burst_window_ms,
             status_codes, result_field, result_codes, maintenance""";
 
     static final String VALUES = """
             :targetSystemId, :enabled, :url, :path, :connectTimeoutMs, :readTimeoutMs,
-            :maxTps, :baselineRttMs, :safetyMargin, :burstWindowMs,
+            :maxTps, :baselineRttMs, :baselineP95Ms, :safetyMargin, :burstWindowMs,
             cast(:statusCodes as jsonb), :resultField, cast(:resultCodes as jsonb),
             cast(:maintenance as jsonb)""";
 
     static final String ASSIGNMENTS = """
             enabled = :enabled, url = :url, path = :path,
             connect_timeout_ms = :connectTimeoutMs, read_timeout_ms = :readTimeoutMs,
-            max_tps = :maxTps, baseline_rtt_ms = :baselineRttMs, safety_margin = :safetyMargin,
+            max_tps = :maxTps, baseline_rtt_ms = :baselineRttMs, baseline_p95_ms = :baselineP95Ms,
+            safety_margin = :safetyMargin,
             burst_window_ms = :burstWindowMs,
             status_codes = cast(:statusCodes as jsonb), result_field = :resultField,
             result_codes = cast(:resultCodes as jsonb),
@@ -67,6 +68,7 @@ final class PolicyColumns {
                 .param("readTimeoutMs", policy.connection().readTimeout().toMillis())
                 .param("maxTps", policy.limits().maxTps())
                 .param("baselineRttMs", policy.limits().baselineRtt().toMillis())
+                .param("baselineP95Ms", policy.limits().baselineP95().toMillis())
                 .param("safetyMargin", policy.limits().safetyMargin())
                 .param("burstWindowMs", policy.limits().burstWindow().toMillis())
                 .param("statusCodes", toJson(response.statusCodes()))
@@ -88,6 +90,7 @@ final class PolicyColumns {
                 new TargetSystemPolicy(
                         rs.getInt("max_tps"),
                         Duration.ofMillis(rs.getLong("baseline_rtt_ms")),
+                        Duration.ofMillis(rs.getLong("baseline_p95_ms")),
                         rs.getDouble("safety_margin"),
                         Duration.ofMillis(rs.getLong("burst_window_ms"))),
                 new ResponseRuleSet(

@@ -38,6 +38,7 @@ public record PolicyBody(
                         connection.readTimeout().toMillis()),
                 new Limits(limits.maxTps(),
                         limits.baselineRtt().toMillis(),
+                        limits.baselineP95().toMillis(),
                         limits.safetyMargin(),
                         limits.burstWindow().toMillis()),
                 new Response(response.statusCodes(), response.resultField(), response.resultCodes()),
@@ -59,6 +60,7 @@ public record PolicyBody(
                 new TargetSystemPolicy(
                         Required.of(limits.maxTps(), "limits.maxTps"),
                         millis(limits.baselineRttMs(), "limits.baselineRttMs"),
+                        millis(limits.baselineP95Ms(), "limits.baselineP95Ms"),
                         Required.of(limits.safetyMargin(), "limits.safetyMargin"),
                         millis(limits.burstWindowMs(), "limits.burstWindowMs")),
                 new ResponseRuleSet(response.statusCodes(), response.resultField(), response.resultCodes()),
@@ -72,7 +74,8 @@ public record PolicyBody(
     public record Connection(String url, String path, Long connectTimeoutMs, Long readTimeoutMs) {
     }
 
-    public record Limits(Integer maxTps, Long baselineRttMs, Double safetyMargin, Long burstWindowMs) {
+    public record Limits(Integer maxTps, Long baselineRttMs, Long baselineP95Ms, Double safetyMargin,
+                         Long burstWindowMs) {
     }
 
     public record Response(

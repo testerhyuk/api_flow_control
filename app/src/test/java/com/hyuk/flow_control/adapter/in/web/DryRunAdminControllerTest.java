@@ -46,7 +46,7 @@ class DryRunAdminControllerTest {
               "policy": {
                 "enabled": true,
                 "connection": {"url": "http://localhost:9001", "connectTimeoutMs": 1000, "readTimeoutMs": 3000},
-                "limits": {"maxTps": 100, "baselineRttMs": 90, "safetyMargin": 0.95, "burstWindowMs": 10},
+                "limits": {"maxTps": 100, "baselineRttMs": 90, "baselineP95Ms": 180, "safetyMargin": 0.95, "burstWindowMs": 10},
                 "response": {"statusCodes": {"2xx": "SUCCESS"}}
               },
               "changedBy": "hyuk",
