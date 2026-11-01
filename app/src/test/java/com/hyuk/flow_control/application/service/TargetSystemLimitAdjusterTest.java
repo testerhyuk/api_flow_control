@@ -421,6 +421,24 @@ class TargetSystemLimitAdjusterTest {
     }
 
     @Test
+    @DisplayName("공용 저장소를 쓸 수 없으면 서버 안 토큰 버킷의 rate 를 마지막으로 알던 서버 수로 나눈다")
+    void dividesBucketRateByLastKnownServersWhenStoreUnavailable() {
+        when(evaluator.snapshotOf(TARGET_A)).thenReturn(snapshot(HealthState.HEALTHY, 100));
+        sharedRates.proposeFromOtherServer(TARGET_A, "other", 95.0);
+        TargetSystemLimitAdjuster adjuster = adjuster(50);
+        adjuster.adjust(TARGET_A);
+        assertThat(adjuster.serversOf(TARGET_A)).isEqualTo(2);
+        verify(rateLimiter).changeRate(TARGET_A, 95.0);
+
+        sharedRates.becomeUnavailable(true);
+        adjuster.adjust(TARGET_A);
+
+        verify(rateLimiter).changeRate(TARGET_A, 47.5);
+        assertThat(adjuster.appliedRateOf(TARGET_A)).isEqualTo(95.0);
+        assertThat(adjuster.serversOf(TARGET_A)).isEqualTo(2);
+    }
+
+    @Test
     @DisplayName("Redis 를 쓸 수 없는 상태라 아예 시도하지 않았으면 오류로 세지 않는다")
     void doesNotCountSkippedCalls() {
         sharedRates.becomeUnavailable(false);

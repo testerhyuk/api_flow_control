@@ -179,7 +179,7 @@ public class TargetSystemLimitAdjuster implements PolicyChangeListener {
                 : baselines.effective(targetSystemId);
         int concurrency = policy.concurrencyLimitAt(shared.rate(), baselineRtt);
 
-        rateLimiter.changeRate(targetSystemId, shared.rate());
+        rateLimiter.changeRate(targetSystemId, shared.bucketRate());
         rates.put(targetSystemId, proposed);
 
         if (shared.rate() == before && concurrency == semaphore.limitOf(targetSystemId)) {
@@ -238,10 +238,12 @@ public class TargetSystemLimitAdjuster implements PolicyChangeListener {
             double lowest = Math.min(proposed, live.stream().mapToDouble(Double::doubleValue).min().orElse(proposed));
 
             sharedRates.saveAppliedRate(targetSystemId, lowest);
-            return new SharedRate(lowest, Math.max(1, live.size()));
+            int servers = Math.max(1, live.size());
+            return new SharedRate(lowest, servers, lowest);
         } catch (SharedRateStoreUnavailableException e) {
             recordStoreError(e);
-            return new SharedRate(proposed, 1);
+            int lastKnown = serversOf(targetSystemId);
+            return new SharedRate(proposed, lastKnown, proposed / lastKnown);
         }
     }
 
@@ -251,6 +253,6 @@ public class TargetSystemLimitAdjuster implements PolicyChangeListener {
         }
     }
 
-    private record SharedRate(double rate, int servers) {
+    private record SharedRate(double rate, int servers, double bucketRate) {
     }
 }
