@@ -12,7 +12,9 @@ public record HealthSnapshot(
         HealthMode mode,
         Duration windowSpan,
         int degradedStreak,
-        Duration baselineP95
+        Duration baselineP95,
+        HealthGrade grade,
+        int newSamples
 ) {
     public HealthSnapshot {
         if (state == null) {
@@ -27,9 +29,17 @@ public record HealthSnapshot(
         if (degradedStreak < 0) {
             throw new IllegalArgumentException("degradedStreak는 0 이상이어야 합니다");
         }
+        if (newSamples < 0) {
+            throw new IllegalArgumentException("newSamples는 0 이상이어야 합니다");
+        }
         if (mode == null) {
             mode = HealthMode.ADAPTIVE;
         }
+    }
+
+    public HealthSnapshot(HealthState state, int sampleCount, double failureRate, Duration p95, Instant evaluatedAt,
+                          HealthMode mode, Duration windowSpan, int degradedStreak, Duration baselineP95) {
+        this(state, sampleCount, failureRate, p95, evaluatedAt, mode, windowSpan, degradedStreak, baselineP95, null, 0);
     }
 
     public HealthSnapshot(HealthState state, int sampleCount, double failureRate, Duration p95, Instant evaluatedAt) {
@@ -42,6 +52,6 @@ public record HealthSnapshot(
 
     public HealthSnapshot withState(HealthState newState) {
         return new HealthSnapshot(newState, sampleCount, failureRate, p95, evaluatedAt, mode, windowSpan,
-                degradedStreak, baselineP95);
+                degradedStreak, baselineP95, grade, newSamples);
     }
 }

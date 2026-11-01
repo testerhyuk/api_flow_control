@@ -36,8 +36,8 @@ class FailoverTargetSystemRateLimiterTest {
         metrics = mock(FlowControlMetrics.class);
         TargetSystemPolicyReader policyReader = mock(TargetSystemPolicyReader.class);
         when(policyReader.readAll()).thenReturn(Map.of(
-                "target-a", new TargetSystemPolicy(1, Duration.ofSeconds(1), 1.0, Duration.ofSeconds(3)),
-                "target-b", new TargetSystemPolicy(10, Duration.ofSeconds(1), 1.0, Duration.ofMillis(10))
+                "target-a", new TargetSystemPolicy(2, Duration.ofSeconds(1), 0.5, Duration.ofSeconds(3)),
+                "target-b", new TargetSystemPolicy(20, Duration.ofSeconds(1), 0.5, Duration.ofMillis(10))
         ));
 
         rateLimiter = new FailoverTargetSystemRateLimiter(policyReader, shared, availability, metrics);

@@ -46,7 +46,7 @@ class ShadowEvaluationTest {
     private static final ManagedPolicy BASE = Policies.policy(TARGET, 1);
     private static final HealthThresholds THRESHOLDS = new HealthThresholds(10, 0.1, 0.5, 2.0);
     private static final HealthRules RULES = new HealthRules(THRESHOLDS, 3, 1, false);
-    private static final RateAdjustmentRule RATE_RULE = new RateAdjustmentRule(0.5, 0.05, 10, 1.0);
+    private static final RateAdjustmentRule RATE_RULE = new RateAdjustmentRule(0.5, 10, 1.0);
 
     private ResponseJudge judge;
     private FlowControlMetrics metrics;

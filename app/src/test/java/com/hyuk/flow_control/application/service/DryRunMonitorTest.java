@@ -60,7 +60,7 @@ class DryRunMonitorTest {
                 mock(FlowControlMetrics.class),
                 new HealthProperties(Duration.ofSeconds(10), Duration.ofSeconds(1), 50, 0.10, 0.50, 2.0,
                         Duration.ofSeconds(30)),
-                new LimitAdjustmentProperties(0.5, 0.05));
+                new LimitAdjustmentProperties(0.5));
     }
 
     @Test

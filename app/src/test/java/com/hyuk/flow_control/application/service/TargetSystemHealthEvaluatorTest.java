@@ -3,6 +3,7 @@ package com.hyuk.flow_control.application.service;
 import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
 import com.hyuk.flow_control.application.port.out.TargetSystemPolicyReader;
 import com.hyuk.flow_control.config.HealthProperties;
+import com.hyuk.flow_control.domain.health.HealthGrade;
 import com.hyuk.flow_control.domain.health.HealthMode;
 import com.hyuk.flow_control.domain.health.HealthSnapshot;
 import com.hyuk.flow_control.domain.health.HealthState;
@@ -495,15 +496,27 @@ class TargetSystemHealthEvaluatorTest {
     }
 
     @Test
-    @DisplayName("위험인 채로 저트래픽 모드에 들어오면 그때부터 호출 건수를 센다")
+    @DisplayName("위험인 채로 저트래픽 모드에 들어오면 그 판정까지 쌓인 호출은 버리고 다음 판정부터 호출 건수를 센다")
     void countsQuietCallsAfterEnteringLowTrafficWhileCritical() {
         when(recorder.window(TARGET_A)).thenReturn(critical(), window(5, 0));
         TargetSystemHealthEvaluator evaluator = antiOscillationEvaluator();
 
-        assertThat(statesAfterEvaluations(evaluator, 7)).containsExactly(
+        assertThat(statesAfterEvaluations(evaluator, 8)).containsExactly(
                 HealthState.CRITICAL, HealthState.CRITICAL, HealthState.CRITICAL, HealthState.CRITICAL,
-                HealthState.CRITICAL, HealthState.CRITICAL, HealthState.HEALTHY);
+                HealthState.CRITICAL, HealthState.CRITICAL, HealthState.CRITICAL, HealthState.HEALTHY);
         assertThat(evaluator.snapshotOf(TARGET_A).mode()).isEqualTo(HealthMode.LOW_TRAFFIC);
+    }
+
+    @Test
+    @DisplayName("판정 결과에 이번 판정의 등급과 새로 받은 호출 결과 개수를 담는다")
+    void snapshotCarriesGradeAndNewSamples() {
+        when(recorder.window(TARGET_A)).thenReturn(good());
+        TargetSystemHealthEvaluator evaluator = plainEvaluator();
+
+        evaluator.evaluate(TARGET_A);
+
+        assertThat(evaluator.snapshotOf(TARGET_A).grade()).isEqualTo(HealthGrade.GOOD);
+        assertThat(evaluator.snapshotOf(TARGET_A).newSamples()).isEqualTo(10);
     }
 
     @Test

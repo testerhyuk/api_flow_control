@@ -23,6 +23,7 @@ import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -49,6 +50,8 @@ public class TargetSystemLimitAdjuster implements PolicyChangeListener {
     private final Map<String, Double> rates = new ConcurrentHashMap<>();
     private final Map<String, Double> appliedRates = new ConcurrentHashMap<>();
     private final Map<String, Integer> servers = new ConcurrentHashMap<>();
+    private final Map<String, Integer> samplesSinceChange = new ConcurrentHashMap<>();
+    private final Map<String, Instant> countedAt = new ConcurrentHashMap<>();
     private final Set<String> inherited = ConcurrentHashMap.newKeySet();
 
     public TargetSystemLimitAdjuster(
@@ -90,7 +93,6 @@ public class TargetSystemLimitAdjuster implements PolicyChangeListener {
                                             HealthProperties healthProperties) {
         return new RateAdjustmentRule(
                 adjustmentProperties.degradedRatio(),
-                adjustmentProperties.recoveryStep(),
                 healthProperties.minimumCalls(),
                 healthProperties.minimumCalls() / (healthProperties.window().toNanos() / 1_000_000_000.0));
     }
@@ -122,6 +124,7 @@ public class TargetSystemLimitAdjuster implements PolicyChangeListener {
         TargetSystemPolicy policy = policyReader.read(targetSystemId);
         double resumed = rule.bounded(Math.min(rateOf(targetSystemId), policy.effectiveRate() * resumeRateRatio), policy);
         rates.put(targetSystemId, resumed);
+        samplesSinceChange.put(targetSystemId, 0);
         log.info("점검이 끝나 rate 를 낮춰 다시 시작합니다 : {} {}", targetSystemId, resumed);
     }
 
@@ -167,8 +170,12 @@ public class TargetSystemLimitAdjuster implements PolicyChangeListener {
         TargetSystemPolicy policy = policyReader.read(targetSystemId);
         HealthSnapshot snapshot = evaluator.snapshotOf(targetSystemId);
 
-        double proposed = proposedRate(targetSystemId, policy, snapshot);
+        int samples = countNewSamples(targetSystemId, snapshot);
+        double proposed = proposedRate(targetSystemId, policy, snapshot, samples);
         proposed = inheritOnce(targetSystemId, proposed);
+        if (proposed != rateOf(targetSystemId)) {
+            samplesSinceChange.put(targetSystemId, 0);
+        }
 
         SharedRate shared = share(targetSystemId, proposed);
         servers.put(targetSystemId, shared.servers());
@@ -194,7 +201,16 @@ public class TargetSystemLimitAdjuster implements PolicyChangeListener {
                 concurrency, baselineRtt.toMillis());
     }
 
-    private double proposedRate(String targetSystemId, TargetSystemPolicy policy, HealthSnapshot snapshot) {
+    private int countNewSamples(String targetSystemId, HealthSnapshot snapshot) {
+        Instant evaluatedAt = snapshot.evaluatedAt();
+        if (evaluatedAt == null || evaluatedAt.equals(countedAt.put(targetSystemId, evaluatedAt))) {
+            return samplesSinceChange.getOrDefault(targetSystemId, 0);
+        }
+        return samplesSinceChange.merge(targetSystemId, snapshot.newSamples(), Integer::sum);
+    }
+
+    private double proposedRate(String targetSystemId, TargetSystemPolicy policy, HealthSnapshot snapshot,
+                                int samples) {
         if (controlMode == ControlMode.FIXED) {
             return policy.effectiveRate();
         }
@@ -206,7 +222,8 @@ public class TargetSystemLimitAdjuster implements PolicyChangeListener {
                     ? rule.floor(policy)
                     : rule.bounded(policy.effectiveRate() * lowTrafficRatio, policy);
         }
-        return rule.next(rateOf(targetSystemId), snapshot.state(), snapshot.sampleCount(), policy);
+        return rule.next(rateOf(targetSystemId), snapshot.state(), Optional.ofNullable(snapshot.grade()), samples,
+                policy);
     }
 
     private double inheritOnce(String targetSystemId, double proposed) {

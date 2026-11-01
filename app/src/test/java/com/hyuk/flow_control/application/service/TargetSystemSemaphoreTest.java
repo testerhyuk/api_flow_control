@@ -217,6 +217,6 @@ class TargetSystemSemaphoreTest {
     }
 
     private static TargetSystemPolicy policyWithConcurrencyLimit(int limit) {
-        return new TargetSystemPolicy(limit, Duration.ofSeconds(1), 1.0, Duration.ofMillis(10));
+        return new TargetSystemPolicy(limit * 2, Duration.ofSeconds(1), 0.5, Duration.ofMillis(10));
     }
 }

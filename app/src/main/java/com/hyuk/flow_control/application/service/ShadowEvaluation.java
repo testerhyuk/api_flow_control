@@ -63,6 +63,7 @@ class ShadowEvaluation {
     private Duration lowTraffic = Duration.ZERO;
     private Instant lastEvaluatedAt;
     private int newSamples;
+    private int samplesSinceChange;
 
     ShadowEvaluation(DryRun dryRun, ManagedPolicy base, HealthStatus actualStatus, double actualRate,
                      ResponseJudge judge, HealthRules rules, RateAdjustmentRule rateRule,
@@ -174,7 +175,8 @@ class ShadowEvaluation {
 
         OutcomeStatistics current = OutcomeWindow.latest(outcomes.descendingIterator(), maxSamples, since).statistics();
         HealthStatus before = status;
-        HealthStatus next = rules.judge(before, current, baselines.p95(), samples).next();
+        HealthRules.Judgment judgment = rules.judge(before, current, baselines.p95(), samples);
+        HealthStatus next = judgment.next();
 
         timeInState.merge(before.state(), Duration.between(lastEvaluatedAt, now), Duration::plus);
         lastEvaluatedAt = now;
@@ -187,10 +189,12 @@ class ShadowEvaluation {
         status = next;
         statistics = current;
 
-        double nextRate = rateRule.next(rate, next.state(), current.sampleCount(), candidate.limits());
+        samplesSinceChange += samples;
+        double nextRate = rateRule.next(rate, next.state(), judgment.grade(), samplesSinceChange, candidate.limits());
         int nextConcurrency = candidate.limits().concurrencyLimitAt(nextRate, baselines.mean());
         if (nextRate != rate) {
             bucket.change(nextRate, candidate.limits().burstCapacityAt(nextRate), nowNanos);
+            samplesSinceChange = 0;
         }
         rate = nextRate;
         concurrencyLimit = nextConcurrency;

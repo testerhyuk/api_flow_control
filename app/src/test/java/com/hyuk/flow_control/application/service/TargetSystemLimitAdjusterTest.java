@@ -7,6 +7,7 @@ import com.hyuk.flow_control.config.ControlProperties;
 import com.hyuk.flow_control.config.HealthProperties;
 import com.hyuk.flow_control.config.LimitAdjustmentProperties;
 import com.hyuk.flow_control.config.MaintenanceProperties;
+import com.hyuk.flow_control.domain.health.HealthGrade;
 import com.hyuk.flow_control.domain.health.HealthMode;
 import com.hyuk.flow_control.domain.health.HealthSnapshot;
 import com.hyuk.flow_control.domain.health.HealthState;
@@ -21,6 +22,7 @@ import org.mockito.AdditionalMatchers;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -44,12 +46,14 @@ class TargetSystemLimitAdjusterTest {
     private static final String TARGET_A = "target-a";
     private static final String LOW = "target-low";
     private static final String TINY = "target-tiny";
+    private static final AtomicLong EVALUATIONS = new AtomicLong();
+    private static final double STEP = 20.0 / 19;
     private static final TargetSystemPolicy POLICY_A =
             new TargetSystemPolicy(100, Duration.ofMillis(100), 0.95, Duration.ofMillis(10));
     private static final TargetSystemPolicy POLICY_LOW =
             new TargetSystemPolicy(10, Duration.ofMillis(100), 0.95, Duration.ofMillis(10));
     private static final TargetSystemPolicy POLICY_TINY =
-            new TargetSystemPolicy(4, Duration.ofMillis(100), 1.0, Duration.ofMillis(10));
+            new TargetSystemPolicy(8, Duration.ofMillis(100), 0.5, Duration.ofMillis(10));
 
     private TargetSystemHealthEvaluator evaluator;
     private TargetSystemPolicyReader policyReader;
@@ -279,7 +283,7 @@ class TargetSystemLimitAdjusterTest {
     }
 
     @Test
-    @DisplayName("CRITICAL 에서 DEGRADED 가 되면 건수가 충분할 때 recovery-step 만큼 올리고, 건수가 모자라면 그대로 둔다")
+    @DisplayName("CRITICAL 에서 DEGRADED 가 되면 새 호출 결과가 충분할 때 올리고, 모자라면 그대로 둔다")
     void raisesByStepOnDegradedAfterCritical() {
         when(evaluator.snapshotOf(TARGET_A)).thenReturn(
                 snapshot(HealthState.CRITICAL, 100),
@@ -289,14 +293,14 @@ class TargetSystemLimitAdjusterTest {
 
         adjuster.adjust(TARGET_A);
         adjuster.adjust(TARGET_A);
-        assertThat(adjuster.rateOf(TARGET_A)).isCloseTo(9.75, within(1e-9));
+        assertThat(adjuster.rateOf(TARGET_A)).isCloseTo(5 * STEP, within(1e-9));
 
         adjuster.adjust(TARGET_A);
-        assertThat(adjuster.rateOf(TARGET_A)).isCloseTo(9.75, within(1e-9));
+        assertThat(adjuster.rateOf(TARGET_A)).isCloseTo(5 * STEP, within(1e-9));
     }
 
     @Test
-    @DisplayName("RECOVERING 이고 건수가 충분하면 판정마다 처음 rate 의 recovery-step 만큼 늘린다")
+    @DisplayName("RECOVERING 이고 새 호출 결과가 충분하면 판정마다 지금 rate 에 안전 비율로 정한 폭만큼 늘린다")
     void raisesByStepWhileRecovering() {
         when(evaluator.snapshotOf(TARGET_A)).thenReturn(
                 snapshot(HealthState.CRITICAL, 100),
@@ -306,14 +310,51 @@ class TargetSystemLimitAdjusterTest {
 
         adjuster.adjust(TARGET_A);
         adjuster.adjust(TARGET_A);
-        assertThat(adjuster.rateOf(TARGET_A)).isCloseTo(9.75, within(1e-9));
+        assertThat(adjuster.rateOf(TARGET_A)).isCloseTo(5 * STEP, within(1e-9));
 
         adjuster.adjust(TARGET_A);
-        assertThat(adjuster.rateOf(TARGET_A)).isCloseTo(14.5, within(1e-9));
+        assertThat(adjuster.rateOf(TARGET_A)).isCloseTo(5 * STEP * STEP, within(1e-9));
 
-        verify(rateLimiter).changeRate(eq(TARGET_A), AdditionalMatchers.eq(9.75, 1e-9));
-        verify(rateLimiter).changeRate(eq(TARGET_A), AdditionalMatchers.eq(14.5, 1e-9));
-        verify(semaphore).changeLimit(TARGET_A, 2);
+        verify(rateLimiter).changeRate(eq(TARGET_A), AdditionalMatchers.eq(5 * STEP, 1e-9));
+        verify(rateLimiter).changeRate(eq(TARGET_A), AdditionalMatchers.eq(5 * STEP * STEP, 1e-9));
+    }
+
+    @Test
+    @DisplayName("RECOVERING 에서 HOLD 면 새 호출 결과가 충분해도 rate 를 늘리지 않는다")
+    void doesNotRaiseOnHoldWhileRecovering() {
+        when(evaluator.snapshotOf(TARGET_A)).thenReturn(
+                snapshot(HealthState.CRITICAL, 100),
+                snapshot(HealthState.RECOVERING, HealthGrade.HOLD, 100));
+        TargetSystemLimitAdjuster adjuster = adjuster(50);
+
+        adjuster.adjust(TARGET_A);
+        adjuster.adjust(TARGET_A);
+
+        assertThat(adjuster.rateOf(TARGET_A)).isEqualTo(5.0);
+    }
+
+    @Test
+    @DisplayName("새 호출 결과는 판정이 바뀔 때만 더하고, 판정 개수만큼 쌓이면 올린 뒤 0부터 다시 센다")
+    void countsNewSamplesSinceChange() {
+        HealthSnapshot first = snapshot(HealthState.RECOVERING, 30);
+        when(evaluator.snapshotOf(TARGET_A)).thenReturn(
+                snapshot(HealthState.CRITICAL, 100),
+                first,
+                first,
+                snapshot(HealthState.RECOVERING, 30),
+                snapshot(HealthState.RECOVERING, 30));
+        TargetSystemLimitAdjuster adjuster = adjuster(50);
+        adjuster.adjust(TARGET_A);
+
+        adjuster.adjust(TARGET_A);
+        adjuster.adjust(TARGET_A);
+        assertThat(adjuster.rateOf(TARGET_A)).isEqualTo(5.0);
+
+        adjuster.adjust(TARGET_A);
+        assertThat(adjuster.rateOf(TARGET_A)).isCloseTo(5 * STEP, within(1e-9));
+
+        adjuster.adjust(TARGET_A);
+        assertThat(adjuster.rateOf(TARGET_A)).isCloseTo(5 * STEP, within(1e-9));
     }
 
     @Test
@@ -337,7 +378,7 @@ class TargetSystemLimitAdjusterTest {
         TargetSystemLimitAdjuster adjuster = adjuster(50);
         adjuster.adjust(TARGET_A);
 
-        when(evaluator.snapshotOf(TARGET_A)).thenReturn(snapshot(HealthState.HEALTHY, 100));
+        when(evaluator.snapshotOf(TARGET_A)).thenAnswer(invocation -> snapshot(HealthState.HEALTHY, 100));
         for (int i = 0; i < 20; i++) {
             adjuster.adjust(TARGET_A);
         }
@@ -391,14 +432,14 @@ class TargetSystemLimitAdjusterTest {
 
         when(evaluator.snapshotOf(TARGET_A)).thenReturn(snapshot(HealthState.HEALTHY, 100));
         adjuster.adjust(TARGET_A);
-        assertThat(adjuster.rateOf(TARGET_A)).isCloseTo(52.25, within(1e-9));
+        assertThat(adjuster.rateOf(TARGET_A)).isCloseTo(47.5 * STEP, within(1e-9));
     }
 
     @Test
     @DisplayName("이어받을 rate 는 한 번만 읽는다")
     void inheritsOnlyOnce() {
         sharedRates.storeAppliedRate(TARGET_A, 47.5);
-        when(evaluator.snapshotOf(TARGET_A)).thenReturn(snapshot(HealthState.HEALTHY, 100));
+        when(evaluator.snapshotOf(TARGET_A)).thenAnswer(invocation -> snapshot(HealthState.HEALTHY, 100));
         TargetSystemLimitAdjuster adjuster = adjuster(50);
         adjuster.adjust(TARGET_A);
 
@@ -487,15 +528,25 @@ class TargetSystemLimitAdjusterTest {
     private TargetSystemLimitAdjuster adjuster(int minimumCalls, ControlMode mode) {
         HealthProperties healthProperties = new HealthProperties(
                 Duration.ofSeconds(10), Duration.ofSeconds(1), minimumCalls, 0.10, 0.50, 2.0, Duration.ofSeconds(30));
-        LimitAdjustmentProperties adjustmentProperties = new LimitAdjustmentProperties(0.5, 0.05);
+        LimitAdjustmentProperties adjustmentProperties = new LimitAdjustmentProperties(0.5);
 
         return new TargetSystemLimitAdjuster(evaluator, policyReader, rateLimiter, semaphore, sharedRates,
                 baselines, maintenance, metrics, adjustmentProperties, healthProperties,
                 new MaintenanceProperties(Duration.ofSeconds(30), 0.5), new ControlProperties(mode));
     }
 
-    private static HealthSnapshot snapshot(HealthState state, int sampleCount) {
-        return new HealthSnapshot(state, sampleCount, 0.0, null, Instant.now());
+    private static HealthSnapshot snapshot(HealthState state, int newSamples) {
+        HealthGrade grade = switch (state) {
+            case HEALTHY, RECOVERING -> HealthGrade.GOOD;
+            case DEGRADED -> HealthGrade.DEGRADED;
+            case CRITICAL -> HealthGrade.CRITICAL;
+        };
+        return snapshot(state, grade, newSamples);
+    }
+
+    private static HealthSnapshot snapshot(HealthState state, HealthGrade grade, int newSamples) {
+        return new HealthSnapshot(state, newSamples, 0.0, null, Instant.now().plusNanos(EVALUATIONS.incrementAndGet()),
+                HealthMode.ADAPTIVE, null, 0, null, grade, newSamples);
     }
 
     private static HealthSnapshot lowTraffic(HealthState state) {
