@@ -286,6 +286,29 @@ class HttpTargetSystemClientTest {
     }
 
     @Test
+    @DisplayName("점검 확인은 정책의 probe-path 로 GET 을 보내고 응답 규칙으로 분류한다")
+    void probesWithGetToProbePath() {
+        respond(503, null);
+        client = clientFor(new ConnectionSettings("http://127.0.0.1:" + server.getAddress().getPort(),
+                "/call", "/status", CONNECT_TIMEOUT, READ_TIMEOUT));
+
+        OutcomeKind kind = client.probe(TARGET);
+
+        assertThat(kind).isEqualTo(OutcomeKind.UNDER_MAINTENANCE);
+        assertThat(receivedMethod).isEqualTo("GET");
+        assertThat(receivedPath).isEqualTo("/status");
+    }
+
+    @Test
+    @DisplayName("점검 확인 응답이 늦으면 TIMEOUT 이다")
+    void probeTimesOut() {
+        respond(200, null);
+        responseDelay = READ_TIMEOUT.plusMillis(200);
+
+        assertThat(client.probe(TARGET)).isEqualTo(OutcomeKind.TIMEOUT);
+    }
+
+    @Test
     @DisplayName("응답 시간을 잰다")
     void measuresLatency() {
         respond(200, null);

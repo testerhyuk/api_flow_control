@@ -49,7 +49,7 @@ class PolicyAdminControllerTest {
     private static final String POLICY_JSON = """
             {
               "enabled": true,
-              "connection": {"url": "http://localhost:9001", "connectTimeoutMs": 1000, "readTimeoutMs": 3000},
+              "connection": {"url": "http://localhost:9001", "probePath": "/health", "connectTimeoutMs": 1000, "readTimeoutMs": 3000},
               "limits": {"maxTps": 80, "baselineRttMs": 150, "baselineP95Ms": 300, "safetyMargin": 0.95, "burstWindowMs": 10},
               "response": {
                 "statusCodes": {"2xx": "SUCCESS", "5xx": "SERVER_ERROR"},
@@ -244,6 +244,12 @@ class PolicyAdminControllerTest {
                         """.formatted(POLICY_JSON.replace("\"baselineP95Ms\": 300, ", ""))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.detail").value("limits.baselineP95Ms 는 필수입니다"));
+
+        mockMvc.perform(put("/admin/policies/target-a").contentType(MediaType.APPLICATION_JSON).content("""
+                        {"expectedVersion": 1, "policy": %s, "changedBy": "hyuk", "reason": "probe 없음"}
+                        """.formatted(POLICY_JSON.replace("\"probePath\": \"/health\", ", ""))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value("connection.probePath 는 필수입니다"));
 
         verify(management, never()).update(any(), any(), anyLong(), any());
     }

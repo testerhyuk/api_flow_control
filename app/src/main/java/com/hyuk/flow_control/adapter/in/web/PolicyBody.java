@@ -34,6 +34,7 @@ public record PolicyBody(
                 policy.enabled(),
                 new Connection(connection.url(),
                         connection.path(),
+                        connection.probePath(),
                         connection.connectTimeout().toMillis(),
                         connection.readTimeout().toMillis()),
                 new Limits(limits.maxTps(),
@@ -55,6 +56,7 @@ public record PolicyBody(
                 new ConnectionSettings(
                         connection.url(),
                         connection.path() == null ? ConnectionSettings.DEFAULT_PATH : connection.path(),
+                        Required.of(connection.probePath(), "connection.probePath"),
                         millis(connection.connectTimeoutMs(), "connection.connectTimeoutMs"),
                         millis(connection.readTimeoutMs(), "connection.readTimeoutMs")),
                 new TargetSystemPolicy(
@@ -71,7 +73,7 @@ public record PolicyBody(
         return Duration.ofMillis(Required.of(value, name));
     }
 
-    public record Connection(String url, String path, Long connectTimeoutMs, Long readTimeoutMs) {
+    public record Connection(String url, String path, String probePath, Long connectTimeoutMs, Long readTimeoutMs) {
     }
 
     public record Limits(Integer maxTps, Long baselineRttMs, Long baselineP95Ms, Double safetyMargin,

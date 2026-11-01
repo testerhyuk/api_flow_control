@@ -250,7 +250,7 @@ class PolicyManagementFlowTest {
         return """
                 {
                   "enabled": %s,
-                  "connection": {"url": "%s", "connectTimeoutMs": 1000, "readTimeoutMs": 3000},
+                  "connection": {"url": "%s", "probePath": "/health", "connectTimeoutMs": 1000, "readTimeoutMs": 3000},
                   "limits": {"maxTps": %d, "baselineRttMs": %d, "baselineP95Ms": %d, "safetyMargin": 0.95, "burstWindowMs": 1000},
                   "response": {"statusCodes": {"2xx": "SUCCESS", "5xx": "SERVER_ERROR"}}
                 }""".formatted(enabled, urlOf(), maxTps, baselineRttMs, baselineRttMs * 2);

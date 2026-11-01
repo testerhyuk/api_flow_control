@@ -68,6 +68,26 @@ public class HttpTargetSystemClient implements TargetSystemClient {
         }
     }
 
+    @Override
+    public OutcomeKind probe(String targetSystemId) {
+        TargetSystemConnections.Connection connection = connections.get(targetSystemId);
+        ResponseRules rules = connection.rules();
+
+        try {
+            ResponseEntity<String> response = connection.restClient().get()
+                    .uri(connection.probePath())
+                    .retrieve()
+                    .onStatus(status -> true, (req, res) -> {})
+                    .toEntity(String.class);
+
+            return rules.judge(response.getStatusCode().value(), rules.readResultCode(response.getBody(), jsonMapper));
+        } catch (ResourceAccessException e) {
+            return fromFailureCause(e.getCause());
+        } catch (RestClientException e) {
+            return OutcomeKind.SERVER_ERROR;
+        }
+    }
+
     private Duration elapsedSince(long startedAt) {
         return Duration.ofNanos(System.nanoTime() - startedAt);
     }

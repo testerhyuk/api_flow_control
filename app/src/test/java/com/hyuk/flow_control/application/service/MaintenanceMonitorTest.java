@@ -2,6 +2,7 @@ package com.hyuk.flow_control.application.service;
 
 import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
 import com.hyuk.flow_control.application.port.out.RequestIntakeControl;
+import com.hyuk.flow_control.application.port.out.TargetSystemClient;
 import com.hyuk.flow_control.config.ControlProperties;
 import com.hyuk.flow_control.config.MaintenanceProperties;
 import com.hyuk.flow_control.domain.limit.ControlMode;
@@ -20,7 +21,9 @@ import org.springframework.beans.factory.ObjectProvider;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Executor;
 import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -28,6 +31,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -40,6 +44,7 @@ class MaintenanceMonitorTest {
     private PolicyRegistry policies;
     private RequestIntakeControl intake;
     private FlowControlMetrics metrics;
+    private TargetSystemClient client;
 
     @BeforeEach
     @SuppressWarnings("unchecked")
@@ -47,6 +52,7 @@ class MaintenanceMonitorTest {
         policies = mock(PolicyRegistry.class);
         intake = mock(RequestIntakeControl.class);
         metrics = mock(FlowControlMetrics.class);
+        client = mock(TargetSystemClient.class);
         when(policies.policies()).thenReturn(List.of(Policies.policy(TARGET)));
     }
 
@@ -66,30 +72,123 @@ class MaintenanceMonitorTest {
     }
 
     @Test
-    @DisplayName("Retry-After 가 없으면 probe-interval 뒤에 다시 읽고 점검이 끝난 것으로 알린다")
-    void resumesAfterProbeInterval() throws InterruptedException {
-        MaintenanceMonitor monitor = monitor(ControlMode.ADAPTIVE, Duration.ofMillis(100));
+    @DisplayName("probe-interval 전에는 확인 호출을 보내지 않고 멈춰 있는다")
+    void waitsUntilProbeInterval() {
+        MaintenanceMonitor monitor = monitor(ControlMode.ADAPTIVE, Duration.ofSeconds(30));
         monitor.onResult(TARGET, MAINTENANCE);
 
         assertThat(monitor.tick()).isEmpty();
+
+        assertThat(monitor.isActive(TARGET)).isTrue();
+        verify(client, never()).probe(any());
+    }
+
+    @Test
+    @DisplayName("probe-interval 뒤 확인 호출이 점검 응답이 아니면 다시 읽고 점검이 끝난 것으로 알린다")
+    void resumesWhenProbeIsNotMaintenance() throws InterruptedException {
+        when(client.probe(TARGET)).thenReturn(OutcomeKind.SUCCESS);
+        MaintenanceMonitor monitor = monitor(ControlMode.ADAPTIVE, Duration.ofMillis(100));
+        monitor.onResult(TARGET, MAINTENANCE);
         Thread.sleep(150);
 
+        assertThat(monitor.tick()).isEmpty();
         assertThat(monitor.tick()).containsExactly(TARGET);
+
         assertThat(monitor.isActive(TARGET)).isFalse();
+        verify(client).probe(TARGET);
         verify(intake).resume(TARGET);
     }
 
     @Test
-    @DisplayName("Retry-After 가 있으면 그 시각까지 멈춘다")
-    void usesRetryAfter() throws InterruptedException {
-        MaintenanceMonitor monitor = monitor(ControlMode.ADAPTIVE, Duration.ofMillis(10));
-        monitor.onResult(TARGET, new OutboundResult(OutcomeKind.UNDER_MAINTENANCE, Duration.ofMillis(20),
-                Instant.now().plusSeconds(60), null, 503, null));
-
-        Thread.sleep(50);
+    @DisplayName("확인 호출이 점검 응답이면 멈춘 채로 probe-interval 뒤에 다시 확인한다")
+    void keepsPausedWhileProbeIsMaintenance() throws InterruptedException {
+        when(client.probe(TARGET)).thenReturn(OutcomeKind.UNDER_MAINTENANCE, OutcomeKind.SUCCESS);
+        MaintenanceMonitor monitor = monitor(ControlMode.ADAPTIVE, Duration.ofMillis(100));
+        monitor.onResult(TARGET, MAINTENANCE);
+        Thread.sleep(150);
 
         assertThat(monitor.tick()).isEmpty();
+        assertThat(monitor.tick()).isEmpty();
         assertThat(monitor.isActive(TARGET)).isTrue();
+        verify(client).probe(TARGET);
+
+        Thread.sleep(150);
+        monitor.tick();
+        assertThat(monitor.tick()).containsExactly(TARGET);
+        verify(client, times(2)).probe(TARGET);
+        verify(intake).resume(TARGET);
+    }
+
+    @Test
+    @DisplayName("확인 호출이 타임아웃이어도 점검 응답이 아니므로 점검이 끝난 것으로 본다")
+    void resumesWhenProbeTimesOut() throws InterruptedException {
+        when(client.probe(TARGET)).thenReturn(OutcomeKind.TIMEOUT);
+        MaintenanceMonitor monitor = monitor(ControlMode.ADAPTIVE, Duration.ofMillis(100));
+        monitor.onResult(TARGET, MAINTENANCE);
+        Thread.sleep(150);
+
+        monitor.tick();
+
+        assertThat(monitor.tick()).containsExactly(TARGET);
+    }
+
+    @Test
+    @DisplayName("Retry-After 가 길어도 그 시각까지 기다리지 않고 probe-interval 마다 확인한다")
+    void ignoresRetryAfter() throws InterruptedException {
+        when(client.probe(TARGET)).thenReturn(OutcomeKind.SUCCESS);
+        MaintenanceMonitor monitor = monitor(ControlMode.ADAPTIVE, Duration.ofMillis(100));
+        monitor.onResult(TARGET, new OutboundResult(OutcomeKind.UNDER_MAINTENANCE, Duration.ofMillis(20),
+                Instant.now().plusSeconds(3600), null, 503, null));
+        Thread.sleep(150);
+
+        monitor.tick();
+
+        assertThat(monitor.tick()).containsExactly(TARGET);
+    }
+
+    @Test
+    @DisplayName("멈춘 동안 점검 응답이 더 와도 확인 일정을 미루지 않는다")
+    void laterMaintenanceResponsesDoNotDelayProbe() throws InterruptedException {
+        when(client.probe(TARGET)).thenReturn(OutcomeKind.SUCCESS);
+        MaintenanceMonitor monitor = monitor(ControlMode.ADAPTIVE, Duration.ofMillis(100));
+        monitor.onResult(TARGET, MAINTENANCE);
+        Thread.sleep(70);
+        monitor.onResult(TARGET, MAINTENANCE);
+        Thread.sleep(70);
+
+        monitor.tick();
+
+        verify(client).probe(TARGET);
+        verify(metrics).recordMaintenanceStarted(TARGET, MaintenanceSource.RESPONSE);
+    }
+
+    @Test
+    @DisplayName("확인 호출은 한 외부 서버에 동시에 하나만 보낸다")
+    void probesOneAtATime() throws InterruptedException {
+        List<Runnable> queued = new ArrayList<>();
+        MaintenanceMonitor monitor = monitor(ControlMode.ADAPTIVE, Duration.ofMillis(100), queued::add);
+        monitor.onResult(TARGET, MAINTENANCE);
+        Thread.sleep(150);
+
+        monitor.tick();
+        monitor.tick();
+
+        assertThat(queued).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("점검 일정 안에서는 확인 호출을 보내지 않는다")
+    void doesNotProbeDuringSchedule() throws InterruptedException {
+        LocalDateTime now = LocalDateTime.now(MaintenanceSchedule.ZONE);
+        when(policies.policies()).thenReturn(List.of(
+                withSchedule(new OneTimeMaintenance(now.minusMinutes(1), now.plusMinutes(10)))));
+        MaintenanceMonitor monitor = monitor(ControlMode.ADAPTIVE, Duration.ofMillis(100));
+        monitor.onResult(TARGET, MAINTENANCE);
+        Thread.sleep(150);
+
+        monitor.tick();
+
+        verify(client, never()).probe(any());
     }
 
     @Test
@@ -154,15 +253,19 @@ class MaintenanceMonitorTest {
                 base.limits(), base.response(), new MaintenanceSchedule(List.of(), List.of(window)));
     }
 
-    @SuppressWarnings("unchecked")
     private MaintenanceMonitor monitor(ControlMode mode, Duration probeInterval) {
+        return monitor(mode, probeInterval, Runnable::run);
+    }
+
+    @SuppressWarnings("unchecked")
+    private MaintenanceMonitor monitor(ControlMode mode, Duration probeInterval, Executor probes) {
         ObjectProvider<RequestIntakeControl> provider = mock(ObjectProvider.class);
         doAnswer(invocation -> {
             ((Consumer<RequestIntakeControl>) invocation.getArgument(0)).accept(intake);
             return null;
         }).when(provider).ifAvailable(any());
 
-        return new MaintenanceMonitor(policies, provider, metrics,
-                new MaintenanceProperties(probeInterval, 0.5), new ControlProperties(mode));
+        return new MaintenanceMonitor(policies, provider, client, metrics,
+                new MaintenanceProperties(probeInterval, 0.5), new ControlProperties(mode), probes);
     }
 }

@@ -72,6 +72,20 @@ class MockTargetHttpTest {
     }
 
     @Test
+    @DisplayName("GET /health 는 점검이 걸려 있으면 503 과 Retry-After, 아니면 200 으로 응답한다")
+    void healthReportsMaintenance() throws Exception {
+        assertThat(health().statusCode()).isEqualTo(200);
+
+        applyFault("maintenance", "{\"value\":30}");
+        HttpResponse<String> response = health();
+        assertThat(response.statusCode()).isEqualTo(503);
+        assertThat(response.headers().firstValue("Retry-After")).contains("30");
+
+        send(HttpRequest.newBuilder(admin("/actuator/faults/maintenance")).DELETE().build());
+        assertThat(health().statusCode()).isEqualTo(200);
+    }
+
+    @Test
     @DisplayName("다운을 걸면 /call 포트가 닫혀 연결이 거부되고, 풀면 다시 연결된다")
     void downClosesCallPort() throws Exception {
         assertThat(applyFault("down", "{}").statusCode()).isEqualTo(200);
@@ -113,6 +127,14 @@ class MockTargetHttpTest {
                     .header("x-request-id", requestId)
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(body))
+                    .build(), HttpResponse.BodyHandlers.ofString());
+        }
+    }
+
+    private HttpResponse<String> health() throws IOException, InterruptedException {
+        try (HttpClient fresh = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(1)).build()) {
+            return fresh.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + serverPort + "/health"))
+                    .GET()
                     .build(), HttpResponse.BodyHandlers.ofString());
         }
     }

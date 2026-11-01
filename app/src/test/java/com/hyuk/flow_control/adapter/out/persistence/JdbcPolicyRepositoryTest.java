@@ -95,6 +95,21 @@ class JdbcPolicyRepositoryTest {
     }
 
     @Test
+    @DisplayName("점검 확인 경로를 저장하고 읽는다")
+    void storesProbePath() {
+        ManagedPolicy base = Policies.policy("target-e");
+        ManagedPolicy policy = new ManagedPolicy(base.targetSystemId(), base.version(), base.enabled(),
+                new ConnectionSettings("http://localhost:9001", "/call", "/status", Duration.ofSeconds(1),
+                        Duration.ofSeconds(3)),
+                base.limits(), base.response());
+
+        repository.insert(policy, NOTE, AT);
+
+        assertThat(repository.load("target-e")).contains(new LoadedPolicy.Valid(policy));
+        assertThat(repository.history("target-e").getFirst().policy().connection().probePath()).isEqualTo("/status");
+    }
+
+    @Test
     @DisplayName("baseline-p95 를 baseline-rtt 와 따로 저장하고 읽는다")
     void storesBaselineP95() {
         ManagedPolicy policy = Policies.withLimits(Policies.policy("target-d"), new TargetSystemPolicy(

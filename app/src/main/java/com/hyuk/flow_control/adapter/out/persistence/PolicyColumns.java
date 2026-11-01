@@ -30,18 +30,18 @@ final class PolicyColumns {
     };
 
     static final String NAMES = """
-            target_system_id, enabled, url, path, connect_timeout_ms, read_timeout_ms,
+            target_system_id, enabled, url, path, probe_path, connect_timeout_ms, read_timeout_ms,
             max_tps, baseline_rtt_ms, baseline_p95_ms, safety_margin, burst_window_ms,
             status_codes, result_field, result_codes, maintenance""";
 
     static final String VALUES = """
-            :targetSystemId, :enabled, :url, :path, :connectTimeoutMs, :readTimeoutMs,
+            :targetSystemId, :enabled, :url, :path, :probePath, :connectTimeoutMs, :readTimeoutMs,
             :maxTps, :baselineRttMs, :baselineP95Ms, :safetyMargin, :burstWindowMs,
             cast(:statusCodes as jsonb), :resultField, cast(:resultCodes as jsonb),
             cast(:maintenance as jsonb)""";
 
     static final String ASSIGNMENTS = """
-            enabled = :enabled, url = :url, path = :path,
+            enabled = :enabled, url = :url, path = :path, probe_path = :probePath,
             connect_timeout_ms = :connectTimeoutMs, read_timeout_ms = :readTimeoutMs,
             max_tps = :maxTps, baseline_rtt_ms = :baselineRttMs, baseline_p95_ms = :baselineP95Ms,
             safety_margin = :safetyMargin,
@@ -64,6 +64,7 @@ final class PolicyColumns {
                 .param("enabled", policy.enabled())
                 .param("url", policy.connection().url())
                 .param("path", policy.connection().path())
+                .param("probePath", policy.connection().probePath())
                 .param("connectTimeoutMs", policy.connection().connectTimeout().toMillis())
                 .param("readTimeoutMs", policy.connection().readTimeout().toMillis())
                 .param("maxTps", policy.limits().maxTps())
@@ -85,6 +86,7 @@ final class PolicyColumns {
                 new ConnectionSettings(
                         rs.getString("url"),
                         rs.getString("path"),
+                        rs.getString("probe_path"),
                         Duration.ofMillis(rs.getLong("connect_timeout_ms")),
                         Duration.ofMillis(rs.getLong("read_timeout_ms"))),
                 new TargetSystemPolicy(

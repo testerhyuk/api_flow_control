@@ -38,6 +38,13 @@ public class CallSimulator {
         this.onDuplicate = onDuplicate;
     }
 
+    public CallResult health() {
+        Long maintenanceRetryAfter = faults.maintenanceRetryAfterSeconds();
+        return maintenanceRetryAfter != null
+                ? new CallResult(Outcome.MAINTENANCE, maintenanceRetryAfter)
+                : CallResult.of(Outcome.SUCCESS);
+    }
+
     public CallResult handle(String requestId, String payload) throws InterruptedException {
         Long maintenanceRetryAfter = faults.maintenanceRetryAfterSeconds();
         if (maintenanceRetryAfter != null) {
