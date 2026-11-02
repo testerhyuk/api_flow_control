@@ -7,7 +7,7 @@ import com.hyuk.flow_control.config.HealthProperties;
 import com.hyuk.flow_control.config.LimitAdjustmentProperties;
 import com.hyuk.flow_control.domain.dryrun.DryRun;
 import com.hyuk.flow_control.domain.dryrun.DryRunReport;
-import com.hyuk.flow_control.domain.health.HealthMode;
+import com.hyuk.flow_control.domain.health.LowTrafficRules;
 import com.hyuk.flow_control.domain.health.HealthRules;
 import com.hyuk.flow_control.domain.health.HealthState;
 import com.hyuk.flow_control.domain.limit.RateAdjustmentRule;
@@ -38,6 +38,7 @@ public class DryRunMonitor {
     private final ResponseJudge judge;
     private final FlowControlMetrics metrics;
     private final HealthRules rules;
+    private final LowTrafficRules lowTraffic;
     private final RateAdjustmentRule rateRule;
     private final Duration window;
     private final int maxSamples;
@@ -63,6 +64,7 @@ public class DryRunMonitor {
         this.judge = judge;
         this.metrics = metrics;
         this.rules = healthProperties.rules();
+        this.lowTraffic = healthProperties.lowTraffic().rules();
         this.rateRule = TargetSystemLimitAdjuster.ruleOf(adjustmentProperties, healthProperties);
         this.window = healthProperties.window();
         this.maxSamples = healthProperties.minimumCalls();
@@ -114,8 +116,7 @@ public class DryRunMonitor {
             try {
                 evaluation.evaluate(now, nowNanos, adjuster.serversOf(targetSystemId),
                         candidateBaseline(evaluation.dryRun()),
-                        maintenance.isActive(targetSystemId),
-                        evaluator.snapshotOf(targetSystemId).mode() == HealthMode.LOW_TRAFFIC);
+                        maintenance.isActive(targetSystemId));
             } catch (RuntimeException e) {
                 log.warn("dry-run 상태 판정 실패 : {}", targetSystemId, e);
             }
@@ -196,6 +197,7 @@ public class DryRunMonitor {
                 adjuster.appliedRateOf(targetSystemId),
                 judge,
                 rules,
+                lowTraffic,
                 rateRule,
                 window,
                 maxSamples,

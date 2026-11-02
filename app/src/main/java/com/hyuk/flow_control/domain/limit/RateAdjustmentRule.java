@@ -1,6 +1,7 @@
 package com.hyuk.flow_control.domain.limit;
 
 import com.hyuk.flow_control.domain.health.HealthGrade;
+import com.hyuk.flow_control.domain.health.HealthMode;
 import com.hyuk.flow_control.domain.health.HealthState;
 import com.hyuk.flow_control.domain.policy.TargetSystemPolicy;
 
@@ -11,6 +12,14 @@ public record RateAdjustmentRule(
         int minimumCalls,
         double criticalRate
 ) {
+    public double next(double current, HealthMode mode, HealthState state, Optional<HealthGrade> grade,
+                       int samplesSinceChange, TargetSystemPolicy policy) {
+        if (mode == HealthMode.LOW_TRAFFIC) {
+            return state == HealthState.CRITICAL ? floor(policy) : bounded(current, policy);
+        }
+        return next(current, state, grade, samplesSinceChange, policy);
+    }
+
     public double next(double current, HealthState state, Optional<HealthGrade> grade, int samplesSinceChange,
                        TargetSystemPolicy policy) {
         double effectiveRate = policy.effectiveRate();

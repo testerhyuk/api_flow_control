@@ -8,6 +8,8 @@ import com.hyuk.flow_control.domain.health.HealthState;
 import com.hyuk.flow_control.domain.health.HealthStatus;
 import com.hyuk.flow_control.domain.health.HealthRules;
 import com.hyuk.flow_control.domain.health.HealthThresholds;
+import com.hyuk.flow_control.domain.health.LowTrafficRules;
+import com.hyuk.flow_control.domain.health.HealthMode;
 import com.hyuk.flow_control.domain.limit.RateAdjustmentRule;
 import com.hyuk.flow_control.domain.maintenance.MaintenanceSchedule;
 import com.hyuk.flow_control.domain.maintenance.OneTimeMaintenance;
@@ -46,6 +48,7 @@ class ShadowEvaluationTest {
     private static final ManagedPolicy BASE = Policies.policy(TARGET, 1);
     private static final HealthThresholds THRESHOLDS = new HealthThresholds(10, 0.1, 0.5, 2.0);
     private static final HealthRules RULES = new HealthRules(THRESHOLDS, 3, 1, false);
+    private static final LowTrafficRules LOW_TRAFFIC = new LowTrafficRules(3, 3, 3, 5);
     private static final RateAdjustmentRule RATE_RULE = new RateAdjustmentRule(0.5, 10, 1.0);
 
     private ResponseJudge judge;
@@ -106,7 +109,7 @@ class ShadowEvaluationTest {
         ShadowEvaluation evaluation = evaluation(limits(100, 150), 95.0);
         completeMany(evaluation, OutcomeKind.SUCCESS, 10, NOW);
         for (int i = 0; i < 10; i++) {
-            evaluation.complete(response(OutcomeKind.UNEXPECTED_RESPONSE, 200, 150), NOW, false);
+            evaluation.complete(response(OutcomeKind.SERVER_ERROR, 500, 150), NOW, false);
         }
 
         evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1, baselineOf(evaluation));
@@ -328,7 +331,7 @@ class ShadowEvaluationTest {
             evaluation.complete(response(OutcomeKind.SUCCESS, 200, 150), NOW);
         }
 
-        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1, baselineOf(evaluation), true, false);
+        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1, baselineOf(evaluation), true);
 
         assertThat(evaluation.state()).isEqualTo(HealthState.HEALTHY);
         assertThat(evaluation.report(NOW.plusSeconds(1), HealthState.HEALTHY, 95.0).health().timeInState())
@@ -336,15 +339,36 @@ class ShadowEvaluationTest {
     }
 
     @Test
-    @DisplayName("실제 판정이 저트래픽 모드였던 시간을 알 수 없는 부분에 적는다")
-    void listsLowTrafficTime() {
+    @DisplayName("호출이 적은 판정이 이어지면 저트래픽 모드로 바꾸고, 연속 실패면 새 값 기준 상태를 위험으로 내린다")
+    void judgesWithLowTrafficRules() {
+        ShadowEvaluation evaluation = evaluation(limits(100, 150), 95.0);
+        for (int second = 1; second <= 3; second++) {
+            evaluation.evaluate(NOW.plusSeconds(second), second * 1_000_000_000L, 1, baselineOf(evaluation));
+        }
+        HealthMode entered = evaluation.mode();
+
+        completeMany(evaluation, OutcomeKind.SERVER_ERROR, 3, NOW.plusSeconds(3));
+        evaluation.evaluate(NOW.plusSeconds(4), 4_000_000_000L, 1, baselineOf(evaluation));
+
+        assertThat(entered).isEqualTo(HealthMode.LOW_TRAFFIC);
+        assertThat(evaluation.state()).isEqualTo(HealthState.CRITICAL);
+        assertThat(evaluation.rate()).isCloseTo(1.0, within(1e-9));
+        assertThat(evaluation.report(NOW.plusSeconds(4), HealthState.HEALTHY, 95.0).unknowns())
+                .noneMatch(text -> text.contains("저트래픽"));
+    }
+
+    @Test
+    @DisplayName("새 한도에 막힌 적이 판정 구간 안에 있으면 저트래픽 모드로 바꾸지 않는다")
+    void staysAdaptiveWhileBlocked() {
         ShadowEvaluation evaluation = evaluation(limits(80, 150), 95.0);
+        evaluation.admit(0);
+        evaluation.admit(0);
 
-        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1, baselineOf(evaluation), false, true);
-        evaluation.evaluate(NOW.plusSeconds(3), 3_000_000_000L, 1, baselineOf(evaluation), false, true);
+        for (int second = 1; second <= 3; second++) {
+            evaluation.evaluate(NOW.plusSeconds(second), second * 1_000_000_000L, 1, baselineOf(evaluation));
+        }
 
-        assertThat(evaluation.report(NOW.plusSeconds(3), HealthState.HEALTHY, 95.0).unknowns())
-                .anyMatch(text -> text.contains("저트래픽 모드였던 3초"));
+        assertThat(evaluation.mode()).isEqualTo(HealthMode.ADAPTIVE);
     }
 
     @Test
@@ -422,7 +446,7 @@ class ShadowEvaluationTest {
 
     private ShadowEvaluation evaluation(ManagedPolicy candidate, double actualRate, HealthStatus actualStatus) {
         DryRun dryRun = new DryRun(candidate, 1, NOW, NOW.plus(Duration.ofMinutes(30)), new ChangeNote("hyuk", "test"));
-        return new ShadowEvaluation(dryRun, BASE, actualStatus, actualRate, judge, RULES, RATE_RULE,
+        return new ShadowEvaluation(dryRun, BASE, actualStatus, actualRate, judge, RULES, LOW_TRAFFIC, RATE_RULE,
                 Duration.ofSeconds(10), 10, BaselineEstimator.Baselines.of(candidate.limits()), metrics, NOW, 0L);
     }
 
