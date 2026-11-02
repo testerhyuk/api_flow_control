@@ -372,15 +372,39 @@ class ShadowEvaluationTest {
     }
 
     @Test
-    @DisplayName("점검 시간표를 바꾸면 그 효과는 확인할 수 없다고 적는다")
-    void listsMaintenanceScheduleChange() {
-        ManagedPolicy changed = BASE.withVersion(2);
-        ManagedPolicy candidate = new ManagedPolicy(changed.targetSystemId(), changed.version(), changed.enabled(),
-                changed.connection(), changed.limits(), changed.response(), new MaintenanceSchedule(List.of(),
-                List.of(new OneTimeMaintenance(LocalDateTime.of(2026, 10, 20, 1, 0), LocalDateTime.of(2026, 10, 20, 5, 0)))));
+    @DisplayName("점검 일정을 바꾸면 새 일정의 점검 시간과 그 시간의 호출 수, 달라진 시간을 세고, 그 뒤의 영향만 알 수 없다고 적는다")
+    void countsCandidateMaintenance() {
+        ShadowEvaluation evaluation = evaluation(withMaintenance(oneTimeMaintenance(NOW, NOW.plusSeconds(3))), 95.0);
 
-        assertThat(evaluation(candidate, 95.0).report(NOW, HealthState.HEALTHY, 95.0).unknowns())
-                .containsExactly("점검 시간표를 바꾼 효과는 확인할 수 없습니다");
+        completeMany(evaluation, OutcomeKind.SERVER_ERROR, 10, NOW.plusSeconds(1));
+        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1, baselineOf(evaluation));
+        evaluation.evaluate(NOW.plusSeconds(2), 2_000_000_000L, 1, baselineOf(evaluation));
+        evaluation.evaluate(NOW.plusSeconds(3), 3_000_000_000L, 1, baselineOf(evaluation));
+
+        DryRunReport report = evaluation.report(NOW.plusSeconds(3), HealthState.HEALTHY, 95.0);
+        assertThat(evaluation.state()).isEqualTo(HealthState.HEALTHY);
+        assertThat(report.health().sampleCount()).isZero();
+        assertThat(report.maintenance()).isEqualTo(new DryRunReport.Maintenance(
+                Duration.ofSeconds(2), 10, Duration.ofSeconds(2), Duration.ZERO));
+        assertThat(report.unknowns()).containsExactly(
+                "새 점검 일정이었다면 점검 중에 요청을 읽지 않아 쌓였을 요청이, 점검이 끝난 뒤 어떻게 나갔을지는 알 수 없습니다");
+    }
+
+    @Test
+    @DisplayName("점검 일정이 같으면 점검 계산 결과를 남기지 않는다")
+    void noMaintenanceReportWhenScheduleSame() {
+        assertThat(evaluation(limits(80, 150), 95.0).report(NOW, HealthState.HEALTHY, 95.0).maintenance()).isNull();
+    }
+
+    private static ManagedPolicy withMaintenance(MaintenanceSchedule schedule) {
+        ManagedPolicy changed = BASE.withVersion(2);
+        return new ManagedPolicy(changed.targetSystemId(), changed.version(), changed.enabled(),
+                changed.connection(), changed.limits(), changed.response(), schedule);
+    }
+
+    private static MaintenanceSchedule oneTimeMaintenance(Instant from, Instant to) {
+        return new MaintenanceSchedule(List.of(), List.of(new OneTimeMaintenance(
+                LocalDateTime.ofInstant(from, MaintenanceSchedule.ZONE), LocalDateTime.ofInstant(to, MaintenanceSchedule.ZONE))));
     }
 
     @Test

@@ -59,6 +59,8 @@ class ShadowEvaluation {
     private final LongAdder wouldTimeout = new LongAdder();
     private final LongAdder unknownTimeouts = new LongAdder();
     private final LongAdder excludedBlocked = new LongAdder();
+    private final LongAdder candidateMaintenanceCalls = new LongAdder();
+    private final boolean maintenanceChanged;
     private final Map<JudgmentKey, LongAdder> judgmentChanges = new ConcurrentHashMap<>();
 
     private final Map<HealthState, Duration> timeInState = new EnumMap<>(HealthState.class);
@@ -67,6 +69,9 @@ class ShadowEvaluation {
     private volatile int concurrencyLimit;
     private long transitions;
     private Duration overlap = Duration.ZERO;
+    private Duration candidateMaintenanceTime = Duration.ZERO;
+    private Duration addedMaintenanceTime = Duration.ZERO;
+    private Duration removedMaintenanceTime = Duration.ZERO;
     private Instant lastEvaluatedAt;
     private int newSamples;
     private int samplesSinceChange;
@@ -82,6 +87,7 @@ class ShadowEvaluation {
         this.dryRun = dryRun;
         this.base = base;
         this.candidate = dryRun.candidate();
+        this.maintenanceChanged = !candidate.maintenance().equals(base.maintenance());
         this.judge = judge;
         this.tracker = new HealthTracker(rules, maxSamples, lowTraffic, actualStatus);
         this.streaks = new LowTrafficStreaks(lowTraffic);
@@ -166,6 +172,10 @@ class ShadowEvaluation {
             excludedBlocked.increment();
             return;
         }
+        if (maintenanceChanged && candidate.maintenance().isActiveAt(now)) {
+            candidateMaintenanceCalls.increment();
+            return;
+        }
 
         outcomes.addLast(new RecordedOutcome(kind, latency, now));
         streaks.track(kind);
@@ -189,12 +199,16 @@ class ShadowEvaluation {
         if (servers > 1) {
             overlap = overlap.plus(elapsed);
         }
+        boolean candidateMaintenance = maintenanceChanged && candidate.maintenance().isActiveAt(now);
+        if (maintenanceChanged) {
+            countMaintenanceTime(now, elapsed, candidateMaintenance);
+        }
         Instant since = now.minus(window);
         removeOlderThan(since);
 
         int samples = drainNewSamples();
         HealthStatus before = tracker.status();
-        if (underMaintenance) {
+        if (underMaintenance || candidateMaintenance) {
             streaks.drain();
             tracker.pause();
             timeInState.merge(before.state(), elapsed, Duration::plus);
@@ -227,6 +241,20 @@ class ShadowEvaluation {
         }
         rate = nextRate;
         concurrencyLimit = nextConcurrency;
+    }
+
+    private void countMaintenanceTime(Instant now, Duration elapsed, boolean candidateMaintenance) {
+        boolean baseMaintenance = base.maintenance().isActiveAt(now);
+
+        if (candidateMaintenance) {
+            candidateMaintenanceTime = candidateMaintenanceTime.plus(elapsed);
+        }
+        if (candidateMaintenance && !baseMaintenance) {
+            addedMaintenanceTime = addedMaintenanceTime.plus(elapsed);
+        }
+        if (!candidateMaintenance && baseMaintenance) {
+            removedMaintenanceTime = removedMaintenanceTime.plus(elapsed);
+        }
     }
 
     private synchronized void countSample() {
@@ -272,6 +300,10 @@ class ShadowEvaluation {
                         current.sampleCount(),
                         current.failureRate(),
                         current.p95()),
+                maintenanceChanged
+                        ? new DryRunReport.Maintenance(candidateMaintenanceTime, candidateMaintenanceCalls.sum(),
+                        addedMaintenanceTime, removedMaintenanceTime)
+                        : null,
                 unknowns());
     }
 
@@ -335,8 +367,8 @@ class ShadowEvaluation {
             unknowns.add("다른 서버와 겹친 " + overlap.toSeconds()
                     + "초 동안은 이 서버가 호출의 일부만 봐서, 막혔을 호출이 적게 세어지고 상태 판정 근거가 적었을 수 있습니다");
         }
-        if (!candidate.maintenance().equals(base.maintenance())) {
-            unknowns.add("점검 시간표를 바꾼 효과는 확인할 수 없습니다");
+        if (maintenanceChanged) {
+            unknowns.add("새 점검 일정이었다면 점검 중에 요청을 읽지 않아 쌓였을 요청이, 점검이 끝난 뒤 어떻게 나갔을지는 알 수 없습니다");
         }
 
         return unknowns;

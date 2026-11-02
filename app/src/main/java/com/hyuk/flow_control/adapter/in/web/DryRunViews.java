@@ -53,6 +53,7 @@ public final class DryRunViews {
             List<DryRunReport.JudgmentChange> judgmentChanges,
             DryRunReport.Timeouts timeouts,
             Health health,
+            Maintenance maintenance,
             List<String> unknowns
     ) {
         static Result from(DryRunReport report) {
@@ -65,7 +66,23 @@ public final class DryRunViews {
                     report.judgmentChanges(),
                     report.timeouts(),
                     Health.from(report.health()),
+                    report.maintenance() == null ? null : Maintenance.from(report.maintenance()),
                     report.unknowns());
+        }
+    }
+
+    public record Maintenance(
+            long candidateTimeMs,
+            long candidateCalls,
+            long addedTimeMs,
+            long removedTimeMs
+    ) {
+        static Maintenance from(DryRunReport.Maintenance maintenance) {
+            return new Maintenance(
+                    maintenance.candidateTime().toMillis(),
+                    maintenance.candidateCalls(),
+                    maintenance.addedTime().toMillis(),
+                    maintenance.removedTime().toMillis());
         }
     }
 

@@ -109,6 +109,7 @@ class DryRunAdminControllerTest {
                 new DryRunReport.Health(HealthState.HEALTHY, HealthState.DEGRADED, 1,
                         Map.of(HealthState.HEALTHY, Duration.ofSeconds(20), HealthState.DEGRADED, Duration.ofSeconds(40)),
                         60, 0.05, Duration.ofMillis(210)),
+                new DryRunReport.Maintenance(Duration.ofSeconds(30), 12, Duration.ofSeconds(30), Duration.ZERO),
                 List.of("connect-timeout 은 계산하지 않았습니다"));
         when(dryRuns.get("target-a")).thenReturn(new DryRunStatus(DRY_RUN, report));
 
@@ -123,6 +124,8 @@ class DryRunAdminControllerTest {
                 .andExpect(jsonPath("$.result.health.state").value("DEGRADED"))
                 .andExpect(jsonPath("$.result.health.timeInStateMs.DEGRADED").value(40000))
                 .andExpect(jsonPath("$.result.health.p95Ms").value(210))
+                .andExpect(jsonPath("$.result.maintenance.candidateTimeMs").value(30000))
+                .andExpect(jsonPath("$.result.maintenance.candidateCalls").value(12))
                 .andExpect(jsonPath("$.result.unknowns[0]").value("connect-timeout 은 계산하지 않았습니다"));
     }
 

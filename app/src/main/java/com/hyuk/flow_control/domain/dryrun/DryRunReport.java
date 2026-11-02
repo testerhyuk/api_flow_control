@@ -17,6 +17,7 @@ public record DryRunReport(
         List<JudgmentChange> judgmentChanges,
         Timeouts timeouts,
         Health health,
+        Maintenance maintenance,
         List<String> unknowns
 ) {
     public DryRunReport {
@@ -35,6 +36,14 @@ public record DryRunReport(
     }
 
     public record JudgmentChange(OutcomeKind actual, OutcomeKind candidate, long count) {
+    }
+
+    public record Maintenance(
+            Duration candidateTime,
+            long candidateCalls,
+            Duration addedTime,
+            Duration removedTime
+    ) {
     }
 
     public record Timeouts(long wouldTimeout, long actualTimeoutsWithUnknownResult) {
