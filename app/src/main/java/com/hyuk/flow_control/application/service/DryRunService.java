@@ -3,15 +3,14 @@ package com.hyuk.flow_control.application.service;
 import com.hyuk.flow_control.application.port.in.DryRunStatus;
 import com.hyuk.flow_control.application.port.in.DryRunUseCase;
 import com.hyuk.flow_control.application.port.in.PolicyContent;
+import com.hyuk.flow_control.application.port.in.PolicyManagementUseCase;
 import com.hyuk.flow_control.application.port.out.DryRunRepository;
-import com.hyuk.flow_control.application.port.out.PolicyRepository;
 import com.hyuk.flow_control.config.PolicyProperties;
 import com.hyuk.flow_control.domain.dryrun.DryRun;
 import com.hyuk.flow_control.domain.dryrun.DryRunNotFoundException;
 import com.hyuk.flow_control.domain.policy.ChangeNote;
 import com.hyuk.flow_control.domain.policy.LoadedPolicy;
 import com.hyuk.flow_control.domain.policy.ManagedPolicy;
-import com.hyuk.flow_control.domain.policy.PolicyNotFoundException;
 import com.hyuk.flow_control.domain.policy.PolicyVersionConflictException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,11 +24,11 @@ public class DryRunService implements DryRunUseCase {
     private static final Logger log = LoggerFactory.getLogger(DryRunService.class);
 
     private final DryRunRepository dryRuns;
-    private final PolicyRepository policies;
+    private final PolicyManagementUseCase policies;
     private final DryRunMonitor monitor;
     private final Duration maxDuration;
 
-    public DryRunService(DryRunRepository dryRuns, PolicyRepository policies, DryRunMonitor monitor,
+    public DryRunService(DryRunRepository dryRuns, PolicyManagementUseCase policies, DryRunMonitor monitor,
                          PolicyProperties policyProperties) {
         this.dryRuns = dryRuns;
         this.policies = policies;
@@ -86,7 +85,7 @@ public class DryRunService implements DryRunUseCase {
         ManagedPolicy candidate = dryRun.candidate();
 
         try {
-            policies.update(candidate, dryRun.baseVersion(), note, Instant.now());
+            policies.update(candidate, dryRun.baseVersion(), note);
         } catch (PolicyVersionConflictException e) {
             dryRuns.delete(targetSystemId);
             log.info("정책이 그사이 바뀌어서 dry-run 을 취소했습니다 : {}", targetSystemId);
@@ -100,8 +99,7 @@ public class DryRunService implements DryRunUseCase {
     }
 
     private ManagedPolicy validPolicyOf(String targetSystemId) {
-        LoadedPolicy loaded = policies.load(targetSystemId)
-                .orElseThrow(() -> new PolicyNotFoundException(targetSystemId));
+        LoadedPolicy loaded = policies.get(targetSystemId);
 
         if (!(loaded instanceof LoadedPolicy.Valid valid)) {
             throw new IllegalArgumentException("저장된 정책이 잘못돼 있어서 dry-run 할 수 없습니다. 정책 전체를 고쳐 주세요 : " + targetSystemId);

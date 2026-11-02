@@ -2,8 +2,8 @@ package com.hyuk.flow_control.application.service;
 
 import com.hyuk.flow_control.application.port.in.DryRunStatus;
 import com.hyuk.flow_control.application.port.in.PolicyContent;
+import com.hyuk.flow_control.application.port.in.PolicyManagementUseCase;
 import com.hyuk.flow_control.application.port.out.DryRunRepository;
-import com.hyuk.flow_control.application.port.out.PolicyRepository;
 import com.hyuk.flow_control.config.PolicyProperties;
 import com.hyuk.flow_control.domain.dryrun.DryRun;
 import com.hyuk.flow_control.domain.dryrun.DryRunNotFoundException;
@@ -43,18 +43,18 @@ class DryRunServiceTest {
             new PolicyContent(true, Policies.CONNECTION, NEW_LIMITS, Policies.STATUS_RULES);
 
     private DryRunRepository dryRuns;
-    private PolicyRepository policies;
+    private PolicyManagementUseCase policies;
     private DryRunMonitor monitor;
     private DryRunService service;
 
     @BeforeEach
     void setUp() {
         dryRuns = mock(DryRunRepository.class);
-        policies = mock(PolicyRepository.class);
+        policies = mock(PolicyManagementUseCase.class);
         monitor = mock(DryRunMonitor.class);
         service = new DryRunService(dryRuns, policies, monitor,
                 new PolicyProperties(Duration.ofSeconds(5), Duration.ofMinutes(30)));
-        when(policies.load(TARGET)).thenReturn(Optional.of(new LoadedPolicy.Valid(CURRENT)));
+        when(policies.get(TARGET)).thenReturn(new LoadedPolicy.Valid(CURRENT));
     }
 
     @Test
@@ -109,7 +109,7 @@ class DryRunServiceTest {
     @Test
     @DisplayName("없는 정책은 dry-run 할 수 없다")
     void rejectsMissingPolicy() {
-        when(policies.load("target-z")).thenReturn(Optional.empty());
+        when(policies.get("target-z")).thenThrow(new PolicyNotFoundException("target-z"));
 
         assertThatThrownBy(() -> service.start("target-z", CONTENT, 1, NOTE))
                 .isInstanceOf(PolicyNotFoundException.class);
@@ -118,7 +118,7 @@ class DryRunServiceTest {
     @Test
     @DisplayName("저장된 정책이 잘못돼 있으면 dry-run 할 수 없다")
     void rejectsInvalidStoredPolicy() {
-        when(policies.load(TARGET)).thenReturn(Optional.of(new LoadedPolicy.Invalid(TARGET, 3, "bad")));
+        when(policies.get(TARGET)).thenReturn(new LoadedPolicy.Invalid(TARGET, 3, "bad"));
 
         assertThatThrownBy(() -> service.start(TARGET, CONTENT, 3, NOTE)).isInstanceOf(IllegalArgumentException.class);
     }
@@ -155,7 +155,7 @@ class DryRunServiceTest {
     }
 
     @Test
-    @DisplayName("적용하면 새 정책을 기준 버전일 때만 저장하고 dry-run 을 지운다")
+    @DisplayName("적용하면 새 정책을 정책 관리로 기준 버전일 때만 저장하고 dry-run 을 지운다")
     void appliesCandidate() {
         DryRun dryRun = activeDryRun();
         when(dryRuns.find(TARGET)).thenReturn(Optional.of(dryRun));
@@ -163,7 +163,7 @@ class DryRunServiceTest {
         ManagedPolicy applied = service.apply(TARGET, NOTE);
 
         assertThat(applied).isEqualTo(dryRun.candidate());
-        verify(policies).update(eq(dryRun.candidate()), eq(3L), eq(NOTE), any());
+        verify(policies).update(dryRun.candidate(), 3L, NOTE);
         verify(dryRuns).delete(TARGET);
     }
 
@@ -172,7 +172,7 @@ class DryRunServiceTest {
     void cancelsWhenPolicyChanged() {
         DryRun dryRun = activeDryRun();
         when(dryRuns.find(TARGET)).thenReturn(Optional.of(dryRun));
-        doThrow(new PolicyVersionConflictException(TARGET, 3)).when(policies).update(any(), eq(3L), any(), any());
+        doThrow(new PolicyVersionConflictException(TARGET, 3)).when(policies).update(any(ManagedPolicy.class), eq(3L), any(ChangeNote.class));
 
         assertThatThrownBy(() -> service.apply(TARGET, NOTE)).isInstanceOf(PolicyVersionConflictException.class);
         verify(dryRuns).delete(TARGET);

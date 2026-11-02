@@ -47,8 +47,13 @@ public class PolicyManagementService implements PolicyManagementUseCase {
 
     @Override
     public ManagedPolicy update(String targetSystemId, PolicyContent content, long expectedVersion, ChangeNote note) {
-        get(targetSystemId);
-        return save(content.toPolicy(targetSystemId, expectedVersion + 1), expectedVersion, note);
+        return update(content.toPolicy(targetSystemId, expectedVersion + 1), expectedVersion, note);
+    }
+
+    @Override
+    public ManagedPolicy update(ManagedPolicy policy, long expectedVersion, ChangeNote note) {
+        get(policy.targetSystemId());
+        return save(policy, expectedVersion, note);
     }
 
     @Override
