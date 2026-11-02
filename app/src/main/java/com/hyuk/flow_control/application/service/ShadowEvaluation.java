@@ -53,6 +53,7 @@ class ShadowEvaluation {
     private volatile boolean blockedOnce;
 
     private final LongAdder observedCalls = new LongAdder();
+    private final LongAdder judgedCalls = new LongAdder();
     private final LongAdder wouldBlockBySemaphore = new LongAdder();
     private final LongAdder wouldBlockByTokenBucket = new LongAdder();
     private final LongAdder waitedByCurrentLimit = new LongAdder();
@@ -258,6 +259,7 @@ class ShadowEvaluation {
     }
 
     private synchronized void countSample() {
+        judgedCalls.increment();
         newSamples++;
     }
 
@@ -282,6 +284,8 @@ class ShadowEvaluation {
                 observedSince,
                 now,
                 observedCalls.sum(),
+                judgedCalls.sum(),
+                maxSamples,
                 overlap,
                 new DryRunReport.Limits(
                         actualRate,

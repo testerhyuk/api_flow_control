@@ -7,6 +7,9 @@ import com.hyuk.flow_control.application.port.out.DryRunRepository;
 import com.hyuk.flow_control.config.PolicyProperties;
 import com.hyuk.flow_control.domain.dryrun.DryRun;
 import com.hyuk.flow_control.domain.dryrun.DryRunNotFoundException;
+import com.hyuk.flow_control.domain.dryrun.DryRunNotReadyException;
+import com.hyuk.flow_control.domain.dryrun.DryRunReport;
+import com.hyuk.flow_control.domain.health.HealthState;
 import com.hyuk.flow_control.domain.policy.ChangeNote;
 import com.hyuk.flow_control.domain.policy.ConnectionSettings;
 import com.hyuk.flow_control.domain.policy.LoadedPolicy;
@@ -21,6 +24,8 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -159,6 +164,7 @@ class DryRunServiceTest {
     void appliesCandidate() {
         DryRun dryRun = activeDryRun();
         when(dryRuns.find(TARGET)).thenReturn(Optional.of(dryRun));
+        when(monitor.reportOf(dryRun)).thenReturn(Optional.of(reportWith(50, 50)));
 
         ManagedPolicy applied = service.apply(TARGET, NOTE);
 
@@ -172,10 +178,44 @@ class DryRunServiceTest {
     void cancelsWhenPolicyChanged() {
         DryRun dryRun = activeDryRun();
         when(dryRuns.find(TARGET)).thenReturn(Optional.of(dryRun));
+        when(monitor.reportOf(dryRun)).thenReturn(Optional.of(reportWith(50, 50)));
         doThrow(new PolicyVersionConflictException(TARGET, 3)).when(policies).update(any(ManagedPolicy.class), eq(3L), any(ChangeNote.class));
 
         assertThatThrownBy(() -> service.apply(TARGET, NOTE)).isInstanceOf(PolicyVersionConflictException.class);
         verify(dryRuns).delete(TARGET);
+    }
+
+    @Test
+    @DisplayName("판정에 쓴 호출이 판정 개수보다 적으면 적용하지 않고 dry-run 도 그대로 둔다")
+    void rejectsApplyBeforeEnoughCalls() {
+        DryRun dryRun = activeDryRun();
+        when(dryRuns.find(TARGET)).thenReturn(Optional.of(dryRun));
+        when(monitor.reportOf(dryRun)).thenReturn(Optional.of(reportWith(49, 50)));
+
+        assertThatThrownBy(() -> service.apply(TARGET, NOTE)).isInstanceOf(DryRunNotReadyException.class)
+                .hasMessageContaining("49건");
+        verify(policies, never()).update(any(ManagedPolicy.class), eq(3L), any(ChangeNote.class));
+        verify(dryRuns, never()).delete(TARGET);
+    }
+
+    @Test
+    @DisplayName("이 서버가 아직 계산을 시작하지 않았으면 적용하지 않는다")
+    void rejectsApplyWithoutReport() {
+        DryRun dryRun = activeDryRun();
+        when(dryRuns.find(TARGET)).thenReturn(Optional.of(dryRun));
+        when(monitor.reportOf(dryRun)).thenReturn(Optional.empty());
+        when(monitor.requiredCalls()).thenReturn(50);
+
+        assertThatThrownBy(() -> service.apply(TARGET, NOTE)).isInstanceOf(DryRunNotReadyException.class)
+                .hasMessageContaining("0건");
+    }
+
+    private static DryRunReport reportWith(long judgedCalls, int requiredCalls) {
+        Instant now = Instant.now();
+        return new DryRunReport(now, now, judgedCalls, judgedCalls, requiredCalls, Duration.ZERO,
+                new DryRunReport.Limits(95.0, 95.0, 10, 0, 0, 0), List.of(), new DryRunReport.Timeouts(0, 0),
+                new DryRunReport.Health(HealthState.HEALTHY, HealthState.HEALTHY, 0, Map.of(), 0, 0.0, null),
+                null, List.of());
     }
 
     private static DryRun activeDryRun() {

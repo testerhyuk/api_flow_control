@@ -6,6 +6,7 @@ import com.hyuk.flow_control.application.port.in.PolicyContent;
 import com.hyuk.flow_control.domain.dryrun.DryRun;
 import com.hyuk.flow_control.domain.dryrun.DryRunAlreadyRunningException;
 import com.hyuk.flow_control.domain.dryrun.DryRunNotFoundException;
+import com.hyuk.flow_control.domain.dryrun.DryRunNotReadyException;
 import com.hyuk.flow_control.domain.dryrun.DryRunReport;
 import com.hyuk.flow_control.domain.health.HealthState;
 import com.hyuk.flow_control.domain.policy.ChangeNote;
@@ -102,7 +103,7 @@ class DryRunAdminControllerTest {
     @DisplayName("조회하면 이 서버의 계산 결과를 함께 보여준다")
     void getsResult() throws Exception {
         DryRunReport report = new DryRunReport(
-                START, START.plusSeconds(60), 120, Duration.ofSeconds(15),
+                START, START.plusSeconds(60), 120, 80, 50, Duration.ofSeconds(15),
                 new DryRunReport.Limits(95.0, 47.5, 8, 2, 30, 5),
                 List.of(new DryRunReport.JudgmentChange(OutcomeKind.BUSINESS_REJECTED, OutcomeKind.SERVER_ERROR, 4)),
                 new DryRunReport.Timeouts(3, 0),
@@ -116,6 +117,8 @@ class DryRunAdminControllerTest {
         mockMvc.perform(get("/admin/policies/target-a/dry-run"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.result.observedCalls").value(120))
+                .andExpect(jsonPath("$.result.judgedCalls").value(80))
+                .andExpect(jsonPath("$.result.requiredCalls").value(50))
                 .andExpect(jsonPath("$.result.overlapMs").value(15000))
                 .andExpect(jsonPath("$.result.limits.wouldBlockByTokenBucket").value(30))
                 .andExpect(jsonPath("$.result.limits.waitedByCurrentLimit").value(5))
@@ -163,5 +166,17 @@ class DryRunAdminControllerTest {
                         """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.version").value(4));
+    }
+
+    @Test
+    @DisplayName("판정에 쓴 호출이 판정 개수보다 적어서 적용할 수 없으면 409 다")
+    void applyNotReady() throws Exception {
+        when(dryRuns.apply("target-a", new ChangeNote("hyuk", "적용")))
+                .thenThrow(new DryRunNotReadyException("target-a", 10, 50));
+
+        mockMvc.perform(post("/admin/policies/target-a/dry-run/apply").contentType(MediaType.APPLICATION_JSON).content("""
+                        {"reason": "적용"}
+                        """))
+                .andExpect(status().isConflict());
     }
 }

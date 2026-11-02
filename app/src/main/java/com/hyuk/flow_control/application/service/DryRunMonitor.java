@@ -156,6 +156,10 @@ public class DryRunMonitor {
                 adjuster.appliedRateOf(targetSystemId)));
     }
 
+    public int requiredCalls() {
+        return maxSamples;
+    }
+
     public boolean isRunning(String targetSystemId) {
         return running.containsKey(targetSystemId);
     }

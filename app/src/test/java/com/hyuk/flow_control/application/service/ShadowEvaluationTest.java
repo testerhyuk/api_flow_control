@@ -121,6 +121,20 @@ class ShadowEvaluationTest {
     }
 
     @Test
+    @DisplayName("판정 기록에 들어간 호출 결과만 판정에 쓴 호출로 센다")
+    void countsJudgedCalls() {
+        ShadowEvaluation evaluation = evaluation(limits(100, 150), 95.0);
+        completeMany(evaluation, OutcomeKind.SUCCESS, 3, NOW);
+        evaluation.complete(response(OutcomeKind.UNEXPECTED_RESPONSE, 200, 150), NOW);
+        evaluation.complete(response(OutcomeKind.SUCCESS, 200, 150), NOW, false);
+
+        DryRunReport report = evaluation.report(NOW, HealthState.HEALTHY, 95.0);
+        assertThat(report.judgedCalls()).isEqualTo(3);
+        assertThat(report.requiredCalls()).isEqualTo(10);
+        assertThat(report.isReadyToApply()).isFalse();
+    }
+
+    @Test
     @DisplayName("막혔으면 admit 이 false 를 돌려준다")
     void admitReturnsWhetherAllowed() {
         ShadowEvaluation evaluation = evaluation(limits(80, 150), 95.0);

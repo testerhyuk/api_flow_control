@@ -12,6 +12,8 @@ public record DryRunReport(
         Instant observedSince,
         Instant reportedAt,
         long observedCalls,
+        long judgedCalls,
+        int requiredCalls,
         Duration overlap,
         Limits limits,
         List<JudgmentChange> judgmentChanges,
@@ -23,6 +25,10 @@ public record DryRunReport(
     public DryRunReport {
         judgmentChanges = List.copyOf(judgmentChanges);
         unknowns = List.copyOf(unknowns);
+    }
+
+    public boolean isReadyToApply() {
+        return judgedCalls >= requiredCalls;
     }
 
     public record Limits(

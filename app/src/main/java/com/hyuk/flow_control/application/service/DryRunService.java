@@ -8,6 +8,8 @@ import com.hyuk.flow_control.application.port.out.DryRunRepository;
 import com.hyuk.flow_control.config.PolicyProperties;
 import com.hyuk.flow_control.domain.dryrun.DryRun;
 import com.hyuk.flow_control.domain.dryrun.DryRunNotFoundException;
+import com.hyuk.flow_control.domain.dryrun.DryRunNotReadyException;
+import com.hyuk.flow_control.domain.dryrun.DryRunReport;
 import com.hyuk.flow_control.domain.policy.ChangeNote;
 import com.hyuk.flow_control.domain.policy.LoadedPolicy;
 import com.hyuk.flow_control.domain.policy.ManagedPolicy;
@@ -83,6 +85,7 @@ public class DryRunService implements DryRunUseCase {
     public ManagedPolicy apply(String targetSystemId, ChangeNote note) {
         DryRun dryRun = activeDryRunOf(targetSystemId);
         ManagedPolicy candidate = dryRun.candidate();
+        requireReady(dryRun);
 
         try {
             policies.update(candidate, dryRun.baseVersion(), note);
@@ -96,6 +99,17 @@ public class DryRunService implements DryRunUseCase {
         log.info("dry-run 정책을 적용했습니다 : {} 버전 {} by {} ({})",
                 targetSystemId, candidate.version(), note.changedBy(), note.reason());
         return candidate;
+    }
+
+    private void requireReady(DryRun dryRun) {
+        DryRunReport report = monitor.reportOf(dryRun).orElse(null);
+
+        if (report == null) {
+            throw new DryRunNotReadyException(dryRun.targetSystemId(), 0, monitor.requiredCalls());
+        }
+        if (!report.isReadyToApply()) {
+            throw new DryRunNotReadyException(dryRun.targetSystemId(), report.judgedCalls(), report.requiredCalls());
+        }
     }
 
     private ManagedPolicy validPolicyOf(String targetSystemId) {
