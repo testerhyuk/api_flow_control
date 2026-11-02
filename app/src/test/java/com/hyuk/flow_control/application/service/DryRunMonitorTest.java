@@ -6,6 +6,8 @@ import com.hyuk.flow_control.application.port.out.ResponseJudge;
 import com.hyuk.flow_control.config.HealthProperties;
 import com.hyuk.flow_control.config.LimitAdjustmentProperties;
 import com.hyuk.flow_control.domain.dryrun.DryRun;
+import com.hyuk.flow_control.domain.dryrun.DryRunEnd;
+import com.hyuk.flow_control.domain.dryrun.DryRunResult;
 import com.hyuk.flow_control.domain.health.HealthSnapshot;
 import com.hyuk.flow_control.domain.health.HealthState;
 import com.hyuk.flow_control.domain.health.HealthStatus;
@@ -18,6 +20,7 @@ import com.hyuk.flow_control.support.Policies;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -28,6 +31,8 @@ import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class DryRunMonitorTest {
@@ -120,6 +125,28 @@ class DryRunMonitorTest {
 
         monitor.evaluateAll();
 
+        assertThat(monitor.isRunning(TARGET)).isFalse();
+    }
+
+    @Test
+    @DisplayName("다시 읽을 때 이 서버가 지운 dry-run 은 이 서버의 결과와 끝난 이유를 남긴다")
+    void recordsResultOfDeletedDryRun() {
+        DryRun running = dryRun(Instant.now().plus(Duration.ofMinutes(30)));
+        when(repository.loadAll()).thenReturn(List.of(running));
+        monitor.refresh();
+        DryRun expired = dryRun(Instant.now().minusSeconds(1));
+        when(repository.deleteStale(any())).thenReturn(List.of(running), List.of(expired));
+        when(repository.loadAll()).thenReturn(List.of());
+
+        monitor.refresh();
+        monitor.refresh();
+
+        ArgumentCaptor<DryRunResult> results = ArgumentCaptor.forClass(DryRunResult.class);
+        verify(repository, times(2)).saveResult(results.capture());
+        assertThat(results.getAllValues().get(0).end()).isEqualTo(DryRunEnd.POLICY_CHANGED);
+        assertThat(results.getAllValues().get(0).report()).isNotNull();
+        assertThat(results.getAllValues().get(1).end()).isEqualTo(DryRunEnd.EXPIRED);
+        assertThat(results.getAllValues().get(1).report()).isNull();
         assertThat(monitor.isRunning(TARGET)).isFalse();
     }
 

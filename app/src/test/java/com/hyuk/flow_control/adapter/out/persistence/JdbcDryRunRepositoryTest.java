@@ -2,6 +2,10 @@ package com.hyuk.flow_control.adapter.out.persistence;
 
 import com.hyuk.flow_control.domain.dryrun.DryRun;
 import com.hyuk.flow_control.domain.dryrun.DryRunAlreadyRunningException;
+import com.hyuk.flow_control.domain.dryrun.DryRunEnd;
+import com.hyuk.flow_control.domain.dryrun.DryRunReport;
+import com.hyuk.flow_control.domain.dryrun.DryRunResult;
+import com.hyuk.flow_control.domain.health.HealthState;
 import com.hyuk.flow_control.domain.policy.ChangeNote;
 import com.hyuk.flow_control.domain.policy.ManagedPolicy;
 import com.hyuk.flow_control.domain.policy.PolicyVersionConflictException;
@@ -18,6 +22,8 @@ import javax.sql.DataSource;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -26,6 +32,7 @@ class JdbcDryRunRepositoryTest {
     private static final ChangeNote NOTE = new ChangeNote("hyuk", "baseline 조정");
     private static final Instant NOW = Instant.now().truncatedTo(ChronoUnit.MILLIS);
 
+    private JdbcClient jdbcClient;
     private JdbcDryRunRepository dryRuns;
     private JdbcPolicyRepository policies;
 
@@ -33,7 +40,7 @@ class JdbcDryRunRepositoryTest {
     void setUp() {
         DataSource dataSource = PostgresTestDatabase.dataSource();
         PostgresTestDatabase.reset(dataSource);
-        JdbcClient jdbcClient = JdbcClient.create(dataSource);
+        jdbcClient = JdbcClient.create(dataSource);
         JsonMapper jsonMapper = JsonMapper.builder().build();
         dryRuns = new JdbcDryRunRepository(jdbcClient, jsonMapper);
         policies = new JdbcPolicyRepository(jdbcClient, jsonMapper);
@@ -86,10 +93,35 @@ class JdbcDryRunRepositoryTest {
         dryRuns.insert(dryRun("target-c", 1, NOW.plus(Duration.ofMinutes(30))));
         policies.update(Policies.policy("target-c", 2), 1, NOTE, NOW);
 
-        int deleted = dryRuns.deleteStale(NOW.plus(Duration.ofMinutes(2)));
+        List<DryRun> deleted = dryRuns.deleteStale(NOW.plus(Duration.ofMinutes(2)));
 
-        assertThat(deleted).isEqualTo(2);
+        assertThat(deleted).extracting(DryRun::targetSystemId).containsExactlyInAnyOrder("target-b", "target-c");
         assertThat(dryRuns.loadAll()).extracting(DryRun::targetSystemId).containsExactly("target-a");
+    }
+
+    @Test
+    @DisplayName("끝난 dry-run 의 후보 정책, 끝난 이유, 적용한 버전, 마지막 결과를 한 줄로 남긴다")
+    void savesResult() {
+        DryRun dryRun = dryRun("target-a", 1, NOW.plus(Duration.ofMinutes(30)));
+        DryRunReport report = new DryRunReport(NOW, NOW.plusSeconds(60), 120, 80, 50, Duration.ofSeconds(15),
+                new DryRunReport.Limits(95.0, 47.5, 8, 2, 30, 5), List.of(), new DryRunReport.Timeouts(3, 0),
+                new DryRunReport.Health(HealthState.HEALTHY, HealthState.DEGRADED, 1,
+                        Map.of(HealthState.DEGRADED, Duration.ofSeconds(40)), 60, 0.05, Duration.ofMillis(210)),
+                null, List.of("connect-timeout 은 계산하지 않았습니다"));
+
+        dryRuns.saveResult(new DryRunResult(dryRun, DryRunEnd.APPLIED, NOW.plusSeconds(60), "hyuk", 2L, report));
+        dryRuns.saveResult(new DryRunResult(dryRun, DryRunEnd.EXPIRED, NOW.plusSeconds(90), null, null, null));
+
+        List<Map<String, Object>> rows = jdbcClient.sql("""
+                        select end_reason, ended_by, applied_version, max_tps, report ->> 'judgedCalls' as judged
+                        from policy_dry_run_result order by ended_at
+                        """)
+                .query().listOfRows();
+        assertThat(rows).hasSize(2);
+        assertThat(rows.get(0)).containsEntry("end_reason", "APPLIED").containsEntry("ended_by", "hyuk")
+                .containsEntry("applied_version", 2L).containsEntry("max_tps", 80).containsEntry("judged", "80");
+        assertThat(rows.get(1)).containsEntry("end_reason", "EXPIRED").containsEntry("applied_version", null)
+                .containsEntry("judged", null);
     }
 
     private static DryRun dryRun(String targetSystemId, long baseVersion, Instant expiresAt) {

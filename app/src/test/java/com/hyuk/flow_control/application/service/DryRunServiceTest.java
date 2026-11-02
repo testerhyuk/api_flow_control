@@ -6,6 +6,7 @@ import com.hyuk.flow_control.application.port.in.PolicyManagementUseCase;
 import com.hyuk.flow_control.application.port.out.DryRunRepository;
 import com.hyuk.flow_control.config.PolicyProperties;
 import com.hyuk.flow_control.domain.dryrun.DryRun;
+import com.hyuk.flow_control.domain.dryrun.DryRunEnd;
 import com.hyuk.flow_control.domain.dryrun.DryRunNotFoundException;
 import com.hyuk.flow_control.domain.dryrun.DryRunNotReadyException;
 import com.hyuk.flow_control.domain.dryrun.DryRunReport;
@@ -21,6 +22,7 @@ import com.hyuk.flow_control.support.Policies;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -33,6 +35,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -154,9 +157,23 @@ class DryRunServiceTest {
     @Test
     @DisplayName("없는 dry-run 은 취소할 수 없다")
     void cancelMissing() {
-        when(dryRuns.delete(TARGET)).thenReturn(false);
+        when(dryRuns.find(TARGET)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.cancel(TARGET)).isInstanceOf(DryRunNotFoundException.class);
+        assertThatThrownBy(() -> service.cancel(TARGET, "hyuk")).isInstanceOf(DryRunNotFoundException.class);
+    }
+
+    @Test
+    @DisplayName("취소하면 dry-run 을 지우고, 지우기 전의 결과를 취소한 사람과 함께 남긴다")
+    void cancelsAndRecordsResult() {
+        DryRun dryRun = activeDryRun();
+        DryRunReport report = reportWith(10, 50);
+        when(dryRuns.find(TARGET)).thenReturn(Optional.of(dryRun));
+        when(monitor.reportOf(dryRun)).thenReturn(Optional.of(report));
+        when(dryRuns.delete(TARGET)).thenReturn(true);
+
+        service.cancel(TARGET, "hyuk");
+
+        verify(monitor).recordEnd(dryRun, DryRunEnd.CANCELLED, "hyuk", null, report);
     }
 
     @Test
@@ -164,13 +181,29 @@ class DryRunServiceTest {
     void appliesCandidate() {
         DryRun dryRun = activeDryRun();
         when(dryRuns.find(TARGET)).thenReturn(Optional.of(dryRun));
-        when(monitor.reportOf(dryRun)).thenReturn(Optional.of(reportWith(50, 50)));
+        DryRunReport report = reportWith(50, 50);
+        when(monitor.reportOf(dryRun)).thenReturn(Optional.of(report));
+        when(dryRuns.delete(TARGET)).thenReturn(true);
 
         ManagedPolicy applied = service.apply(TARGET, NOTE);
 
         assertThat(applied).isEqualTo(dryRun.candidate());
-        verify(policies).update(dryRun.candidate(), 3L, NOTE);
-        verify(dryRuns).delete(TARGET);
+        InOrder order = inOrder(dryRuns, policies, monitor);
+        order.verify(dryRuns).delete(TARGET);
+        order.verify(policies).update(dryRun.candidate(), 3L, NOTE);
+        order.verify(monitor).recordEnd(dryRun, DryRunEnd.APPLIED, "hyuk", 4L, report);
+    }
+
+    @Test
+    @DisplayName("그사이 다른 곳에서 dry-run 을 지웠으면 적용하지 않는다")
+    void doesNotApplyWhenAlreadyDeleted() {
+        DryRun dryRun = activeDryRun();
+        when(dryRuns.find(TARGET)).thenReturn(Optional.of(dryRun));
+        when(monitor.reportOf(dryRun)).thenReturn(Optional.of(reportWith(50, 50)));
+        when(dryRuns.delete(TARGET)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.apply(TARGET, NOTE)).isInstanceOf(DryRunNotFoundException.class);
+        verify(policies, never()).update(any(ManagedPolicy.class), eq(3L), any(ChangeNote.class));
     }
 
     @Test
@@ -178,11 +211,14 @@ class DryRunServiceTest {
     void cancelsWhenPolicyChanged() {
         DryRun dryRun = activeDryRun();
         when(dryRuns.find(TARGET)).thenReturn(Optional.of(dryRun));
-        when(monitor.reportOf(dryRun)).thenReturn(Optional.of(reportWith(50, 50)));
+        DryRunReport report = reportWith(50, 50);
+        when(monitor.reportOf(dryRun)).thenReturn(Optional.of(report));
+        when(dryRuns.delete(TARGET)).thenReturn(true);
         doThrow(new PolicyVersionConflictException(TARGET, 3)).when(policies).update(any(ManagedPolicy.class), eq(3L), any(ChangeNote.class));
 
         assertThatThrownBy(() -> service.apply(TARGET, NOTE)).isInstanceOf(PolicyVersionConflictException.class);
         verify(dryRuns).delete(TARGET);
+        verify(monitor).recordEnd(dryRun, DryRunEnd.POLICY_CHANGED, null, null, report);
     }
 
     @Test

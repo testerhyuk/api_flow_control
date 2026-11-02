@@ -7,6 +7,7 @@ import com.hyuk.flow_control.application.port.in.PolicyManagementUseCase;
 import com.hyuk.flow_control.application.port.out.DryRunRepository;
 import com.hyuk.flow_control.config.PolicyProperties;
 import com.hyuk.flow_control.domain.dryrun.DryRun;
+import com.hyuk.flow_control.domain.dryrun.DryRunEnd;
 import com.hyuk.flow_control.domain.dryrun.DryRunNotFoundException;
 import com.hyuk.flow_control.domain.dryrun.DryRunNotReadyException;
 import com.hyuk.flow_control.domain.dryrun.DryRunReport;
@@ -74,34 +75,43 @@ public class DryRunService implements DryRunUseCase {
     }
 
     @Override
-    public void cancel(String targetSystemId) {
+    public void cancel(String targetSystemId, String operator) {
+        DryRun dryRun = dryRuns.find(targetSystemId)
+                .orElseThrow(() -> new DryRunNotFoundException(targetSystemId));
+        DryRunReport report = monitor.reportOf(dryRun).orElse(null);
+
         if (!dryRuns.delete(targetSystemId)) {
             throw new DryRunNotFoundException(targetSystemId);
         }
-        log.info("dry-run 을 취소했습니다 : {}", targetSystemId);
+        monitor.recordEnd(dryRun, DryRunEnd.CANCELLED, operator, null, report);
+        log.info("dry-run 을 취소했습니다 : {} by {}", targetSystemId, operator);
     }
 
     @Override
     public ManagedPolicy apply(String targetSystemId, ChangeNote note) {
         DryRun dryRun = activeDryRunOf(targetSystemId);
         ManagedPolicy candidate = dryRun.candidate();
-        requireReady(dryRun);
+        DryRunReport report = readyReportOf(dryRun);
+
+        if (!dryRuns.delete(targetSystemId)) {
+            throw new DryRunNotFoundException(targetSystemId);
+        }
 
         try {
             policies.update(candidate, dryRun.baseVersion(), note);
         } catch (PolicyVersionConflictException e) {
-            dryRuns.delete(targetSystemId);
+            monitor.recordEnd(dryRun, DryRunEnd.POLICY_CHANGED, null, null, report);
             log.info("정책이 그사이 바뀌어서 dry-run 을 취소했습니다 : {}", targetSystemId);
             throw e;
         }
 
-        dryRuns.delete(targetSystemId);
+        monitor.recordEnd(dryRun, DryRunEnd.APPLIED, note.changedBy(), candidate.version(), report);
         log.info("dry-run 정책을 적용했습니다 : {} 버전 {} by {} ({})",
                 targetSystemId, candidate.version(), note.changedBy(), note.reason());
         return candidate;
     }
 
-    private void requireReady(DryRun dryRun) {
+    private DryRunReport readyReportOf(DryRun dryRun) {
         DryRunReport report = monitor.reportOf(dryRun).orElse(null);
 
         if (report == null) {
@@ -110,6 +120,7 @@ public class DryRunService implements DryRunUseCase {
         if (!report.isReadyToApply()) {
             throw new DryRunNotReadyException(dryRun.targetSystemId(), report.judgedCalls(), report.requiredCalls());
         }
+        return report;
     }
 
     private ManagedPolicy validPolicyOf(String targetSystemId) {

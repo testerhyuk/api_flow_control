@@ -6,6 +6,8 @@ import com.hyuk.flow_control.application.port.out.ResponseJudge;
 import com.hyuk.flow_control.config.HealthProperties;
 import com.hyuk.flow_control.config.LimitAdjustmentProperties;
 import com.hyuk.flow_control.domain.dryrun.DryRun;
+import com.hyuk.flow_control.domain.dryrun.DryRunEnd;
+import com.hyuk.flow_control.domain.dryrun.DryRunResult;
 import com.hyuk.flow_control.domain.dryrun.DryRunReport;
 import com.hyuk.flow_control.domain.health.LowTrafficRules;
 import com.hyuk.flow_control.domain.health.HealthRules;
@@ -75,7 +77,9 @@ public class DryRunMonitor {
         List<DryRun> stored;
 
         try {
-            repository.deleteStale(now);
+            repository.deleteStale(now).forEach(dryRun -> recordEnd(dryRun,
+                    dryRun.isExpiredAt(now) ? DryRunEnd.EXPIRED : DryRunEnd.POLICY_CHANGED, null, null,
+                    reportOf(dryRun).orElse(null)));
             stored = repository.loadAll();
         } catch (RuntimeException e) {
             log.warn("dry-run 목록을 다시 읽지 못했습니다. 진행 중인 dry-run 은 끝 시각까지 계속합니다", e);
@@ -154,6 +158,16 @@ public class DryRunMonitor {
                 Instant.now(),
                 evaluator.snapshotOf(targetSystemId).state(),
                 adjuster.appliedRateOf(targetSystemId)));
+    }
+
+    public void recordEnd(DryRun dryRun, DryRunEnd end, String endedBy, Long appliedVersion, DryRunReport report) {
+        DryRunResult result = new DryRunResult(dryRun, end, Instant.now(), endedBy, appliedVersion, report);
+
+        try {
+            repository.saveResult(result);
+        } catch (RuntimeException e) {
+            log.warn("dry-run 결과를 저장하지 못했습니다 : {} {}", dryRun.targetSystemId(), end, e);
+        }
     }
 
     public int requiredCalls() {

@@ -145,13 +145,13 @@ class DryRunAdminControllerTest {
     void cancels() throws Exception {
         mockMvc.perform(delete("/admin/policies/target-a/dry-run")).andExpect(status().isNoContent());
 
-        verify(dryRuns).cancel("target-a");
+        verify(dryRuns).cancel("target-a", "hyuk");
     }
 
     @Test
     @DisplayName("없는 dry-run 을 취소하면 404 다")
     void cancelMissing() throws Exception {
-        doThrow(new DryRunNotFoundException("target-a")).when(dryRuns).cancel("target-a");
+        doThrow(new DryRunNotFoundException("target-a")).when(dryRuns).cancel("target-a", "hyuk");
 
         mockMvc.perform(delete("/admin/policies/target-a/dry-run")).andExpect(status().isNotFound());
     }

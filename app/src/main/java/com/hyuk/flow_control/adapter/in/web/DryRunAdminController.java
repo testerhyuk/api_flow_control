@@ -43,8 +43,9 @@ public class DryRunAdminController {
     }
 
     @DeleteMapping
-    public ResponseEntity<Void> cancel(@PathVariable String targetSystemId) {
-        dryRuns.cancel(targetSystemId);
+    public ResponseEntity<Void> cancel(@PathVariable String targetSystemId,
+                                       @RequestAttribute(AdminApiKeyFilter.OPERATOR) String operator) {
+        dryRuns.cancel(targetSystemId, operator);
         return ResponseEntity.noContent().build();
     }
 
