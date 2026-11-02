@@ -51,6 +51,7 @@ class ShadowEvaluation {
     private final LongAdder waitedByCurrentLimit = new LongAdder();
     private final LongAdder wouldTimeout = new LongAdder();
     private final LongAdder unknownTimeouts = new LongAdder();
+    private final LongAdder excludedBlocked = new LongAdder();
     private final Map<JudgmentKey, LongAdder> judgmentChanges = new ConcurrentHashMap<>();
 
     private final Map<HealthState, Duration> timeInState = new EnumMap<>(HealthState.class);
@@ -96,7 +97,7 @@ class ShadowEvaluation {
         return dryRun;
     }
 
-    void admit(long nowNanos) {
+    boolean admit(long nowNanos) {
         String targetSystemId = dryRun.targetSystemId();
         int running = inFlight.incrementAndGet();
         observedCalls.increment();
@@ -105,12 +106,14 @@ class ShadowEvaluation {
         if (running > concurrencyLimit) {
             wouldBlockBySemaphore.increment();
             metrics.recordDryRunBlockedBySemaphore(targetSystemId);
-            return;
+            return false;
         }
         if (!bucket.tryConsume(nowNanos)) {
             wouldBlockByTokenBucket.increment();
             metrics.recordDryRunBlockedByTokenBucket(targetSystemId);
+            return false;
         }
+        return true;
     }
 
     void release() {
@@ -118,6 +121,10 @@ class ShadowEvaluation {
     }
 
     void complete(OutboundResult result, Instant now) {
+        complete(result, now, true);
+    }
+
+    void complete(OutboundResult result, Instant now, boolean admitted) {
         String targetSystemId = dryRun.targetSystemId();
         OutcomeKind kind = rejudge(result);
         Duration latency = result.latency();
@@ -137,6 +144,11 @@ class ShadowEvaluation {
         } else if (candidateTimeout.compareTo(actualTimeout) > 0 && result.kind() == OutcomeKind.TIMEOUT) {
             unknownTimeouts.increment();
             metrics.recordDryRunUnknownTimeout(targetSystemId);
+        }
+
+        if (!admitted) {
+            excludedBlocked.increment();
+            return;
         }
 
         outcomes.addLast(new RecordedOutcome(kind, latency, now));
@@ -286,6 +298,11 @@ class ShadowEvaluation {
         if (candidateLimits.effectiveRate() > actualLimits.effectiveRate()
                 || candidateLimits.concurrencyLimit() > actualLimits.concurrencyLimit()) {
             unknowns.add("새 한도가 지금보다 높아서, 더 보냈을 때 대외기관이 어떻게 응답했을지는 알 수 없습니다");
+        }
+        long blocked = excludedBlocked.sum();
+        if (blocked > 0) {
+            unknowns.add("새 한도였다면 막혔을 호출 " + blocked
+                    + "건은 상태 판정에서 뺐습니다. 한도를 낮추면 외부 서버의 부담이 줄어 실패율과 응답 시간이 나아졌을 수 있지만, 얼마나 나아졌을지는 알 수 없습니다");
         }
         if (candidate.connection().readTimeout().compareTo(base.connection().readTimeout()) > 0) {
             unknowns.add("새 read-timeout 이 지금보다 길어서, 지금 timeout 난 호출이 더 기다렸다면 어떻게 됐을지는 알 수 없습니다");

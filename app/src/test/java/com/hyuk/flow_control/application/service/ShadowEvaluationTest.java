@@ -101,6 +101,32 @@ class ShadowEvaluationTest {
     }
 
     @Test
+    @DisplayName("새 한도였다면 막혔을 호출의 결과는 상태 판정에서 빼고, 뺀 건수를 알 수 없는 부분에 적는다")
+    void excludesBlockedCallsFromJudgment() {
+        ShadowEvaluation evaluation = evaluation(limits(100, 150), 95.0);
+        completeMany(evaluation, OutcomeKind.SUCCESS, 10, NOW);
+        for (int i = 0; i < 10; i++) {
+            evaluation.complete(response(OutcomeKind.UNEXPECTED_RESPONSE, 200, 150), NOW, false);
+        }
+
+        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1, baselineOf(evaluation));
+
+        DryRunReport report = evaluation.report(NOW.plusSeconds(1), HealthState.HEALTHY, 95.0);
+        assertThat(evaluation.state()).isEqualTo(HealthState.HEALTHY);
+        assertThat(report.health().sampleCount()).isEqualTo(10);
+        assertThat(report.unknowns()).anyMatch(text -> text.contains("막혔을 호출 10건"));
+    }
+
+    @Test
+    @DisplayName("막혔으면 admit 이 false 를 돌려준다")
+    void admitReturnsWhetherAllowed() {
+        ShadowEvaluation evaluation = evaluation(limits(80, 150), 95.0);
+
+        assertThat(evaluation.admit(0)).isTrue();
+        assertThat(evaluation.admit(0)).isFalse();
+    }
+
+    @Test
     @DisplayName("지금 한도 때문에 기다린 호출 수를 센다")
     void countsWaitedCalls() {
         ShadowEvaluation evaluation = evaluation(limits(120, 150), 95.0);

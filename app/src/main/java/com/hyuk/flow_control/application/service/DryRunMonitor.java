@@ -129,8 +129,8 @@ public class DryRunMonitor {
             return Observation.NONE;
         }
 
-        evaluation.admit(System.nanoTime());
-        return new Observation(evaluation);
+        boolean admitted = evaluation.admit(System.nanoTime());
+        return new Observation(evaluation, admitted);
     }
 
     public void recordWaited(String targetSystemId) {
@@ -238,12 +238,14 @@ public class DryRunMonitor {
     }
 
     public static final class Observation {
-        static final Observation NONE = new Observation(null);
+        static final Observation NONE = new Observation(null, false);
 
         private final ShadowEvaluation evaluation;
+        private final boolean admitted;
 
-        private Observation(ShadowEvaluation evaluation) {
+        private Observation(ShadowEvaluation evaluation, boolean admitted) {
             this.evaluation = evaluation;
+            this.admitted = admitted;
         }
 
         public void finish(OutboundResult result) {
@@ -253,7 +255,7 @@ public class DryRunMonitor {
 
             evaluation.release();
             if (result != null) {
-                evaluation.complete(result, Instant.now());
+                evaluation.complete(result, Instant.now(), admitted);
             }
         }
     }
