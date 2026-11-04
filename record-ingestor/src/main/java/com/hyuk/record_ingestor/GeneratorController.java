@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -32,7 +33,11 @@ public class GeneratorController {
         if (request.seed() == null) {
             throw new IllegalArgumentException("seed 는 필수입니다");
         }
-        return generator.start(request.seed(), request.rates());
+        if (request.durationSeconds() == null) {
+            throw new IllegalArgumentException("durationSeconds 는 필수입니다");
+        }
+        return generator.start(new ExperimentPlan(request.seed(), request.rates(), request.timeline(),
+                request.durationSeconds()));
     }
 
     @PutMapping("/rates/{targetSystemId}")
@@ -53,7 +58,8 @@ public class GeneratorController {
         return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, e.getMessage());
     }
 
-    public record StartRequest(Long seed, Map<String, Double> rates) {
+    public record StartRequest(Long seed, Map<String, Double> rates, List<ExperimentPlan.RateChange> timeline,
+                               Long durationSeconds) {
     }
 
     public record RateRequest(Double rate) {

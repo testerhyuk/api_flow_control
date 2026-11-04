@@ -6,8 +6,6 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Configuration;
 
-import java.util.Map;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -21,94 +19,43 @@ class IngestorPropertiesTest {
         contextRunner
                 .withPropertyValues(
                         "record-ingestor.topic-prefix=flow-control.requests.",
-                        "record-ingestor.requester-id=record-ingestor",
-                        "record-ingestor.targets.target-a.rate=100",
-                        "record-ingestor.targets.target-b.rate=2.5")
+                        "record-ingestor.requester-id=record-ingestor")
                 .run(context -> assertThat(context.getBean(IngestorProperties.class)).isEqualTo(
-                        new IngestorProperties("flow-control.requests.", "record-ingestor", Map.of(
-                                "target-a", new IngestorProperties.Target(100),
-                                "target-b", new IngestorProperties.Target(2.5)))));
+                        new IngestorProperties("flow-control.requests.", "record-ingestor")));
     }
 
     @Test
-    @DisplayName("자동 시작과 seed 를 설정 파일에서 읽고, 없으면 자동 시작 켬과 seed 0 이다")
-    void bindsAutoStartAndSeed() {
+    @DisplayName("설정 값이 없으면 앱이 뜨지 않는다")
+    void failsToStartWithoutValue() {
         contextRunner
-                .withPropertyValues(
-                        "record-ingestor.topic-prefix=flow-control.requests.",
-                        "record-ingestor.requester-id=record-ingestor",
-                        "record-ingestor.targets.target-a.rate=100",
-                        "record-ingestor.auto-start=false",
-                        "record-ingestor.seed=42")
-                .run(context -> {
-                    IngestorProperties properties = context.getBean(IngestorProperties.class);
-                    assertThat(properties.autoStart()).isFalse();
-                    assertThat(properties.seed()).isEqualTo(42);
-                });
-
-        IngestorProperties defaults = new IngestorProperties("p.", "record-ingestor", Map.of("target-a", new IngestorProperties.Target(1)));
-        assertThat(defaults.autoStart()).isTrue();
-        assertThat(defaults.seed()).isZero();
-    }
-
-    @Test
-    @DisplayName("설정 값이 잘못되면 앱이 뜨지 않는다")
-    void failsToStartWithInvalidValue() {
-        contextRunner
-                .withPropertyValues(
-                        "record-ingestor.topic-prefix=flow-control.requests.",
-                        "record-ingestor.requester-id=record-ingestor",
-                        "record-ingestor.targets.target-a.rate=0")
+                .withPropertyValues("record-ingestor.topic-prefix=flow-control.requests.")
                 .run(context -> assertThat(context).hasFailed());
     }
 
     @Test
     @DisplayName("토픽 접두어가 없으면 만들 수 없다")
     void rejectsBlankTopicPrefix() {
-        Map<String, IngestorProperties.Target> targets = Map.of("target-a", new IngestorProperties.Target(1));
-
-        assertThatThrownBy(() -> new IngestorProperties(null, "record-ingestor", targets))
+        assertThatThrownBy(() -> new IngestorProperties(null, "record-ingestor"))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new IngestorProperties(" ", "record-ingestor", targets))
+        assertThatThrownBy(() -> new IngestorProperties(" ", "record-ingestor"))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     @DisplayName("요청자 ID 가 없으면 만들 수 없다")
     void rejectsBlankRequesterId() {
-        Map<String, IngestorProperties.Target> targets = Map.of("target-a", new IngestorProperties.Target(1));
-
-        assertThatThrownBy(() -> new IngestorProperties("p.", null, targets))
+        assertThatThrownBy(() -> new IngestorProperties("p.", null))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new IngestorProperties("p.", " ", targets))
+        assertThatThrownBy(() -> new IngestorProperties("p.", " "))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     @DisplayName("요청 토픽은 접두어 + 외부 서버 + 요청자 ID 다")
     void namesTopicWithRequester() {
-        IngestorProperties properties = new IngestorProperties("flow-control.requests.", "record-ingestor",
-                Map.of("target-a", new IngestorProperties.Target(1)));
+        IngestorProperties properties = new IngestorProperties("flow-control.requests.", "record-ingestor");
 
         assertThat(properties.topicOf("target-a")).isEqualTo("flow-control.requests.target-a.record-ingestor");
-    }
-
-    @Test
-    @DisplayName("대상이 하나도 없으면 만들 수 없다")
-    void rejectsEmptyTargets() {
-        assertThatThrownBy(() -> new IngestorProperties("p.", "record-ingestor", null))
-                .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new IngestorProperties("p.", "record-ingestor", Map.of()))
-                .isInstanceOf(IllegalArgumentException.class);
-    }
-
-    @Test
-    @DisplayName("rate 가 0 이하면 만들 수 없다")
-    void rejectsNonPositiveRate() {
-        assertThatThrownBy(() -> new IngestorProperties.Target(0))
-                .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new IngestorProperties.Target(-1))
-                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Configuration
