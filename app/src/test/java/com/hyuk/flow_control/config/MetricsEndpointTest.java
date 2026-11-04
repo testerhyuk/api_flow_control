@@ -105,7 +105,7 @@ class MetricsEndpointTest {
         assertThat(body)
                 .contains("flow_control_outbound_calls_total{kind=\"TIMEOUT\",target=\"target-b\"}")
                 .contains("flow_control_outbound_latency_seconds_count{kind=\"TIMEOUT\",target=\"target-b\"} 1")
-                .contains("flow_control_outbound_blocked_attempts_total{reason=\"token_bucket\",target=\"target-b\"}")
+                .contains("flow_control_outbound_blocked_requests_total{reason=\"token_bucket\",target=\"target-b\"}")
                 .contains("flow_control_health_transitions_total{from=\"HEALTHY\",target=\"target-b\",to=\"CRITICAL\"}")
                 .contains("flow_control_intake_wait_seconds_count{target=\"target-b\"} 1")
                 .contains("flow_control_retry_scheduled_total{kind=\"TIMEOUT\",stage=\"1s\",target=\"target-b\"}")

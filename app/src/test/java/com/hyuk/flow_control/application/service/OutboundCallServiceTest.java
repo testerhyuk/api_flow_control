@@ -95,8 +95,7 @@ class OutboundCallServiceTest {
         verifyNoInteractions(rateLimiter, client);
         verify(recorder).recordBlocked(TARGET);
         verifyNoMoreInteractions(recorder);
-        verify(metrics).recordBlockedBySemaphore(TARGET);
-        verifyNoMoreInteractions(metrics);
+        verifyNoInteractions(metrics);
     }
 
     @Test
@@ -110,8 +109,7 @@ class OutboundCallServiceTest {
         verifyNoInteractions(client);
         verify(recorder).recordBlocked(TARGET);
         verifyNoMoreInteractions(recorder);
-        verify(metrics).recordBlockedByTokenBucket(TARGET);
-        verifyNoMoreInteractions(metrics);
+        verifyNoInteractions(metrics);
     }
 
     @Test

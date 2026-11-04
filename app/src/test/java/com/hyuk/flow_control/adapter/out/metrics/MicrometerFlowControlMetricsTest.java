@@ -287,6 +287,6 @@ class MicrometerFlowControlMetricsTest {
     }
 
     private double blockedCount(String target, String reason) {
-        return registry.get("flow.control.outbound.blocked.attempts").tags("target", target, "reason", reason).counter().count();
+        return registry.get("flow.control.outbound.blocked.requests").tags("target", target, "reason", reason).counter().count();
     }
 }

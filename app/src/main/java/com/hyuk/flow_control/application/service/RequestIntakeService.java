@@ -39,6 +39,8 @@ public class RequestIntakeService implements RequestIntakeUseCase {
         String targetSystemId = request.targetSystemId();
         long startedAt = System.nanoTime();
         Duration waited = Duration.ZERO;
+        boolean countedSemaphore = false;
+        boolean countedTokenBucket = false;
 
         while (true) {
             if (passed(deadline)) {
@@ -56,12 +58,20 @@ public class RequestIntakeService implements RequestIntakeUseCase {
                     return new IntakeResult.Called(called.result());
                 }
                 case CallAttempt.BlockedBySemaphore blocked -> {
+                    if (!countedSemaphore) {
+                        countedSemaphore = true;
+                        metrics.recordBlockedBySemaphore(targetSystemId);
+                    }
                     if (!awaitSemaphore(targetSystemId, deadline)) {
                         return new IntakeResult.Expired(Instant.now());
                     }
                     waited = Duration.ofNanos(System.nanoTime() - startedAt);
                 }
                 case CallAttempt.BlockedByTokenBucket blocked -> {
+                    if (!countedTokenBucket) {
+                        countedTokenBucket = true;
+                        metrics.recordBlockedByTokenBucket(targetSystemId);
+                    }
                     waitFor(capped(blocked.retryAfter(), deadline));
                     waited = Duration.ofNanos(System.nanoTime() - startedAt);
                 }

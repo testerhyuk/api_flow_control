@@ -277,6 +277,10 @@ class ShadowEvaluation {
         }
     }
 
+    long judgedCalls() {
+        return judgedCalls.sum();
+    }
+
     private synchronized void countSample() {
         judgedCalls.increment();
         newSamples++;

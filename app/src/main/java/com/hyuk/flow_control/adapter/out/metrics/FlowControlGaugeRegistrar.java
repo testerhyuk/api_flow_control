@@ -99,6 +99,10 @@ public class FlowControlGaugeRegistrar implements PolicyChangeListener {
                 () -> secondsOrNaN(evaluator.snapshotOf(targetSystemId).p95()));
         register("flow.control.health.samples", targetSystemId, null,
                 () -> evaluator.snapshotOf(targetSystemId).sampleCount());
+        registerFailureThreshold(targetSystemId, "degraded", "entry", thresholds.degradedFailureRate());
+        registerFailureThreshold(targetSystemId, "degraded", "recovery", thresholds.degradedRecoveryFailureRate());
+        registerFailureThreshold(targetSystemId, "critical", "entry", thresholds.criticalFailureRate());
+        registerFailureThreshold(targetSystemId, "critical", "recovery", thresholds.criticalRecoveryFailureRate());
         register("flow.control.health.latency.threshold", targetSystemId, "seconds",
                 () -> toSeconds(thresholds.latencyThreshold(baselines.effective(targetSystemId).p95())));
         register("flow.control.health.latency.recovery.threshold", targetSystemId, "seconds",
@@ -169,6 +173,18 @@ public class FlowControlGaugeRegistrar implements PolicyChangeListener {
                 () -> dryRuns.concurrencyLimitOf(targetSystemId).map(Integer::doubleValue).orElse(Double.NaN));
         register("flow.control.dryrun.overlap", targetSystemId, "seconds",
                 () -> dryRuns.overlapOf(targetSystemId).map(FlowControlGaugeRegistrar::toSeconds).orElse(Double.NaN));
+        register("flow.control.dryrun.judged.calls", targetSystemId, null,
+                () -> dryRuns.judgedCallsOf(targetSystemId).map(Long::doubleValue).orElse(Double.NaN));
+        register("flow.control.dryrun.required.calls", targetSystemId, null,
+                () -> dryRuns.isRunning(targetSystemId) ? dryRuns.requiredCalls() : Double.NaN);
+    }
+
+    private void registerFailureThreshold(String targetSystemId, String grade, String line, double value) {
+        Gauge.builder("flow.control.health.failure.threshold", () -> value)
+                .tag("target", targetSystemId)
+                .tag("grade", grade)
+                .tag("line", line)
+                .register(registry);
     }
 
     private void registerBaseline(String targetSystemId, BaselineEstimator.Kind kind) {
