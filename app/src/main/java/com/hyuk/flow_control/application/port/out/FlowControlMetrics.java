@@ -12,8 +12,11 @@ import com.hyuk.flow_control.domain.retry.DeadLetterReason;
 import com.hyuk.flow_control.domain.retry.RetryStage;
 
 import java.time.Duration;
+import java.util.List;
 
 public interface FlowControlMetrics {
+    void registerTarget(String targetSystemId, List<String> policyListeners);
+
     void recordCall(String targetSystemId, OutcomeKind kind, Duration latency);
 
     void recordBlockedBySemaphore(String targetSystemId);

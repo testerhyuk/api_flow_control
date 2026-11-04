@@ -24,6 +24,7 @@ import java.util.stream.Stream;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
@@ -56,6 +57,22 @@ class PolicyRegistryTest {
         metrics = mock(FlowControlMetrics.class);
         listeners = mock(ObjectProvider.class);
         when(listeners.orderedStream()).thenAnswer(invocation -> Stream.of(first, second));
+    }
+
+    @Test
+    @DisplayName("처음 본 외부 서버만 횟수 지표를 등록한다")
+    void registersMetricsOnlyForNewTarget() {
+        when(repository.loadAll()).thenReturn(List.of(new LoadedPolicy.Valid(A_V1)));
+        PolicyRegistry registry = new PolicyRegistry(repository, listeners, metrics);
+        registry.refresh();
+        registry.refresh();
+
+        verify(metrics, times(1)).registerTarget(eq("target-a"), anyList());
+
+        when(repository.loadAll()).thenReturn(List.of(new LoadedPolicy.Valid(A_V1), new LoadedPolicy.Valid(B_V1)));
+        registry.refresh();
+
+        verify(metrics, times(1)).registerTarget(eq("target-b"), anyList());
     }
 
     @Test
