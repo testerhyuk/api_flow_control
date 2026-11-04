@@ -690,7 +690,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (listener) (increase(flow_control_policy_apply_failures_total{target=\"$target\"}[$__range]))",
+          "expr": "(sum by (listener) (increase(flow_control_policy_apply_failures_total{target=\"$target\"}[$__range])) > 0) or on() label_replace(sum(increase(flow_control_policy_apply_failures_total{target=\"$target\"}[$__range])), \"listener\", \"실패 없음\", \"\", \"\")",
           "legendFormat": "{{listener}}",
           "refId": "A"
         }
@@ -836,6 +836,18 @@
               {
                 "color": "green",
                 "value": null
+              },
+              {
+                "color": "blue",
+                "value": 1
+              },
+              {
+                "color": "orange",
+                "value": 2
+              },
+              {
+                "color": "red",
+                "value": 3
               }
             ]
           }
@@ -1003,6 +1015,10 @@
               {
                 "color": "green",
                 "value": null
+              },
+              {
+                "color": "purple",
+                "value": 1
               }
             ]
           }
@@ -1098,8 +1114,12 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "transparent",
                 "value": null
+              },
+              {
+                "color": "purple",
+                "value": 1
               }
             ]
           }
@@ -1592,7 +1612,7 @@
         "overrides": [
           {
             "matcher": {
-              "id": "byRegex",
+              "id": "byRegexp",
               "options": "/기준$/"
             },
             "properties": [
@@ -2038,7 +2058,7 @@
           },
           {
             "matcher": {
-              "id": "byRegex",
+              "id": "byRegexp",
               "options": "/^평균 응답 시간/"
             },
             "properties": [
@@ -3805,6 +3825,18 @@
               {
                 "color": "green",
                 "value": null
+              },
+              {
+                "color": "blue",
+                "value": 1
+              },
+              {
+                "color": "orange",
+                "value": 2
+              },
+              {
+                "color": "red",
+                "value": 3
               }
             ]
           }
@@ -4736,14 +4768,14 @@
           "id": "renameByRegex",
           "options": {
             "regex": "\\bdown\\b",
-            "renamePattern": "서버 중단(down)"
+            "renamePattern": "멈춤(down)"
           }
         },
         {
           "id": "renameByRegex",
           "options": {
             "regex": "\\bslow\\b",
-            "renamePattern": "느림(slow)"
+            "renamePattern": "느려짐(slow)"
           }
         },
         {
@@ -4771,14 +4803,14 @@
           "id": "renameByRegex",
           "options": {
             "regex": "\\bno-response\\b",
-            "renamePattern": "무응답(no-response)"
+            "renamePattern": "응답 없음(no-response)"
           }
         },
         {
           "id": "renameByRegex",
           "options": {
             "regex": "\\bcapacity\\b",
-            "renamePattern": "처리 능력 감소(capacity)"
+            "renamePattern": "처리 자리 줄이기(capacity)"
           }
         }
       ],

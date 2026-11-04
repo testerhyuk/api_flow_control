@@ -18,6 +18,7 @@ import io.micrometer.core.instrument.Timer;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -38,6 +39,38 @@ public class MicrometerFlowControlMetrics implements FlowControlMetrics {
 
     public MicrometerFlowControlMetrics(MeterRegistry registry) {
         this.registry = registry;
+        policyRefreshFailures();
+        for (LimitStore store : LimitStore.values()) {
+            limitStoreSwitches(store);
+        }
+    }
+
+    // 누적 수 지표는 첫 사건 때 만들어지면 그 1건이 increase 에 잡히지 않는다. 그래서 조회 기간 횟수를 보여주는 지표는 0으로 미리 만든다.
+    @Override
+    public void registerTarget(String targetSystemId, List<String> policyListeners) {
+        for (HealthState from : HealthState.values()) {
+            for (HealthState to : HealthState.values()) {
+                if (from != to) {
+                    stateTransitions(targetSystemId, from, to);
+                }
+            }
+        }
+        for (SuppressedBy reason : SuppressedBy.values()) {
+            suppressed(targetSystemId, reason);
+        }
+        for (HealthMode mode : HealthMode.values()) {
+            modeTransitions(targetSystemId, mode);
+        }
+        for (LowTrafficEvent event : LowTrafficEvent.values()) {
+            lowTrafficEvents(targetSystemId, event);
+        }
+        for (MaintenanceSource source : MaintenanceSource.values()) {
+            maintenanceStarted(targetSystemId, source);
+        }
+        maintenanceExcluded(targetSystemId);
+        for (String listener : policyListeners) {
+            policyApplyFailures(targetSystemId, listener);
+        }
     }
 
     @Override
@@ -70,12 +103,15 @@ public class MicrometerFlowControlMetrics implements FlowControlMetrics {
 
     @Override
     public void recordStateTransition(String targetSystemId, HealthState from, HealthState to) {
-        Counter.builder("flow.control.health.transitions")
+        stateTransitions(targetSystemId, from, to).increment();
+    }
+
+    private Counter stateTransitions(String targetSystemId, HealthState from, HealthState to) {
+        return Counter.builder("flow.control.health.transitions")
                 .tag("target", targetSystemId)
                 .tag("from", from.name())
                 .tag("to", to.name())
-                .register(registry)
-                .increment();
+                .register(registry);
     }
 
     @Override
@@ -119,9 +155,11 @@ public class MicrometerFlowControlMetrics implements FlowControlMetrics {
 
     @Override
     public void recordPolicyRefreshFailure() {
-        Counter.builder("flow.control.policy.refresh.failures")
-                .register(registry)
-                .increment();
+        policyRefreshFailures().increment();
+    }
+
+    private Counter policyRefreshFailures() {
+        return Counter.builder("flow.control.policy.refresh.failures").register(registry);
     }
 
     @Override
@@ -134,11 +172,14 @@ public class MicrometerFlowControlMetrics implements FlowControlMetrics {
 
     @Override
     public void recordPolicyApplyFailure(String targetSystemId, String listener) {
-        Counter.builder("flow.control.policy.apply.failures")
+        policyApplyFailures(targetSystemId, listener).increment();
+    }
+
+    private Counter policyApplyFailures(String targetSystemId, String listener) {
+        return Counter.builder("flow.control.policy.apply.failures")
                 .tag("target", targetSystemId)
                 .tag("listener", listener)
-                .register(registry)
-                .increment();
+                .register(registry);
     }
 
     @Override
@@ -214,10 +255,13 @@ public class MicrometerFlowControlMetrics implements FlowControlMetrics {
 
     @Override
     public void recordLimitStoreSwitch(LimitStore to) {
-        Counter.builder("flow.control.limit.store.switches")
+        limitStoreSwitches(to).increment();
+    }
+
+    private Counter limitStoreSwitches(LimitStore to) {
+        return Counter.builder("flow.control.limit.store.switches")
                 .tag("to", to.name().toLowerCase())
-                .register(registry)
-                .increment();
+                .register(registry);
     }
 
     @Override
@@ -241,46 +285,61 @@ public class MicrometerFlowControlMetrics implements FlowControlMetrics {
 
     @Override
     public void recordSuppressed(String targetSystemId, SuppressedBy reason) {
-        Counter.builder("flow.control.health.suppressed")
+        suppressed(targetSystemId, reason).increment();
+    }
+
+    private Counter suppressed(String targetSystemId, SuppressedBy reason) {
+        return Counter.builder("flow.control.health.suppressed")
                 .tag("target", targetSystemId)
                 .tag("reason", reason.name().toLowerCase())
-                .register(registry)
-                .increment();
+                .register(registry);
     }
 
     @Override
     public void recordModeTransition(String targetSystemId, HealthMode to) {
-        Counter.builder("flow.control.health.mode.transitions")
+        modeTransitions(targetSystemId, to).increment();
+    }
+
+    private Counter modeTransitions(String targetSystemId, HealthMode to) {
+        return Counter.builder("flow.control.health.mode.transitions")
                 .tag("target", targetSystemId)
                 .tag("to", to.name().toLowerCase())
-                .register(registry)
-                .increment();
+                .register(registry);
     }
 
     @Override
     public void recordLowTrafficEvent(String targetSystemId, LowTrafficEvent event) {
-        Counter.builder("flow.control.health.low.traffic.events")
+        lowTrafficEvents(targetSystemId, event).increment();
+    }
+
+    private Counter lowTrafficEvents(String targetSystemId, LowTrafficEvent event) {
+        return Counter.builder("flow.control.health.low.traffic.events")
                 .tag("target", targetSystemId)
                 .tag("event", event.name().toLowerCase())
-                .register(registry)
-                .increment();
+                .register(registry);
     }
 
     @Override
     public void recordMaintenanceStarted(String targetSystemId, MaintenanceSource source) {
-        Counter.builder("flow.control.maintenance.started")
+        maintenanceStarted(targetSystemId, source).increment();
+    }
+
+    private Counter maintenanceStarted(String targetSystemId, MaintenanceSource source) {
+        return Counter.builder("flow.control.maintenance.started")
                 .tag("target", targetSystemId)
                 .tag("source", source.label())
-                .register(registry)
-                .increment();
+                .register(registry);
     }
 
     @Override
     public void recordMaintenanceExcluded(String targetSystemId) {
-        Counter.builder("flow.control.maintenance.excluded")
+        maintenanceExcluded(targetSystemId).increment();
+    }
+
+    private Counter maintenanceExcluded(String targetSystemId) {
+        return Counter.builder("flow.control.maintenance.excluded")
                 .tag("target", targetSystemId)
-                .register(registry)
-                .increment();
+                .register(registry);
     }
 
     @Override

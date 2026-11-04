@@ -33,6 +33,7 @@ public class PolicyRegistry implements TargetSystemPolicyReader {
     private final Map<String, Map<PolicyChangeListener, Change>> failedChanges = new HashMap<>();
     private final Set<String> removed = new HashSet<>();
     private final Set<String> reportedTargets = new HashSet<>();
+    private final Set<String> registeredTargets = new HashSet<>();
 
     public PolicyRegistry(PolicyRepository repository,
                           ObjectProvider<PolicyChangeListener> listeners,
@@ -118,7 +119,17 @@ public class PolicyRegistry implements TargetSystemPolicyReader {
         }
         disableRemoved(present, notified);
         reportLatestInvalid(loaded);
+        registerNewTargets(loaded);
         retryFailed(notified);
+    }
+
+    // 정책을 받는 곳들이 이 빈에 기대므로 생성자에서는 그 목록을 꺼낼 수 없다. 그래서 첫 refresh 부터 등록한다.
+    private void registerNewTargets(List<LoadedPolicy> loaded) {
+        for (LoadedPolicy policy : loaded) {
+            if (registeredTargets.add(policy.targetSystemId())) {
+                metrics.registerTarget(policy.targetSystemId(), listenerNames());
+            }
+        }
     }
 
     private void reportLatestInvalid(List<LoadedPolicy> loaded) {
@@ -132,6 +143,14 @@ public class PolicyRegistry implements TargetSystemPolicyReader {
                 .forEach(targetSystemId -> metrics.recordLatestPolicyInvalid(targetSystemId, false));
         reportedTargets.clear();
         reportedTargets.addAll(present);
+    }
+
+    private List<String> listenerNames() {
+        return listeners.orderedStream().map(PolicyRegistry::nameOf).toList();
+    }
+
+    private static String nameOf(PolicyChangeListener listener) {
+        return ClassUtils.getUserClass(listener).getSimpleName();
     }
 
     private void disableRemoved(Set<String> present, Set<String> notified) {
@@ -219,7 +238,7 @@ public class PolicyRegistry implements TargetSystemPolicyReader {
     }
 
     private void deliver(String targetSystemId, PolicyChangeListener listener, Change change, boolean retry) {
-        String name = ClassUtils.getUserClass(listener).getSimpleName();
+        String name = nameOf(listener);
         try {
             change.deliverTo(listener);
         } catch (RuntimeException e) {

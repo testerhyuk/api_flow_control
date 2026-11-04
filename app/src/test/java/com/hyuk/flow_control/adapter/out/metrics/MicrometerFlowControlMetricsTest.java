@@ -17,6 +17,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -29,6 +30,43 @@ class MicrometerFlowControlMetricsTest {
     void setUp() {
         registry = new SimpleMeterRegistry();
         metrics = new MicrometerFlowControlMetrics(registry);
+    }
+
+    @Test
+    @DisplayName("서버 전체의 횟수 지표는 만들 때부터 0으로 있다")
+    void registersGlobalCountersAtZero() {
+        assertThat(registry.get("flow.control.policy.refresh.failures").counter().count()).isZero();
+        assertThat(registry.get("flow.control.limit.store.switches").tag("to", "shared").counter().count()).isZero();
+        assertThat(registry.get("flow.control.limit.store.switches").tag("to", "local").counter().count()).isZero();
+    }
+
+    @Test
+    @DisplayName("외부 서버를 등록하면 횟수 지표가 0으로 생긴다")
+    void registersTargetCountersAtZero() {
+        metrics.registerTarget("target-a", List.of("TargetSystemSemaphore"));
+
+        assertThat(registry.get("flow.control.health.transitions").tag("target", "target-a")
+                .tag("from", "HEALTHY").tag("to", "CRITICAL").counter().count()).isZero();
+        assertThat(registry.get("flow.control.health.transitions").tag("target", "target-a").counters()).hasSize(12);
+        assertThat(registry.get("flow.control.health.suppressed").tag("target", "target-a").counters()).hasSize(2);
+        assertThat(registry.get("flow.control.health.mode.transitions").tag("target", "target-a").counters()).hasSize(2);
+        assertThat(registry.get("flow.control.health.low.traffic.events").tag("target", "target-a").counters()).hasSize(2);
+        assertThat(registry.get("flow.control.maintenance.started").tag("target", "target-a").counters()).hasSize(2);
+        assertThat(registry.get("flow.control.maintenance.excluded").tag("target", "target-a").counter().count()).isZero();
+        assertThat(registry.get("flow.control.policy.apply.failures").tag("target", "target-a")
+                .tag("listener", "TargetSystemSemaphore").counter().count()).isZero();
+    }
+
+    @Test
+    @DisplayName("등록한 지표에 이어서 센다")
+    void countsOnRegisteredCounter() {
+        metrics.registerTarget("target-a", List.of());
+
+        metrics.recordStateTransition("target-a", HealthState.HEALTHY, HealthState.CRITICAL);
+        metrics.registerTarget("target-a", List.of());
+
+        assertThat(registry.get("flow.control.health.transitions").tag("target", "target-a")
+                .tag("from", "HEALTHY").tag("to", "CRITICAL").counter().count()).isEqualTo(1.0);
     }
 
     @Test
