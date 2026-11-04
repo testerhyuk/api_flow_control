@@ -161,7 +161,6 @@ services:
     build: ../record-ingestor
     image: flow-control/record-ingestor:local
     container_name: flow-control-record-ingestor
-    command: ["--record-ingestor.auto-start=false"]
     ports:
       - "8095:8095"
     environment:

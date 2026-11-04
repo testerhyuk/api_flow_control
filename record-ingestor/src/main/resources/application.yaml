@@ -10,12 +10,3 @@ server:
 record-ingestor:
   topic-prefix: flow-control.requests.
   requester-id: record-ingestor
-  auto-start: true
-  seed: 42
-  targets:
-    target-a:
-      rate: 100
-    target-b:
-      rate: 50
-    target-c:
-      rate: 20
