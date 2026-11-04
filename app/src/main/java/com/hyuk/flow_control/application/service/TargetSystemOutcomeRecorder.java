@@ -4,6 +4,8 @@ import com.hyuk.flow_control.application.port.out.PolicyChangeListener;
 import com.hyuk.flow_control.application.port.out.TargetSystemPolicyReader;
 import com.hyuk.flow_control.config.HealthProperties;
 import com.hyuk.flow_control.domain.health.LowTrafficEvent;
+import com.hyuk.flow_control.domain.health.LowTrafficRules;
+import com.hyuk.flow_control.domain.health.LowTrafficStreaks;
 import com.hyuk.flow_control.domain.health.OutcomeStatistics;
 import com.hyuk.flow_control.domain.health.OutcomeWindow;
 import com.hyuk.flow_control.domain.health.RecordedOutcome;
@@ -15,7 +17,6 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Deque;
-import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -29,7 +30,7 @@ public class TargetSystemOutcomeRecorder implements PolicyChangeListener {
     private final Map<String, Outcomes> outcomes = new ConcurrentHashMap<>();
     private final Duration window;
     private final int maxSamples;
-    private final HealthProperties.LowTraffic lowTraffic;
+    private final LowTrafficRules lowTraffic;
 
     public TargetSystemOutcomeRecorder(
             TargetSystemPolicyReader policyReader,
@@ -37,15 +38,15 @@ public class TargetSystemOutcomeRecorder implements PolicyChangeListener {
             ) {
         this.window = healthProperties.window();
         this.maxSamples = healthProperties.minimumCalls();
-        this.lowTraffic = healthProperties.lowTraffic();
+        this.lowTraffic = healthProperties.lowTraffic().rules();
 
         policyReader.readAll().keySet().forEach(targetSystemId ->
-                outcomes.put(targetSystemId, new Outcomes()));
+                outcomes.put(targetSystemId, new Outcomes(lowTraffic)));
     }
 
     @Override
     public void onPolicyAdded(ManagedPolicy policy) {
-        outcomes.putIfAbsent(policy.targetSystemId(), new Outcomes());
+        outcomes.putIfAbsent(policy.targetSystemId(), new Outcomes(lowTraffic));
     }
 
     @Override
@@ -55,7 +56,7 @@ public class TargetSystemOutcomeRecorder implements PolicyChangeListener {
     public void record(String targetSystemId, OutcomeKind kind, Duration latency) {
         Outcomes target = outcomesOf(targetSystemId);
         target.deque.addLast(new RecordedOutcome(kind, latency, Instant.now()));
-        target.track(kind, lowTraffic);
+        target.track(kind);
     }
 
     public void recordBlocked(String targetSystemId) {
@@ -124,47 +125,24 @@ public class TargetSystemOutcomeRecorder implements PolicyChangeListener {
 
     private static final class Outcomes {
         private final Deque<RecordedOutcome> deque = new ConcurrentLinkedDeque<>();
-        private final Set<LowTrafficEvent> pending = EnumSet.noneOf(LowTrafficEvent.class);
-        private int failureStreak;
-        private int timeoutStreak;
+        private final LowTrafficStreaks streaks;
         private final AtomicInteger waiting = new AtomicInteger();
         private final AtomicInteger newSamples = new AtomicInteger();
         private volatile Instant lastBlockedAt;
 
-        private synchronized void track(OutcomeKind kind, HealthProperties.LowTraffic rules) {
-            if (!OutcomeStatistics.isSample(kind)) {
-                return;
-            }
-
-            newSamples.incrementAndGet();
-
-            if (!OutcomeStatistics.isFailure(kind)) {
-                failureStreak = 0;
-                timeoutStreak = 0;
-                return;
-            }
-
-            if (++failureStreak >= rules.consecutiveFailures()) {
-                pending.add(LowTrafficEvent.CONSECUTIVE_FAILURES);
-                failureStreak = 0;
-            }
-
-            if (kind != OutcomeKind.TIMEOUT) {
-                timeoutStreak = 0;
-            } else if (++timeoutStreak >= rules.consecutiveTimeouts()) {
-                pending.add(LowTrafficEvent.CONSECUTIVE_TIMEOUTS);
-                timeoutStreak = 0;
-            }
+        private Outcomes(LowTrafficRules lowTraffic) {
+            this.streaks = new LowTrafficStreaks(lowTraffic);
         }
 
-        private synchronized Set<LowTrafficEvent> drain() {
-            if (pending.isEmpty()) {
-                return Set.of();
+        private void track(OutcomeKind kind) {
+            if (OutcomeStatistics.isSample(kind)) {
+                newSamples.incrementAndGet();
             }
+            streaks.track(kind);
+        }
 
-            Set<LowTrafficEvent> drained = Set.copyOf(pending);
-            pending.clear();
-            return drained;
+        private Set<LowTrafficEvent> drain() {
+            return streaks.drain();
         }
     }
 }

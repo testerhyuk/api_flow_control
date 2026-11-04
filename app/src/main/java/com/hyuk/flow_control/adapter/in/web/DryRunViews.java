@@ -48,11 +48,14 @@ public final class DryRunViews {
             Instant observedSince,
             Instant reportedAt,
             long observedCalls,
+            long judgedCalls,
+            int requiredCalls,
             long overlapMs,
             DryRunReport.Limits limits,
             List<DryRunReport.JudgmentChange> judgmentChanges,
             DryRunReport.Timeouts timeouts,
             Health health,
+            Maintenance maintenance,
             List<String> unknowns
     ) {
         static Result from(DryRunReport report) {
@@ -60,12 +63,30 @@ public final class DryRunViews {
                     report.observedSince(),
                     report.reportedAt(),
                     report.observedCalls(),
+                    report.judgedCalls(),
+                    report.requiredCalls(),
                     report.overlap().toMillis(),
                     report.limits(),
                     report.judgmentChanges(),
                     report.timeouts(),
                     Health.from(report.health()),
+                    report.maintenance() == null ? null : Maintenance.from(report.maintenance()),
                     report.unknowns());
+        }
+    }
+
+    public record Maintenance(
+            long candidateTimeMs,
+            long candidateCalls,
+            long addedTimeMs,
+            long removedTimeMs
+    ) {
+        static Maintenance from(DryRunReport.Maintenance maintenance) {
+            return new Maintenance(
+                    maintenance.candidateTime().toMillis(),
+                    maintenance.candidateCalls(),
+                    maintenance.addedTime().toMillis(),
+                    maintenance.removedTime().toMillis());
         }
     }
 

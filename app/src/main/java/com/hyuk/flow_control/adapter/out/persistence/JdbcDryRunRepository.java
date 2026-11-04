@@ -3,6 +3,8 @@ package com.hyuk.flow_control.adapter.out.persistence;
 import com.hyuk.flow_control.application.port.out.DryRunRepository;
 import com.hyuk.flow_control.domain.dryrun.DryRun;
 import com.hyuk.flow_control.domain.dryrun.DryRunAlreadyRunningException;
+import com.hyuk.flow_control.domain.dryrun.DryRunReport;
+import com.hyuk.flow_control.domain.dryrun.DryRunResult;
 import com.hyuk.flow_control.domain.policy.ChangeNote;
 import com.hyuk.flow_control.domain.policy.PolicyVersionConflictException;
 import org.slf4j.Logger;
@@ -29,10 +31,12 @@ public class JdbcDryRunRepository implements DryRunRepository {
             + ", base_version, started_at, expires_at, started_by, start_reason";
 
     private final JdbcClient jdbcClient;
+    private final JsonMapper jsonMapper;
     private final PolicyColumns policyColumns;
 
     public JdbcDryRunRepository(JdbcClient jdbcClient, JsonMapper jsonMapper) {
         this.jdbcClient = jdbcClient;
+        this.jsonMapper = jsonMapper;
         this.policyColumns = new PolicyColumns(jsonMapper);
     }
 
@@ -91,16 +95,48 @@ public class JdbcDryRunRepository implements DryRunRepository {
     }
 
     @Override
-    public int deleteStale(Instant now) {
+    public List<DryRun> deleteStale(Instant now) {
         return jdbcClient.sql("""
                         delete from policy_dry_run d
                         where d.expires_at <= :now
                            or not exists (select 1 from target_policy p
                                           where p.target_system_id = d.target_system_id
                                             and p.version = d.base_version)
-                        """)
+                        returning """ + COLUMNS)
                 .param("now", Timestamp.from(now))
+                .query((rs, rowNum) -> toDryRunOrNull(rs))
+                .list()
+                .stream()
+                .filter(Objects::nonNull)
+                .toList();
+    }
+
+    @Override
+    public void saveResult(DryRunResult result) {
+        DryRun dryRun = result.dryRun();
+
+        policyColumns.bind(jdbcClient.sql("insert into policy_dry_run_result (" + COLUMNS + """
+                                , ended_at, end_reason, ended_by, applied_version, report) select """
+                                + PolicyColumns.VALUES + """
+                                , :baseVersion, :startedAt, :expiresAt, :startedBy, :startReason,
+                                :endedAt, :endReason, :endedBy, :appliedVersion, cast(:report as jsonb)
+                                """),
+                        dryRun.candidate())
+                .param("baseVersion", dryRun.baseVersion())
+                .param("startedAt", Timestamp.from(dryRun.startedAt()))
+                .param("expiresAt", Timestamp.from(dryRun.expiresAt()))
+                .param("startedBy", dryRun.note().changedBy())
+                .param("startReason", dryRun.note().reason())
+                .param("endedAt", Timestamp.from(result.endedAt()))
+                .param("endReason", result.end().name())
+                .param("endedBy", result.endedBy())
+                .param("appliedVersion", result.appliedVersion())
+                .param("report", reportJson(jsonMapper, result.report()))
                 .update();
+    }
+
+    static String reportJson(JsonMapper jsonMapper, DryRunReport report) {
+        return report == null ? null : jsonMapper.writeValueAsString(report);
     }
 
     private DryRun toDryRunOrNull(ResultSet rs) throws SQLException {

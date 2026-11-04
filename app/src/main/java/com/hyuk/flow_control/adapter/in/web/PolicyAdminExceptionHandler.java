@@ -2,6 +2,7 @@ package com.hyuk.flow_control.adapter.in.web;
 
 import com.hyuk.flow_control.domain.dryrun.DryRunAlreadyRunningException;
 import com.hyuk.flow_control.domain.dryrun.DryRunNotFoundException;
+import com.hyuk.flow_control.domain.dryrun.DryRunNotReadyException;
 import com.hyuk.flow_control.domain.policy.PolicyAlreadyExistsException;
 import com.hyuk.flow_control.domain.policy.PolicyNotFoundException;
 import com.hyuk.flow_control.domain.policy.PolicyVersionConflictException;
@@ -29,7 +30,7 @@ public class PolicyAdminExceptionHandler {
     }
 
     @ExceptionHandler({PolicyAlreadyExistsException.class, PolicyVersionConflictException.class,
-            DryRunAlreadyRunningException.class, RequesterAlreadyExistsException.class,
+            DryRunAlreadyRunningException.class, DryRunNotReadyException.class, RequesterAlreadyExistsException.class,
             RequesterVersionConflictException.class})
     public ProblemDetail conflict(RuntimeException e) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());

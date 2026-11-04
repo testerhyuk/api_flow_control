@@ -2,6 +2,7 @@ package com.hyuk.flow_control.config;
 
 import com.hyuk.flow_control.domain.health.HealthRules;
 import com.hyuk.flow_control.domain.health.HealthThresholds;
+import com.hyuk.flow_control.domain.health.LowTrafficRules;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.ConstructorBinding;
 import org.springframework.boot.context.properties.bind.DefaultValue;
@@ -157,6 +158,10 @@ public record HealthProperties(
             if (recoveryCalls < 1) {
                 throw new IllegalArgumentException("low-traffic.recovery-calls 는 1 이상이어야 합니다");
             }
+        }
+
+        public LowTrafficRules rules() {
+            return new LowTrafficRules(enterAfter, consecutiveFailures, consecutiveTimeouts, recoveryCalls);
         }
     }
 

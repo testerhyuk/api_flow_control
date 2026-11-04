@@ -9,7 +9,7 @@ public interface DryRunUseCase {
 
     DryRunStatus get(String targetSystemId);
 
-    void cancel(String targetSystemId);
+    void cancel(String targetSystemId, String operator);
 
     ManagedPolicy apply(String targetSystemId, ChangeNote note);
 }

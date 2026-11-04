@@ -8,6 +8,8 @@ import com.hyuk.flow_control.domain.health.HealthState;
 import com.hyuk.flow_control.domain.health.HealthStatus;
 import com.hyuk.flow_control.domain.health.HealthRules;
 import com.hyuk.flow_control.domain.health.HealthThresholds;
+import com.hyuk.flow_control.domain.health.LowTrafficRules;
+import com.hyuk.flow_control.domain.health.HealthMode;
 import com.hyuk.flow_control.domain.limit.RateAdjustmentRule;
 import com.hyuk.flow_control.domain.maintenance.MaintenanceSchedule;
 import com.hyuk.flow_control.domain.maintenance.OneTimeMaintenance;
@@ -46,6 +48,7 @@ class ShadowEvaluationTest {
     private static final ManagedPolicy BASE = Policies.policy(TARGET, 1);
     private static final HealthThresholds THRESHOLDS = new HealthThresholds(10, 0.1, 0.5, 2.0);
     private static final HealthRules RULES = new HealthRules(THRESHOLDS, 3, 1, false);
+    private static final LowTrafficRules LOW_TRAFFIC = new LowTrafficRules(3, 3, 3, 5);
     private static final RateAdjustmentRule RATE_RULE = new RateAdjustmentRule(0.5, 10, 1.0);
 
     private ResponseJudge judge;
@@ -98,6 +101,46 @@ class ShadowEvaluationTest {
         assertThat(evaluation.concurrencyLimit()).isEqualTo(1);
         assertThat(report.limits().wouldBlockBySemaphore()).isEqualTo(1);
         assertThat(report.limits().wouldBlockByTokenBucket()).isZero();
+    }
+
+    @Test
+    @DisplayName("새 한도였다면 막혔을 호출의 결과는 상태 판정에서 빼고, 뺀 건수를 알 수 없는 부분에 적는다")
+    void excludesBlockedCallsFromJudgment() {
+        ShadowEvaluation evaluation = evaluation(limits(100, 150), 95.0);
+        completeMany(evaluation, OutcomeKind.SUCCESS, 10, NOW);
+        for (int i = 0; i < 10; i++) {
+            evaluation.complete(response(OutcomeKind.SERVER_ERROR, 500, 150), NOW, false);
+        }
+
+        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1, baselineOf(evaluation));
+
+        DryRunReport report = evaluation.report(NOW.plusSeconds(1), HealthState.HEALTHY, 95.0);
+        assertThat(evaluation.state()).isEqualTo(HealthState.HEALTHY);
+        assertThat(report.health().sampleCount()).isEqualTo(10);
+        assertThat(report.unknowns()).anyMatch(text -> text.contains("막혔을 호출 10건"));
+    }
+
+    @Test
+    @DisplayName("판정 기록에 들어간 호출 결과만 판정에 쓴 호출로 센다")
+    void countsJudgedCalls() {
+        ShadowEvaluation evaluation = evaluation(limits(100, 150), 95.0);
+        completeMany(evaluation, OutcomeKind.SUCCESS, 3, NOW);
+        evaluation.complete(response(OutcomeKind.UNEXPECTED_RESPONSE, 200, 150), NOW);
+        evaluation.complete(response(OutcomeKind.SUCCESS, 200, 150), NOW, false);
+
+        DryRunReport report = evaluation.report(NOW, HealthState.HEALTHY, 95.0);
+        assertThat(report.judgedCalls()).isEqualTo(3);
+        assertThat(report.requiredCalls()).isEqualTo(10);
+        assertThat(report.isReadyToApply()).isFalse();
+    }
+
+    @Test
+    @DisplayName("막혔으면 admit 이 false 를 돌려준다")
+    void admitReturnsWhetherAllowed() {
+        ShadowEvaluation evaluation = evaluation(limits(80, 150), 95.0);
+
+        assertThat(evaluation.admit(0)).isTrue();
+        assertThat(evaluation.admit(0)).isFalse();
     }
 
     @Test
@@ -302,7 +345,7 @@ class ShadowEvaluationTest {
             evaluation.complete(response(OutcomeKind.SUCCESS, 200, 150), NOW);
         }
 
-        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1, baselineOf(evaluation), true, false);
+        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1, baselineOf(evaluation), true);
 
         assertThat(evaluation.state()).isEqualTo(HealthState.HEALTHY);
         assertThat(evaluation.report(NOW.plusSeconds(1), HealthState.HEALTHY, 95.0).health().timeInState())
@@ -310,27 +353,139 @@ class ShadowEvaluationTest {
     }
 
     @Test
-    @DisplayName("실제 판정이 저트래픽 모드였던 시간을 알 수 없는 부분에 적는다")
-    void listsLowTrafficTime() {
-        ShadowEvaluation evaluation = evaluation(limits(80, 150), 95.0);
+    @DisplayName("호출이 적은 판정이 이어지면 저트래픽 모드로 바꾸고, 연속 실패면 새 값 기준 상태를 위험으로 내린다")
+    void judgesWithLowTrafficRules() {
+        ShadowEvaluation evaluation = evaluation(limits(100, 150), 95.0);
+        for (int second = 1; second <= 3; second++) {
+            evaluation.evaluate(NOW.plusSeconds(second), second * 1_000_000_000L, 1, baselineOf(evaluation));
+        }
+        HealthMode entered = evaluation.mode();
 
-        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1, baselineOf(evaluation), false, true);
-        evaluation.evaluate(NOW.plusSeconds(3), 3_000_000_000L, 1, baselineOf(evaluation), false, true);
+        completeMany(evaluation, OutcomeKind.SERVER_ERROR, 3, NOW.plusSeconds(3));
+        evaluation.evaluate(NOW.plusSeconds(4), 4_000_000_000L, 1, baselineOf(evaluation));
 
-        assertThat(evaluation.report(NOW.plusSeconds(3), HealthState.HEALTHY, 95.0).unknowns())
-                .anyMatch(text -> text.contains("저트래픽 모드였던 3초"));
+        assertThat(entered).isEqualTo(HealthMode.LOW_TRAFFIC);
+        assertThat(evaluation.state()).isEqualTo(HealthState.CRITICAL);
+        assertThat(evaluation.rate()).isCloseTo(1.0, within(1e-9));
+        assertThat(evaluation.report(NOW.plusSeconds(4), HealthState.HEALTHY, 95.0).unknowns())
+                .noneMatch(text -> text.contains("저트래픽"));
     }
 
     @Test
-    @DisplayName("점검 시간표를 바꾸면 그 효과는 확인할 수 없다고 적는다")
-    void listsMaintenanceScheduleChange() {
-        ManagedPolicy changed = BASE.withVersion(2);
-        ManagedPolicy candidate = new ManagedPolicy(changed.targetSystemId(), changed.version(), changed.enabled(),
-                changed.connection(), changed.limits(), changed.response(), new MaintenanceSchedule(List.of(),
-                List.of(new OneTimeMaintenance(LocalDateTime.of(2026, 10, 20, 1, 0), LocalDateTime.of(2026, 10, 20, 5, 0)))));
+    @DisplayName("새 한도에 막힌 적이 판정 구간 안에 있으면 저트래픽 모드로 바꾸지 않는다")
+    void staysAdaptiveWhileBlocked() {
+        ShadowEvaluation evaluation = evaluation(limits(80, 150), 95.0);
+        evaluation.admit(0);
+        evaluation.admit(0);
 
-        assertThat(evaluation(candidate, 95.0).report(NOW, HealthState.HEALTHY, 95.0).unknowns())
-                .containsExactly("점검 시간표를 바꾼 효과는 확인할 수 없습니다");
+        for (int second = 1; second <= 3; second++) {
+            evaluation.evaluate(NOW.plusSeconds(second), second * 1_000_000_000L, 1, baselineOf(evaluation));
+        }
+
+        assertThat(evaluation.mode()).isEqualTo(HealthMode.ADAPTIVE);
+    }
+
+    @Test
+    @DisplayName("점검 일정을 바꾸면 새 일정의 점검 시간과 그 시간의 호출 수, 달라진 시간을 세고, 그 뒤의 영향만 알 수 없다고 적는다")
+    void countsCandidateMaintenance() {
+        ShadowEvaluation evaluation = evaluation(withMaintenance(oneTimeMaintenance(NOW, NOW.plusSeconds(3))), 95.0);
+
+        completeMany(evaluation, OutcomeKind.SERVER_ERROR, 10, NOW.plusSeconds(1));
+        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1, baselineOf(evaluation));
+        evaluation.evaluate(NOW.plusSeconds(2), 2_000_000_000L, 1, baselineOf(evaluation));
+        evaluation.evaluate(NOW.plusSeconds(3), 3_000_000_000L, 1, baselineOf(evaluation));
+
+        DryRunReport report = evaluation.report(NOW.plusSeconds(3), HealthState.HEALTHY, 95.0);
+        assertThat(report.health().sampleCount()).isZero();
+        assertThat(report.maintenance()).isEqualTo(new DryRunReport.Maintenance(
+                Duration.ofSeconds(2), 10, Duration.ofSeconds(2), Duration.ZERO));
+        assertThat(report.unknowns()).containsExactly(
+                "새 점검 일정이었다면 점검 중에 요청을 읽지 않아 쌓였을 요청이, 점검이 끝난 뒤 어떻게 나갔을지는 알 수 없습니다");
+    }
+
+    @Test
+    @DisplayName("실제 점검이 끝나면 회복 중으로 바꾸고 새 정책의 바닥 한도에서 다시 시작한다")
+    void restartsAfterActualMaintenance() {
+        ShadowEvaluation evaluation = evaluation(limits(100, 150), 95.0);
+
+        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1, baselineOf(evaluation), true);
+        assertThat(evaluation.state()).isEqualTo(HealthState.HEALTHY);
+        assertThat(evaluation.rate()).isCloseTo(95.0, within(1e-9));
+
+        evaluation.evaluate(NOW.plusSeconds(2), 2_000_000_000L, 1, baselineOf(evaluation), false);
+
+        assertThat(evaluation.state()).isEqualTo(HealthState.RECOVERING);
+        assertThat(evaluation.mode()).isEqualTo(HealthMode.ADAPTIVE);
+        assertThat(evaluation.rate()).isCloseTo(1.0, within(1e-9));
+        assertThat(evaluation.concurrencyLimit()).isEqualTo(limitsOf(100, 150).concurrencyLimitAt(1.0, Duration.ofMillis(150)));
+        assertThat(evaluation.report(NOW.plusSeconds(2), HealthState.RECOVERING, 1.0).health().transitions()).isEqualTo(1);
+        verify(metrics).recordDryRunStateTransition(TARGET, HealthState.HEALTHY, HealthState.RECOVERING);
+    }
+
+    @Test
+    @DisplayName("점검이 끝나면 회복 중 연속 횟수를 0 부터 다시 센다")
+    void restartsGoodCountAfterMaintenance() {
+        ShadowEvaluation evaluation = evaluation(limits(100, 150), 95.0, new HealthStatus(HealthState.RECOVERING, 2));
+        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1, baselineOf(evaluation), true);
+
+        completeMany(evaluation, OutcomeKind.SUCCESS, 10, NOW.plusSeconds(2));
+        evaluation.evaluate(NOW.plusSeconds(2), 2_000_000_000L, 1, baselineOf(evaluation), false);
+
+        assertThat(evaluation.state()).isEqualTo(HealthState.RECOVERING);
+    }
+
+    @Test
+    @DisplayName("새 일정의 점검이 끝나도 회복 중으로 바꾸고 바닥 한도에서 다시 시작한다")
+    void restartsAfterCandidateMaintenance() {
+        ShadowEvaluation evaluation = evaluation(withMaintenance(oneTimeMaintenance(NOW, NOW.plusSeconds(2))), 95.0);
+
+        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1, baselineOf(evaluation));
+        assertThat(evaluation.state()).isEqualTo(HealthState.HEALTHY);
+
+        evaluation.evaluate(NOW.plusSeconds(3), 3_000_000_000L, 1, baselineOf(evaluation));
+
+        assertThat(evaluation.state()).isEqualTo(HealthState.RECOVERING);
+        assertThat(evaluation.rate()).isCloseTo(1.0, within(1e-9));
+    }
+
+    @Test
+    @DisplayName("새 일정의 점검이 끝나도 실제 점검이 이어지면 아직 다시 시작하지 않는다")
+    void waitsWhileAnyMaintenanceContinues() {
+        ShadowEvaluation evaluation = evaluation(withMaintenance(oneTimeMaintenance(NOW, NOW.plusSeconds(2))), 95.0);
+        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1, baselineOf(evaluation), true);
+
+        evaluation.evaluate(NOW.plusSeconds(3), 3_000_000_000L, 1, baselineOf(evaluation), true);
+
+        assertThat(evaluation.state()).isEqualTo(HealthState.HEALTHY);
+        assertThat(evaluation.rate()).isCloseTo(95.0, within(1e-9));
+    }
+
+    @Test
+    @DisplayName("점검이 없었으면 회복 중으로 바꾸지 않는다")
+    void doesNotRestartWithoutMaintenance() {
+        ShadowEvaluation evaluation = evaluation(limits(100, 150), 95.0);
+
+        evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1, baselineOf(evaluation), false);
+
+        assertThat(evaluation.state()).isEqualTo(HealthState.HEALTHY);
+        assertThat(evaluation.rate()).isCloseTo(95.0, within(1e-9));
+    }
+
+    @Test
+    @DisplayName("점검 일정이 같으면 점검 계산 결과를 남기지 않는다")
+    void noMaintenanceReportWhenScheduleSame() {
+        assertThat(evaluation(limits(80, 150), 95.0).report(NOW, HealthState.HEALTHY, 95.0).maintenance()).isNull();
+    }
+
+    private static ManagedPolicy withMaintenance(MaintenanceSchedule schedule) {
+        ManagedPolicy changed = BASE.withVersion(2);
+        return new ManagedPolicy(changed.targetSystemId(), changed.version(), changed.enabled(),
+                changed.connection(), changed.limits(), changed.response(), schedule);
+    }
+
+    private static MaintenanceSchedule oneTimeMaintenance(Instant from, Instant to) {
+        return new MaintenanceSchedule(List.of(), List.of(new OneTimeMaintenance(
+                LocalDateTime.ofInstant(from, MaintenanceSchedule.ZONE), LocalDateTime.ofInstant(to, MaintenanceSchedule.ZONE))));
     }
 
     @Test
@@ -396,7 +551,7 @@ class ShadowEvaluationTest {
 
     private ShadowEvaluation evaluation(ManagedPolicy candidate, double actualRate, HealthStatus actualStatus) {
         DryRun dryRun = new DryRun(candidate, 1, NOW, NOW.plus(Duration.ofMinutes(30)), new ChangeNote("hyuk", "test"));
-        return new ShadowEvaluation(dryRun, BASE, actualStatus, actualRate, judge, RULES, RATE_RULE,
+        return new ShadowEvaluation(dryRun, BASE, actualStatus, actualRate, judge, RULES, LOW_TRAFFIC, RATE_RULE,
                 Duration.ofSeconds(10), 10, BaselineEstimator.Baselines.of(candidate.limits()), metrics, NOW, 0L);
     }
 

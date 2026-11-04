@@ -12,16 +12,23 @@ public record DryRunReport(
         Instant observedSince,
         Instant reportedAt,
         long observedCalls,
+        long judgedCalls,
+        int requiredCalls,
         Duration overlap,
         Limits limits,
         List<JudgmentChange> judgmentChanges,
         Timeouts timeouts,
         Health health,
+        Maintenance maintenance,
         List<String> unknowns
 ) {
     public DryRunReport {
         judgmentChanges = List.copyOf(judgmentChanges);
         unknowns = List.copyOf(unknowns);
+    }
+
+    public boolean isReadyToApply() {
+        return judgedCalls >= requiredCalls;
     }
 
     public record Limits(
@@ -35,6 +42,14 @@ public record DryRunReport(
     }
 
     public record JudgmentChange(OutcomeKind actual, OutcomeKind candidate, long count) {
+    }
+
+    public record Maintenance(
+            Duration candidateTime,
+            long candidateCalls,
+            Duration addedTime,
+            Duration removedTime
+    ) {
     }
 
     public record Timeouts(long wouldTimeout, long actualTimeoutsWithUnknownResult) {

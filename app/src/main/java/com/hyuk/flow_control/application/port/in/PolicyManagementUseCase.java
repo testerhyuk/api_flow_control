@@ -16,6 +16,8 @@ public interface PolicyManagementUseCase {
 
     ManagedPolicy update(String targetSystemId, PolicyContent content, long expectedVersion, ChangeNote note);
 
+    ManagedPolicy update(ManagedPolicy policy, long expectedVersion, ChangeNote note);
+
     ManagedPolicy changeEnabled(String targetSystemId, boolean enabled, long expectedVersion, ChangeNote note);
 
     List<PolicyHistoryEntry> history(String targetSystemId);

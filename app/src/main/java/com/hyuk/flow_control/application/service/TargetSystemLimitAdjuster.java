@@ -9,9 +9,7 @@ import com.hyuk.flow_control.application.port.out.TargetSystemRateLimiter;
 import com.hyuk.flow_control.config.ControlProperties;
 import com.hyuk.flow_control.config.HealthProperties;
 import com.hyuk.flow_control.config.LimitAdjustmentProperties;
-import com.hyuk.flow_control.domain.health.HealthMode;
 import com.hyuk.flow_control.domain.health.HealthSnapshot;
-import com.hyuk.flow_control.domain.health.HealthState;
 import com.hyuk.flow_control.domain.limit.ControlMode;
 import com.hyuk.flow_control.domain.limit.RateAdjustmentRule;
 import com.hyuk.flow_control.domain.policy.ManagedPolicy;
@@ -211,13 +209,8 @@ public class TargetSystemLimitAdjuster implements PolicyChangeListener {
         if (maintenance.isActive(targetSystemId)) {
             return rule.bounded(rateOf(targetSystemId), policy);
         }
-        if (snapshot.mode() == HealthMode.LOW_TRAFFIC) {
-            return snapshot.state() == HealthState.CRITICAL
-                    ? rule.floor(policy)
-                    : rule.bounded(rateOf(targetSystemId), policy);
-        }
-        return rule.next(rateOf(targetSystemId), snapshot.state(), Optional.ofNullable(snapshot.grade()), samples,
-                policy);
+        return rule.next(rateOf(targetSystemId), snapshot.mode(), snapshot.state(),
+                Optional.ofNullable(snapshot.grade()), samples, policy);
     }
 
     private double inheritOnce(String targetSystemId, double proposed) {

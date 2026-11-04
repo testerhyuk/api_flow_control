@@ -6,6 +6,8 @@ import com.hyuk.flow_control.application.port.out.ResponseJudge;
 import com.hyuk.flow_control.config.HealthProperties;
 import com.hyuk.flow_control.config.LimitAdjustmentProperties;
 import com.hyuk.flow_control.domain.dryrun.DryRun;
+import com.hyuk.flow_control.domain.dryrun.DryRunEnd;
+import com.hyuk.flow_control.domain.dryrun.DryRunResult;
 import com.hyuk.flow_control.domain.health.HealthSnapshot;
 import com.hyuk.flow_control.domain.health.HealthState;
 import com.hyuk.flow_control.domain.health.HealthStatus;
@@ -18,6 +20,7 @@ import com.hyuk.flow_control.support.Policies;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -27,7 +30,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class DryRunMonitorTest {
@@ -124,6 +131,109 @@ class DryRunMonitorTest {
     }
 
     @Test
+    @DisplayName("다시 읽을 때 이 서버가 지운 dry-run 은 이 서버의 결과와 끝난 이유를 남긴다")
+    void recordsResultOfDeletedDryRun() {
+        DryRun running = dryRun(Instant.now().plus(Duration.ofMinutes(30)));
+        when(repository.loadAll()).thenReturn(List.of(running));
+        monitor.refresh();
+        DryRun expired = dryRun(Instant.now().minusSeconds(1));
+        when(repository.deleteStale(any())).thenReturn(List.of(running), List.of(expired));
+        when(repository.loadAll()).thenReturn(List.of());
+
+        monitor.refresh();
+        monitor.refresh();
+
+        ArgumentCaptor<DryRunResult> results = ArgumentCaptor.forClass(DryRunResult.class);
+        verify(repository, times(2)).saveResult(results.capture());
+        assertThat(results.getAllValues().get(0).end()).isEqualTo(DryRunEnd.POLICY_CHANGED);
+        assertThat(results.getAllValues().get(0).report()).isNotNull();
+        assertThat(results.getAllValues().get(1).end()).isEqualTo(DryRunEnd.EXPIRED);
+        assertThat(results.getAllValues().get(1).report()).isNull();
+        assertThat(monitor.isRunning(TARGET)).isFalse();
+    }
+
+    @Test
+    @DisplayName("판정 주기가 만료를 먼저 봐서 멈춘 뒤 다시 읽어도 마지막 결과를 남긴다")
+    void recordsReportWhenTickStopsFirst() throws InterruptedException {
+        DryRun dryRun = startExpiringWithOneCall();
+        monitor.evaluateAll();
+        assertThat(monitor.isRunning(TARGET)).isFalse();
+        when(repository.deleteStale(any())).thenReturn(List.of(dryRun));
+        when(repository.loadAll()).thenReturn(List.of());
+
+        monitor.refresh();
+
+        DryRunResult result = savedResult();
+        assertThat(result.end()).isEqualTo(DryRunEnd.EXPIRED);
+        assertThat(result.report()).isNotNull();
+        assertThat(result.report().observedCalls()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("멈춘 뒤에 들어온 호출은 마지막 결과에 세지 않는다")
+    void doesNotCountCallsAfterStop() throws InterruptedException {
+        DryRun dryRun = startExpiringWithOneCall();
+        monitor.evaluateAll();
+
+        monitor.beforeCall(TARGET)
+                .finish(new OutboundResult(OutcomeKind.SUCCESS, Duration.ofMillis(10), null, null, 200, null));
+
+        assertThat(monitor.reportOf(dryRun).orElseThrow().observedCalls()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("DB 장애 중에 끝나도 DB 가 돌아오면 마지막 결과를 남긴다")
+    void recordsReportAfterDatabaseRecovers() throws InterruptedException {
+        DryRun dryRun = startExpiringWithOneCall();
+        when(repository.deleteStale(any())).thenThrow(new IllegalStateException("db down"));
+        monitor.refresh();
+        assertThat(monitor.isRunning(TARGET)).isFalse();
+
+        doReturn(List.of(dryRun)).when(repository).deleteStale(any());
+        when(repository.loadAll()).thenReturn(List.of());
+        monitor.refresh();
+
+        assertThat(savedResult().report()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("저장을 마친 보관본은 지운다")
+    void removesReportAfterSaving() throws InterruptedException {
+        DryRun dryRun = startExpiringWithOneCall();
+        monitor.evaluateAll();
+        when(repository.deleteStale(any())).thenReturn(List.of(dryRun));
+        when(repository.loadAll()).thenReturn(List.of());
+
+        monitor.refresh();
+
+        assertThat(monitor.reportOf(dryRun)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("다른 서버가 DB 에서 먼저 지운 dry-run 의 보관본도 지운다")
+    void removesReportDeletedByOtherServer() throws InterruptedException {
+        DryRun dryRun = startExpiringWithOneCall();
+        monitor.evaluateAll();
+        when(repository.loadAll()).thenReturn(List.of());
+
+        monitor.refresh();
+
+        assertThat(monitor.reportOf(dryRun)).isEmpty();
+        verify(repository, never()).saveResult(any());
+    }
+
+    @Test
+    @DisplayName("DB 에 아직 남아 있는 dry-run 의 보관본은 지우지 않는다")
+    void keepsReportWhileStored() throws InterruptedException {
+        DryRun dryRun = startExpiringWithOneCall();
+        monitor.evaluateAll();
+
+        monitor.refresh();
+
+        assertThat(monitor.reportOf(dryRun)).isPresent();
+    }
+
+    @Test
     @DisplayName("DB 를 읽지 못해도 진행 중인 dry-run 은 계속한다")
     void keepsRunningWhenDatabaseFails() {
         when(repository.loadAll()).thenReturn(List.of(dryRun(Instant.now().plus(Duration.ofMinutes(30)))));
@@ -192,6 +302,22 @@ class DryRunMonitorTest {
         monitor.refresh();
 
         assertThat(monitor.rateOf(TARGET).orElseThrow()).isCloseTo(47.5, within(1e-9));
+    }
+
+    private DryRun startExpiringWithOneCall() throws InterruptedException {
+        DryRun dryRun = dryRun(Instant.now().plusMillis(200));
+        when(repository.loadAll()).thenReturn(List.of(dryRun));
+        monitor.refresh();
+        monitor.beforeCall(TARGET)
+                .finish(new OutboundResult(OutcomeKind.SUCCESS, Duration.ofMillis(10), null, null, 200, null));
+        Thread.sleep(250);
+        return dryRun;
+    }
+
+    private DryRunResult savedResult() {
+        ArgumentCaptor<DryRunResult> result = ArgumentCaptor.forClass(DryRunResult.class);
+        verify(repository).saveResult(result.capture());
+        return result.getValue();
     }
 
     private static DryRun dryRun(Instant expiresAt) {

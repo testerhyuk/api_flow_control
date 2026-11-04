@@ -212,6 +212,19 @@ class PolicyManagementFlowTest {
         assertThat(status.get("result").get("observedCalls").asLong()).isEqualTo(3);
         assertThat(status.get("result").get("limits").get("rate").asDouble()).isEqualTo(4.75);
 
+        HttpResponse<String> early = send("POST", "/admin/policies/" + target + "/dry-run/apply", """
+                {"reason": "이른 적용"}
+                """);
+        assertThat(early.statusCode()).isEqualTo(409);
+
+        int required = status.get("result").get("requiredCalls").asInt();
+        for (int sent = 3; judgedCalls(target) < required; sent++) {
+            assertThat(sent).isLessThan(required * 10);
+            String requestId = UUID.randomUUID().toString();
+            produce(target, requester, requestId);
+            await(() -> receivedRequestIds.contains(requestId));
+        }
+
         HttpResponse<String> applied = send("POST", "/admin/policies/" + target + "/dry-run/apply", """
                 {"reason": "적용"}
                 """);
@@ -334,6 +347,15 @@ class PolicyManagementFlowTest {
                 ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class))) {
             producer.send(new ProducerRecord<>(RequestTopics.of(target, requester), requestId, value));
             producer.flush();
+        }
+    }
+
+    private long judgedCalls(String target) {
+        try {
+            return jsonMapper.readTree(send("GET", "/admin/policies/" + target + "/dry-run", null).body())
+                    .get("result").get("judgedCalls").asLong();
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
         }
     }
 

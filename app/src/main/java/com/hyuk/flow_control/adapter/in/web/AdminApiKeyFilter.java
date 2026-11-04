@@ -34,7 +34,12 @@ public class AdminApiKeyFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return !request.getRequestURI().startsWith(ADMIN_PATH);
+        return !pathOf(request).startsWith(ADMIN_PATH);
+    }
+
+    private static String pathOf(HttpServletRequest request) {
+        String pathInfo = request.getPathInfo();
+        return pathInfo == null ? request.getServletPath() : request.getServletPath() + pathInfo;
     }
 
     @Override

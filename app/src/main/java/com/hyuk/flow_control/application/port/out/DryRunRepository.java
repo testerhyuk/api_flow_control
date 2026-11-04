@@ -1,6 +1,7 @@
 package com.hyuk.flow_control.application.port.out;
 
 import com.hyuk.flow_control.domain.dryrun.DryRun;
+import com.hyuk.flow_control.domain.dryrun.DryRunResult;
 
 import java.time.Instant;
 import java.util.List;
@@ -15,5 +16,7 @@ public interface DryRunRepository {
 
     boolean delete(String targetSystemId);
 
-    int deleteStale(Instant now);
+    List<DryRun> deleteStale(Instant now);
+
+    void saveResult(DryRunResult result);
 }
