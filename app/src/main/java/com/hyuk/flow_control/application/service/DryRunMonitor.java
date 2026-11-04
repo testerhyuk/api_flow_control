@@ -45,6 +45,7 @@ public class DryRunMonitor {
     private final Duration window;
     private final int maxSamples;
     private final Map<String, ShadowEvaluation> running = new ConcurrentHashMap<>();
+    private final Map<String, FinishedDryRun> finished = new ConcurrentHashMap<>();
 
     public DryRunMonitor(
             DryRunRepository repository,
@@ -87,6 +88,8 @@ public class DryRunMonitor {
             return;
         }
 
+        finished.values().removeIf(ended -> !stored.contains(ended.dryRun()));
+
         Map<String, DryRun> byTarget = new HashMap<>();
         stored.forEach(dryRun -> byTarget.put(dryRun.targetSystemId(), dryRun));
 
@@ -96,7 +99,7 @@ public class DryRunMonitor {
             if (latest == null || !latest.equals(evaluation.dryRun())) {
                 stop(targetSystemId, "취소되었거나 끝났습니다");
             } else if (isStale(evaluation.dryRun(), now)) {
-                stop(targetSystemId, "끝 시각이 지났거나 정책 버전이 바뀌었습니다");
+                finish(targetSystemId, evaluation);
             }
         });
 
@@ -113,7 +116,7 @@ public class DryRunMonitor {
 
         running.forEach((targetSystemId, evaluation) -> {
             if (isStale(evaluation.dryRun(), now)) {
-                stop(targetSystemId, "끝 시각이 지났거나 정책 버전이 바뀌었습니다");
+                finish(targetSystemId, evaluation);
                 return;
             }
 
@@ -150,14 +153,20 @@ public class DryRunMonitor {
         ShadowEvaluation evaluation = running.get(dryRun.targetSystemId());
 
         if (evaluation == null || !evaluation.dryRun().equals(dryRun)) {
-            return Optional.empty();
+            return Optional.ofNullable(finished.get(dryRun.targetSystemId()))
+                    .filter(ended -> ended.dryRun().equals(dryRun))
+                    .map(FinishedDryRun::report);
         }
 
-        String targetSystemId = dryRun.targetSystemId();
-        return Optional.of(evaluation.report(
+        return Optional.of(reportOf(evaluation));
+    }
+
+    private DryRunReport reportOf(ShadowEvaluation evaluation) {
+        String targetSystemId = evaluation.dryRun().targetSystemId();
+        return evaluation.report(
                 Instant.now(),
                 evaluator.snapshotOf(targetSystemId).state(),
-                adjuster.appliedRateOf(targetSystemId)));
+                adjuster.appliedRateOf(targetSystemId));
     }
 
     public void recordEnd(DryRun dryRun, DryRunEnd end, String endedBy, Long appliedVersion, DryRunReport report) {
@@ -231,6 +240,15 @@ public class DryRunMonitor {
         return baselines.effective(dryRun.targetSystemId(), dryRun.candidate().limits());
     }
 
+    private void finish(String targetSystemId, ShadowEvaluation evaluation) {
+        try {
+            finished.put(targetSystemId, new FinishedDryRun(evaluation.dryRun(), reportOf(evaluation)));
+        } catch (RuntimeException e) {
+            log.warn("dry-run 마지막 결과를 만들지 못했습니다 : {}", targetSystemId, e);
+        }
+        stop(targetSystemId, "끝 시각이 지났거나 정책 버전이 바뀌었습니다");
+    }
+
     private void stop(String targetSystemId, String reason) {
         if (running.remove(targetSystemId) != null) {
             log.info("dry-run 을 멈췄습니다 : {} ({})", targetSystemId, reason);
@@ -240,7 +258,7 @@ public class DryRunMonitor {
     private void stopExpired(Instant now) {
         running.forEach((targetSystemId, evaluation) -> {
             if (isStale(evaluation.dryRun(), now)) {
-                stop(targetSystemId, "끝 시각이 지났거나 정책 버전이 바뀌었습니다");
+                finish(targetSystemId, evaluation);
             }
         });
     }
@@ -255,6 +273,9 @@ public class DryRunMonitor {
         } catch (IllegalArgumentException e) {
             return true;
         }
+    }
+
+    private record FinishedDryRun(DryRun dryRun, DryRunReport report) {
     }
 
     public static final class Observation {
