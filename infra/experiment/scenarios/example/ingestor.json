@@ -1,0 +1,9 @@
+{
+  "seed": __SEED__,
+  "rates": { "target-a": 50, "target-b": 20 },
+  "timeline": [
+    { "atSeconds": 8, "target": "target-a", "rate": 100 },
+    { "atSeconds": 8, "target": "target-c", "rate": 10 }
+  ],
+  "durationSeconds": 15
+}

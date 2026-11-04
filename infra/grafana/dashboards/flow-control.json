@@ -4756,6 +4756,13 @@
         {
           "id": "renameByRegex",
           "options": {
+            "regex": "\\bfailure-burst\\b",
+            "renamePattern": "몰아서 실패(failure-burst)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
             "regex": "\\bmaintenance\\b",
             "renamePattern": "점검(maintenance)"
           }
@@ -4879,6 +4886,79 @@
             "spanNulls": false
           },
           "min": 0,
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "index": 0
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "데이터 없음",
+                  "index": 1
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 60,
+      "type": "timeseries",
+      "title": "시뮬레이터 응답 없음으로 붙잡힌 요청",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 132,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "mock_target_held{target=\"$target\"}",
+          "legendFormat": "붙잡힌 요청",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0,
+          "decimals": 0,
           "mappings": [
             {
               "type": "special",

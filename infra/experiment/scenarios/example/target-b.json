@@ -1,0 +1,5 @@
+{
+  "faults": [
+    { "atSeconds": 3, "type": "failure-burst", "value": 20, "clearAtSeconds": 12 }
+  ]
+}

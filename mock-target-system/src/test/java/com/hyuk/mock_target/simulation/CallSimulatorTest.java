@@ -11,6 +11,7 @@ import tools.jackson.databind.json.JsonMapper;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -25,6 +26,13 @@ class CallSimulatorTest {
     private final FixedRandom random = new FixedRandom();
     private final Faults faults = new Faults();
     private final AtomicInteger duplicates = new AtomicInteger();
+    private final List<Duration> holds = new ArrayList<>();
+    private Runnable duringHold = () -> {
+    };
+    private final HeldRequests held = new HeldRequests(duration -> {
+        holds.add(duration);
+        duringHold.run();
+    });
 
     private CallSimulator simulator(MockTargetProperties.TargetSystem spec, WorkSlots slots) {
         return new CallSimulator(
@@ -36,7 +44,8 @@ class CallSimulatorTest {
                 random,
                 sleeps::add,
                 JsonMapper.builder().build(),
-                duplicates::incrementAndGet);
+                duplicates::incrementAndGet,
+                held);
     }
 
     private CallSimulator simulator() {
@@ -157,9 +166,118 @@ class CallSimulatorTest {
 
         CallResult result = simulator().handle("req-1", PAYLOAD);
 
-        assertThat(sleeps.getFirst()).isEqualTo(Duration.ofSeconds(10));
-        assertThat(sleeps).hasSize(2);
+        assertThat(holds).containsExactly(Duration.ofSeconds(10));
+        assertThat(sleeps).hasSize(1);
         assertThat(result.outcome()).isEqualTo(Outcome.SUCCESS);
+    }
+
+    @Test
+    @DisplayName("응답 없음으로 붙잡힌 요청은 자리와 대기열을 쓰지 않고, 붙잡힌 수로 보인다")
+    void heldRequestsDoNotUseSlots() throws Exception {
+        WorkSlots slots = new WorkSlots(1, 0);
+        faults.apply(FaultType.NO_RESPONSE, 10.0);
+        AtomicInteger heldCount = new AtomicInteger();
+        AtomicInteger slotsInUse = new AtomicInteger(-1);
+        AtomicInteger waiting = new AtomicInteger(-1);
+        duringHold = () -> {
+            heldCount.set(held.count());
+            slotsInUse.set(slots.inUse());
+            waiting.set(slots.waiting());
+        };
+
+        simulator(spec(100, 0, 0), slots).handle("req-1", PAYLOAD);
+
+        assertThat(heldCount.get()).isEqualTo(1);
+        assertThat(slotsInUse.get()).isZero();
+        assertThat(waiting.get()).isZero();
+        assertThat(held.count()).isZero();
+    }
+
+    @Test
+    @DisplayName("응답 없음 시간이 지나 자리가 없으면 그때 과부하가 된다")
+    void overloadedAfterHoldWhenNoRoom() throws Exception {
+        WorkSlots slots = new WorkSlots(1, 0);
+        slots.enter();
+        faults.apply(FaultType.NO_RESPONSE, 10.0);
+
+        assertThat(simulator(spec(100, 0, 0), slots).handle("req-1", PAYLOAD).outcome()).isEqualTo(Outcome.OVERLOADED);
+        assertThat(holds).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("몰아서 실패 장애는 시작 확률을 1/N 로 낮추고, 시작되면 N 건을 연달아 서버 오류로 낸다")
+    void failureBurstFailsInARow() throws Exception {
+        CallSimulator simulator = simulator(spec(100, 0.02, 0), new WorkSlots(10, 0));
+        faults.apply(FaultType.FAILURE_BURST, 3.0);
+
+        random.uniform = 0.01;
+        assertThat(simulator.handle("req-1", PAYLOAD).outcome()).as("0.02 / 3 보다 크면 시작하지 않는다")
+                .isEqualTo(Outcome.SUCCESS);
+
+        random.uniform = 0.005;
+        assertThat(simulator.handle("req-2", PAYLOAD).outcome()).isEqualTo(Outcome.SERVER_ERROR);
+
+        random.uniform = 0.99;
+        assertThat(simulator.handle("req-3", PAYLOAD).outcome()).isEqualTo(Outcome.SERVER_ERROR);
+        assertThat(simulator.handle("req-4", PAYLOAD).outcome()).isEqualTo(Outcome.SERVER_ERROR);
+        assertThat(simulator.handle("req-5", PAYLOAD).outcome()).isEqualTo(Outcome.SUCCESS);
+    }
+
+    @Test
+    @DisplayName("몰아서 실패의 전체 실패율은 흩어진 실패와 거의 같다")
+    void failureBurstKeepsOverallRate() throws Exception {
+        Random seeded = new Random(1);
+        CallSimulator simulator = new CallSimulator(spec(1_000_000, 0.02, 0), new PerSecondLimiter(1_000_000, now::get),
+                new WorkSlots(10, 0), new DuplicateRegistry(Duration.ofMinutes(10), now::get), faults,
+                new RandomSource() {
+                    @Override
+                    public double nextGaussian() {
+                        return 0;
+                    }
+
+                    @Override
+                    public double nextDouble() {
+                        return seeded.nextDouble();
+                    }
+                }, sleeps::add, JsonMapper.builder().build(), duplicates::incrementAndGet, held);
+        faults.apply(FaultType.FAILURE_BURST, 20.0);
+
+        int failures = 0;
+        int total = 200_000;
+        for (int i = 0; i < total; i++) {
+            if (simulator.handle("req-" + i, PAYLOAD).outcome() == Outcome.SERVER_ERROR) {
+                failures++;
+            }
+        }
+
+        assertThat((double) failures / total).isCloseTo(0.02, within(0.003));
+    }
+
+    @Test
+    @DisplayName("몰아서 실패를 풀면 남은 연속 실패도 버린다")
+    void clearingFailureBurstDropsRemaining() throws Exception {
+        CallSimulator simulator = simulator(spec(100, 0.02, 0), new WorkSlots(10, 0));
+        faults.apply(FaultType.FAILURE_BURST, 5.0);
+        random.uniform = 0.001;
+        simulator.handle("req-1", PAYLOAD);
+
+        faults.clear(FaultType.FAILURE_BURST);
+        random.uniform = 0.99;
+        assertThat(simulator.handle("req-2", PAYLOAD).outcome()).isEqualTo(Outcome.SUCCESS);
+
+        faults.apply(FaultType.FAILURE_BURST, 5.0);
+        assertThat(simulator.handle("req-3", PAYLOAD).outcome()).isEqualTo(Outcome.SUCCESS);
+    }
+
+    @Test
+    @DisplayName("몰아서 실패는 실패율 장애를 기준 비율로 쓴다")
+    void failureBurstUsesFailureRateFault() throws Exception {
+        CallSimulator simulator = simulator(spec(100, 0.01, 0), new WorkSlots(10, 0));
+        faults.apply(FaultType.FAILURE_BURST, 2.0);
+        faults.apply(FaultType.FAILURE_RATE, 0.5);
+
+        random.uniform = 0.2;
+        assertThat(simulator.handle("req-1", PAYLOAD).outcome()).isEqualTo(Outcome.SERVER_ERROR);
     }
 
     @Test

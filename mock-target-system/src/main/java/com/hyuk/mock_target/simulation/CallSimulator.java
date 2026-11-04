@@ -6,6 +6,7 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class CallSimulator {
     private final MockTargetProperties.TargetSystem spec;
@@ -17,6 +18,8 @@ public class CallSimulator {
     private final Sleeper sleeper;
     private final JsonMapper jsonMapper;
     private final Runnable onDuplicate;
+    private final HeldRequests held;
+    private final AtomicInteger burstRemaining = new AtomicInteger();
 
     public CallSimulator(MockTargetProperties.TargetSystem spec,
                          PerSecondLimiter limiter,
@@ -26,7 +29,8 @@ public class CallSimulator {
                          RandomSource random,
                          Sleeper sleeper,
                          JsonMapper jsonMapper,
-                         Runnable onDuplicate) {
+                         Runnable onDuplicate,
+                         HeldRequests held) {
         this.spec = spec;
         this.limiter = limiter;
         this.slots = slots;
@@ -36,6 +40,7 @@ public class CallSimulator {
         this.sleeper = sleeper;
         this.jsonMapper = jsonMapper;
         this.onDuplicate = onDuplicate;
+        this.held = held;
     }
 
     public CallResult health() {
@@ -75,16 +80,16 @@ public class CallSimulator {
     }
 
     private CallResult process() throws InterruptedException {
+        Duration hold = faults.noResponseHold();
+        if (hold != null) {
+            held.hold(hold);
+        }
+
         if (!slots.enter()) {
             return CallResult.of(Outcome.OVERLOADED);
         }
 
         try {
-            Duration hold = faults.noResponseHold();
-            if (hold != null) {
-                sleeper.sleep(hold);
-            }
-
             double loadFactor = ProcessingTime.loadFactor(slots.inUse(), slots.capacity(), spec.fullLoadMultiplier());
             double jitter = ProcessingTime.jitter(random.nextGaussian(), spec.p95Ratio());
             sleeper.sleep(ProcessingTime.of(spec.baseProcessingMillis(), loadFactor, jitter, faults.slowMultiplier()));
@@ -98,12 +103,24 @@ public class CallSimulator {
     private Outcome decideOutcome() {
         Double faultRate = faults.failureRate();
         double serverErrorRate = faultRate == null ? spec.serverErrorRate() : faultRate;
-        double draw = random.nextDouble();
+        Integer burst = faults.failureBurst();
 
-        if (draw < serverErrorRate) {
+        if (burst == null) {
+            burstRemaining.set(0);
+        } else if (burstRemaining.getAndUpdate(remaining -> Math.max(0, remaining - 1)) > 0) {
             return Outcome.SERVER_ERROR;
         }
-        if (draw < serverErrorRate + spec.businessRejectRate()) {
+
+        double startRate = burst == null ? serverErrorRate : serverErrorRate / burst;
+        double draw = random.nextDouble();
+
+        if (draw < startRate) {
+            if (burst != null) {
+                burstRemaining.set(burst - 1);
+            }
+            return Outcome.SERVER_ERROR;
+        }
+        if (draw < startRate + spec.businessRejectRate()) {
             return Outcome.BUSINESS_REJECTED;
         }
         return Outcome.SUCCESS;

@@ -2,10 +2,12 @@ package com.hyuk.mock_target.config;
 
 import com.hyuk.mock_target.fault.CallPort;
 import com.hyuk.mock_target.fault.FaultService;
+import com.hyuk.mock_target.fault.FaultTimeline;
 import com.hyuk.mock_target.fault.Faults;
 import com.hyuk.mock_target.metrics.SimulatorMetrics;
 import com.hyuk.mock_target.simulation.CallSimulator;
 import com.hyuk.mock_target.simulation.DuplicateRegistry;
+import com.hyuk.mock_target.simulation.HeldRequests;
 import com.hyuk.mock_target.simulation.PerSecondLimiter;
 import com.hyuk.mock_target.simulation.RandomSource;
 import com.hyuk.mock_target.simulation.Sleeper;
@@ -38,13 +40,19 @@ public class SimulatorConfig {
     }
 
     @Bean
-    public SimulatorMetrics simulatorMetrics(MeterRegistry registry, WorkSlots slots, Faults faults) {
-        return new SimulatorMetrics(registry, slots, faults);
+    public HeldRequests heldRequests() {
+        return new HeldRequests(Sleeper.threadSleep());
+    }
+
+    @Bean
+    public SimulatorMetrics simulatorMetrics(MeterRegistry registry, WorkSlots slots, Faults faults, HeldRequests held) {
+        return new SimulatorMetrics(registry, slots, faults, held);
     }
 
     @Bean
     public CallSimulator callSimulator(MockTargetProperties properties, WorkSlots slots, DuplicateRegistry duplicates,
-                                       Faults faults, JsonMapper jsonMapper, SimulatorMetrics metrics) {
+                                       Faults faults, JsonMapper jsonMapper, SimulatorMetrics metrics,
+                                       HeldRequests held) {
         MockTargetProperties.TargetSystem spec = properties.selected();
 
         return new CallSimulator(
@@ -56,12 +64,18 @@ public class SimulatorConfig {
                 RandomSource.threadLocal(),
                 Sleeper.threadSleep(),
                 jsonMapper,
-                metrics::recordDuplicate);
+                metrics::recordDuplicate,
+                held);
     }
 
     @Bean
     public FaultService faultService(MockTargetProperties properties, Faults faults, WorkSlots slots, CallPort callPort) {
         return new FaultService(faults, slots, callPort, properties.selected().maxConcurrency());
+    }
+
+    @Bean
+    public FaultTimeline faultTimeline(FaultService faultService) {
+        return new FaultTimeline(faultService, Sleeper.threadSleep(), System::nanoTime);
     }
 
     @Bean

@@ -1,0 +1,6 @@
+{
+  "faults": [
+    { "atSeconds": 2, "type": "no-response", "value": 5, "clearAtSeconds": 6 },
+    { "atSeconds": 6, "type": "slow", "value": 3, "clearAtSeconds": 10 }
+  ]
+}
