@@ -102,7 +102,7 @@ public class JdbcDryRunRepository implements DryRunRepository {
                            or not exists (select 1 from target_policy p
                                           where p.target_system_id = d.target_system_id
                                             and p.version = d.base_version)
-                        returning """ + COLUMNS)
+                        returning\s""" + COLUMNS)
                 .param("now", Timestamp.from(now))
                 .query((rs, rowNum) -> toDryRunOrNull(rs))
                 .list()
@@ -116,7 +116,7 @@ public class JdbcDryRunRepository implements DryRunRepository {
         DryRun dryRun = result.dryRun();
 
         policyColumns.bind(jdbcClient.sql("insert into policy_dry_run_result (" + COLUMNS + """
-                                , ended_at, end_reason, ended_by, applied_version, report) select """
+                                , ended_at, end_reason, ended_by, applied_version, report) select\s"""
                                 + PolicyColumns.VALUES + """
                                 , :baseVersion, :startedAt, :expiresAt, :startedBy, :startReason,
                                 :endedAt, :endReason, :endedBy, :appliedVersion, cast(:report as jsonb)
