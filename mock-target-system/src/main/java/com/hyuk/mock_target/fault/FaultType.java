@@ -6,6 +6,7 @@ public enum FaultType {
     DOWN("down"),
     SLOW("slow"),
     FAILURE_RATE("failure-rate"),
+    FAILURE_BURST("failure-burst"),
     MAINTENANCE("maintenance"),
     NO_RESPONSE("no-response"),
     CAPACITY("capacity");

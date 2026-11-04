@@ -2,6 +2,7 @@ package com.hyuk.mock_target.metrics;
 
 import com.hyuk.mock_target.fault.FaultType;
 import com.hyuk.mock_target.fault.Faults;
+import com.hyuk.mock_target.simulation.HeldRequests;
 import com.hyuk.mock_target.simulation.Outcome;
 import com.hyuk.mock_target.simulation.WorkSlots;
 import io.micrometer.core.instrument.Counter;
@@ -18,7 +19,7 @@ public class SimulatorMetrics {
     private final MeterRegistry registry;
     private final Counter duplicates;
 
-    public SimulatorMetrics(MeterRegistry registry, WorkSlots slots, Faults faults) {
+    public SimulatorMetrics(MeterRegistry registry, WorkSlots slots, Faults faults, HeldRequests held) {
         this.registry = registry;
         this.duplicates = Counter.builder("mock.target.duplicates")
                 .description("같은 요청 ID 로 다시 들어와 다시 처리하지 않은 요청 수")
@@ -32,6 +33,9 @@ public class SimulatorMetrics {
                 .register(registry);
         Gauge.builder("mock.target.capacity", slots, WorkSlots::capacity)
                 .description("동시처리 자리 수")
+                .register(registry);
+        Gauge.builder("mock.target.held", held, HeldRequests::count)
+                .description("응답 없음 장애로 붙잡힌 요청 수")
                 .register(registry);
 
         for (FaultType type : FaultType.values()) {

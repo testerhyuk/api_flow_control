@@ -42,6 +42,18 @@ class FaultsTest {
     }
 
     @Test
+    @DisplayName("몰아서 실패를 걸고 풀 수 있다")
+    void appliesFailureBurst() {
+        faults.apply(FaultType.FAILURE_BURST, 20.0);
+
+        assertThat(faults.failureBurst()).isEqualTo(20);
+        assertThat(faults.describe()).isEqualTo(Map.of("failure-burst", 20));
+
+        faults.clear(FaultType.FAILURE_BURST);
+        assertThat(faults.isActive(FaultType.FAILURE_BURST)).isFalse();
+    }
+
+    @Test
     @DisplayName("다운, 점검, 처리 능력 감소를 건다")
     void appliesDownMaintenanceCapacity() {
         faults.apply(FaultType.DOWN, null);
@@ -59,6 +71,9 @@ class FaultsTest {
         assertThatThrownBy(() -> faults.apply(FaultType.SLOW, null)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> faults.apply(FaultType.SLOW, 0.5)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> faults.apply(FaultType.FAILURE_RATE, 1.5)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> faults.apply(FaultType.FAILURE_BURST, null)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> faults.apply(FaultType.FAILURE_BURST, 0.0)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> faults.apply(FaultType.FAILURE_BURST, 1.5)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> faults.apply(FaultType.MAINTENANCE, null)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> faults.apply(FaultType.MAINTENANCE, 1.5)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> faults.apply(FaultType.NO_RESPONSE, 0.0)).isInstanceOf(IllegalArgumentException.class);

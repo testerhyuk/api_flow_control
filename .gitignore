@@ -38,3 +38,6 @@ out/
 
 ### IntelliJ run configurations ###
 .run/
+
+### 실험 결과 ###
+/infra/experiment/results/

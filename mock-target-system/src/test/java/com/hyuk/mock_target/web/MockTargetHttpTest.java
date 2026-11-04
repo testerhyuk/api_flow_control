@@ -38,6 +38,7 @@ class MockTargetHttpTest {
 
     @AfterEach
     void clearFaults() throws Exception {
+        send(HttpRequest.newBuilder(admin("/actuator/fault-timeline")).DELETE().build());
         send(HttpRequest.newBuilder(admin("/actuator/faults")).DELETE().build());
     }
 
@@ -104,6 +105,52 @@ class MockTargetHttpTest {
     }
 
     @Test
+    @DisplayName("관리용 포트로 장애 시간표를 시작, 조회, 취소한다")
+    void faultTimelineThroughAdminPort() throws Exception {
+        applyFault("failure-rate", "{\"value\":0.5}");
+
+        HttpResponse<String> started = startTimeline("""
+                {"faults": [{"atSeconds": 0, "type": "slow", "value": 2, "clearAtSeconds": 600}]}
+                """);
+        assertThat(started.statusCode()).isEqualTo(200);
+        assertThat(started.body()).contains("\"state\":\"RUNNING\"", "\"totalSteps\":2");
+
+        assertThat(faultsBecome("{\"slow\":2.0}")).isTrue();
+
+        HttpResponse<String> status = send(HttpRequest.newBuilder(admin("/actuator/fault-timeline")).GET().build());
+        assertThat(status.body()).contains("\"state\":\"RUNNING\"", "\"action\":\"clear\"", "\"type\":\"slow\"");
+
+        HttpResponse<String> stopped = send(HttpRequest.newBuilder(admin("/actuator/fault-timeline")).DELETE().build());
+        assertThat(stopped.statusCode()).isEqualTo(200);
+        assertThat(stopped.body()).contains("\"state\":\"STOPPED\"");
+        assertThat(send(HttpRequest.newBuilder(admin("/actuator/faults")).GET().build()).body()).isEqualTo("{}");
+    }
+
+    @Test
+    @DisplayName("장애 시간표가 잘못되면 400 과 이유를 돌려주고 시작하지 않는다")
+    void rejectsInvalidTimeline() throws Exception {
+        HttpResponse<String> invalid = startTimeline("""
+                {"faults": [{"atSeconds": 10, "type": "slow", "value": 2, "clearAtSeconds": 10}]}
+                """);
+        assertThat(invalid.statusCode()).isEqualTo(400);
+        assertThat(invalid.body()).contains("clearAtSeconds");
+
+        assertThat(startTimeline("{}").statusCode()).isEqualTo(400);
+        assertThat(startTimeline("not json").statusCode()).isEqualTo(400);
+        assertThat(send(HttpRequest.newBuilder(admin("/actuator/fault-timeline")).GET().build()).body())
+                .doesNotContain("\"state\":\"RUNNING\"");
+    }
+
+    @Test
+    @DisplayName("몰아서 실패 장애를 관리용 포트로 건다")
+    void failureBurstThroughAdminPort() throws Exception {
+        HttpResponse<String> applied = applyFault("failure-burst", "{\"value\":20}");
+
+        assertThat(applied.statusCode()).isEqualTo(200);
+        assertThat(applied.body()).contains("\"failure-burst\":20");
+    }
+
+    @Test
     @DisplayName("관리용 포트의 prometheus 주소에서 시뮬레이터 지표를 읽을 수 있다")
     void exposesMetrics() throws Exception {
         call("req-7", "{}");
@@ -117,6 +164,8 @@ class MockTargetHttpTest {
                 .contains("mock_target_inflight{target=\"target-b\"}")
                 .contains("mock_target_queue{target=\"target-b\"}")
                 .contains("mock_target_capacity{target=\"target-b\"} 20.0")
+                .contains("mock_target_held{target=\"target-b\"} 0.0")
+                .contains("mock_target_fault{target=\"target-b\",type=\"failure-burst\"} 0.0")
                 .contains("mock_target_fault{target=\"target-b\",type=\"down\"} 0.0")
                 .contains("mock_target_duplicates_total{target=\"target-b\"}");
     }
@@ -144,6 +193,24 @@ class MockTargetHttpTest {
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(body))
                 .build());
+    }
+
+    private HttpResponse<String> startTimeline(String body) throws IOException, InterruptedException {
+        return send(HttpRequest.newBuilder(admin("/actuator/fault-timeline"))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(body))
+                .build());
+    }
+
+    private boolean faultsBecome(String expected) throws IOException, InterruptedException {
+        long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+        while (System.nanoTime() < deadline) {
+            if (send(HttpRequest.newBuilder(admin("/actuator/faults")).GET().build()).body().equals(expected)) {
+                return true;
+            }
+            Thread.sleep(20);
+        }
+        return false;
     }
 
     private URI admin(String path) {

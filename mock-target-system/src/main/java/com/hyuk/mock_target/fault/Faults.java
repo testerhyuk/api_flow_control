@@ -9,6 +9,7 @@ public class Faults {
     private volatile boolean down;
     private volatile Double slowMultiplier;
     private volatile Double failureRate;
+    private volatile Integer failureBurst;
     private volatile Long maintenanceRetryAfterSeconds;
     private volatile Duration noResponseHold;
     private volatile Integer capacity;
@@ -18,6 +19,7 @@ public class Faults {
             case DOWN -> down = true;
             case SLOW -> slowMultiplier = requireAtLeast(value, 1, "느려짐 배수");
             case FAILURE_RATE -> failureRate = requireRate(value);
+            case FAILURE_BURST -> failureBurst = (int) requireWhole(value, 1, "연달아 실패할 건수");
             case MAINTENANCE -> maintenanceRetryAfterSeconds = (long) requireWhole(value, 0, "점검 Retry-After 초");
             case NO_RESPONSE -> noResponseHold = Duration.ofMillis(Math.round(requirePositive(value, "응답 없음 시간(초)") * 1000));
             case CAPACITY -> capacity = (int) requireWhole(value, 1, "동시처리 자리 수");
@@ -29,6 +31,7 @@ public class Faults {
             case DOWN -> down = false;
             case SLOW -> slowMultiplier = null;
             case FAILURE_RATE -> failureRate = null;
+            case FAILURE_BURST -> failureBurst = null;
             case MAINTENANCE -> maintenanceRetryAfterSeconds = null;
             case NO_RESPONSE -> noResponseHold = null;
             case CAPACITY -> capacity = null;
@@ -40,6 +43,7 @@ public class Faults {
             case DOWN -> down;
             case SLOW -> slowMultiplier != null;
             case FAILURE_RATE -> failureRate != null;
+            case FAILURE_BURST -> failureBurst != null;
             case MAINTENANCE -> maintenanceRetryAfterSeconds != null;
             case NO_RESPONSE -> noResponseHold != null;
             case CAPACITY -> capacity != null;
@@ -52,6 +56,7 @@ public class Faults {
         values.put(FaultType.DOWN, down ? Boolean.TRUE : null);
         values.put(FaultType.SLOW, slowMultiplier);
         values.put(FaultType.FAILURE_RATE, failureRate);
+        values.put(FaultType.FAILURE_BURST, failureBurst);
         values.put(FaultType.MAINTENANCE, maintenanceRetryAfterSeconds);
         values.put(FaultType.NO_RESPONSE, noResponseHold == null ? null : noResponseHold.toMillis() / 1000.0);
         values.put(FaultType.CAPACITY, capacity);
@@ -70,6 +75,10 @@ public class Faults {
 
     public Double failureRate() {
         return failureRate;
+    }
+
+    public Integer failureBurst() {
+        return failureBurst;
     }
 
     public Long maintenanceRetryAfterSeconds() {
