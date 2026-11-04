@@ -308,7 +308,7 @@ public class MicrometerFlowControlMetrics implements FlowControlMetrics {
     }
 
     private void recordBlocked(String targetSystemId, String reason) {
-        Counter.builder("flow.control.outbound.blocked.attempts")
+        Counter.builder("flow.control.outbound.blocked.requests")
                 .tag("target", targetSystemId)
                 .tag("reason", reason)
                 .register(registry)

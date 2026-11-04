@@ -59,7 +59,6 @@ public class OutboundCallService implements OutboundCallUseCase {
 
         if (!semaphore.tryAcquire(targetSystemId)) {
             recorder.recordBlocked(targetSystemId);
-            metrics.recordBlockedBySemaphore(targetSystemId);
             return new CallAttempt.BlockedBySemaphore();
         }
 
@@ -68,7 +67,6 @@ public class OutboundCallService implements OutboundCallUseCase {
 
             if (!ratelimit.allowed()) {
                 recorder.recordBlocked(targetSystemId);
-                metrics.recordBlockedByTokenBucket(targetSystemId);
                 return new CallAttempt.BlockedByTokenBucket(ratelimit.retryAfter());
             }
 

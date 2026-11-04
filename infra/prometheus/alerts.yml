@@ -1,0 +1,29 @@
+groups:
+  - name: flow-control
+    rules:
+      - alert: PolicyRefreshFailing
+        expr: increase(flow_control_policy_refresh_failures_total[1m]) > 0
+        annotations:
+          summary: DB 에서 정책을 읽지 못하고 있습니다
+
+      - alert: InvalidPolicyRemaining
+        expr: max by (target) (flow_control_policy_invalid_latest) == 1
+        annotations:
+          summary: "{{ $labels.target }} 의 최신 정책이 잘못되어 있습니다"
+
+      - alert: PolicyApplyFailing
+        expr: sum by (target, listener) (increase(flow_control_policy_apply_failures_total[1m])) > 0
+        annotations:
+          summary: "{{ $labels.target }} 의 정책을 {{ $labels.listener }} 에 반영하지 못하고 있습니다"
+
+      # 임시 기준이다. 실험에서 평소 수준을 본 뒤 기준값을 정한다.
+      - alert: DeadLetterIncreasing
+        expr: sum by (target, reason) (increase(flow_control_dlq_sent_total[1m])) > 0
+        annotations:
+          summary: "{{ $labels.target }} 의 요청이 DLQ 로 가고 있습니다 ({{ $labels.reason }})"
+
+      # 임시 기준이다. 실험에서 평소 수준을 본 뒤 기준값을 정한다.
+      - alert: RequestsExpiring
+        expr: sum by (target, where) (increase(flow_control_expired_total[1m])) > 0
+        annotations:
+          summary: "{{ $labels.target }} 의 요청이 유효기간이 지나 버려지고 있습니다 ({{ $labels.where }})"

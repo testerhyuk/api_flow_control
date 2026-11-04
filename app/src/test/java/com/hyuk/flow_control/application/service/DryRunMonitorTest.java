@@ -272,6 +272,28 @@ class DryRunMonitorTest {
     }
 
     @Test
+    @DisplayName("진행 중인 dry-run 의 판정에 쓴 호출 수를 돌려주고, 끝나면 비고, 새 dry-run 은 0 에서 시작한다")
+    void exposesJudgedCallsOfRunningDryRun() {
+        assertThat(monitor.judgedCallsOf(TARGET)).isEmpty();
+
+        when(repository.loadAll()).thenReturn(List.of(dryRun(Instant.now().plus(Duration.ofMinutes(30)))));
+        monitor.refresh();
+        assertThat(monitor.judgedCallsOf(TARGET)).contains(0L);
+
+        monitor.beforeCall(TARGET)
+                .finish(new OutboundResult(OutcomeKind.SUCCESS, Duration.ofMillis(10), null, null, 200, null));
+        assertThat(monitor.judgedCallsOf(TARGET)).contains(1L);
+
+        when(repository.loadAll()).thenReturn(List.of());
+        monitor.refresh();
+        assertThat(monitor.judgedCallsOf(TARGET)).isEmpty();
+
+        when(repository.loadAll()).thenReturn(List.of(dryRun(Instant.now().plus(Duration.ofMinutes(20)))));
+        monitor.refresh();
+        assertThat(monitor.judgedCallsOf(TARGET)).contains(0L);
+    }
+
+    @Test
     @DisplayName("다른 dry-run 의 결과는 돌려주지 않는다")
     void reportsOnlySameDryRun() {
         when(repository.loadAll()).thenReturn(List.of(dryRun(Instant.now().plus(Duration.ofMinutes(30)))));

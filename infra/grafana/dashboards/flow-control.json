@@ -16,7 +16,7 @@
     "list": [
       {
         "name": "target",
-        "label": "대상",
+        "label": "외부 서버",
         "type": "query",
         "datasource": {
           "type": "prometheus",
@@ -52,6 +52,29 @@
       "id": 2,
       "type": "stat",
       "title": "제어 방식",
+      "transformations": [
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\badaptive\\b",
+            "renamePattern": "자동 조절(adaptive)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bfixed\\b",
+            "renamePattern": "고정(fixed)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bnone\\b",
+            "renamePattern": "제어 없음(none)"
+          }
+        }
+      ],
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -224,7 +247,7 @@
     {
       "id": 4,
       "type": "stat",
-      "title": "baseline 자동 조정",
+      "title": "평소 응답 시간 자동 조정",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -242,7 +265,7 @@
             "uid": "prometheus"
           },
           "expr": "flow_control_health_baseline_auto",
-          "legendFormat": "baseline 자동 조정",
+          "legendFormat": "평소 응답 시간 자동 조정",
           "refId": "A"
         }
       ],
@@ -349,12 +372,12 @@
               "type": "value",
               "options": {
                 "1": {
-                  "text": "공용 (Redis)",
+                  "text": "공용 버킷 (Redis)",
                   "color": "green",
                   "index": 0
                 },
                 "0": {
-                  "text": "서버 안",
+                  "text": "로컬 버킷",
                   "color": "orange",
                   "index": 1
                 }
@@ -410,14 +433,322 @@
       }
     },
     {
-      "id": 6,
+      "id": 54,
       "type": "row",
-      "title": "기관 상태",
+      "title": "정책",
       "collapsed": false,
       "panels": [],
       "gridPos": {
         "x": 0,
         "y": 5,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": 55,
+      "type": "stat",
+      "title": "적용 중인 정책 버전",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 6,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "flow_control_policy_version{target=\"$target\"}",
+          "legendFormat": "버전",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "0",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "index": 2
+                }
+              }
+            }
+          ],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 56,
+      "type": "stat",
+      "title": "DB를 못 읽은 횟수 (조회 기간)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 6,
+        "y": 6,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(flow_control_policy_refresh_failures_total[$__range])) or vector(0)",
+          "legendFormat": "못 읽은 횟수",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "0",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "index": 2
+                }
+              }
+            }
+          ],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 57,
+      "type": "stat",
+      "title": "잘못된 정책이 남아 있나 (모든 외부 서버)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 6,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max by (target) (flow_control_policy_invalid_latest)",
+          "legendFormat": "{{target}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "0",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "정상",
+                  "color": "green",
+                  "index": 0
+                },
+                "1": {
+                  "text": "잘못됨",
+                  "color": "red",
+                  "index": 1
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "index": 2
+                }
+              }
+            }
+          ],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name"
+      }
+    },
+    {
+      "id": 58,
+      "type": "stat",
+      "title": "반영 실패 (받는 곳별, 조회 기간)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 18,
+        "y": 6,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (listener) (increase(flow_control_policy_apply_failures_total{target=\"$target\"}[$__range]))",
+          "legendFormat": "{{listener}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "0",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "index": 2
+                }
+              }
+            }
+          ],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name"
+      }
+    },
+    {
+      "id": 6,
+      "type": "row",
+      "title": "외부 서버 상태",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "x": 0,
+        "y": 10,
         "w": 24,
         "h": 1
       }
@@ -432,7 +763,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 6,
+        "y": 11,
         "w": 18,
         "h": 5
       },
@@ -454,22 +785,22 @@
               "type": "value",
               "options": {
                 "0": {
-                  "text": "HEALTHY",
+                  "text": "정상(HEALTHY)",
                   "color": "green",
                   "index": 0
                 },
                 "1": {
-                  "text": "RECOVERING",
+                  "text": "회복 중(RECOVERING)",
                   "color": "blue",
                   "index": 1
                 },
                 "2": {
-                  "text": "DEGRADED",
+                  "text": "저하(DEGRADED)",
                   "color": "orange",
                   "index": 2
                 },
                 "3": {
-                  "text": "CRITICAL",
+                  "text": "위험(CRITICAL)",
                   "color": "red",
                   "index": 3
                 }
@@ -530,7 +861,7 @@
       },
       "gridPos": {
         "x": 18,
-        "y": 6,
+        "y": 11,
         "w": 6,
         "h": 5
       },
@@ -609,7 +940,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 11,
+        "y": 16,
         "w": 9,
         "h": 4
       },
@@ -631,7 +962,7 @@
               "type": "value",
               "options": {
                 "0": {
-                  "text": "적응",
+                  "text": "일반",
                   "color": "green",
                   "index": 0
                 },
@@ -697,7 +1028,7 @@
       },
       "gridPos": {
         "x": 9,
-        "y": 11,
+        "y": 16,
         "w": 9,
         "h": 4
       },
@@ -708,7 +1039,7 @@
             "uid": "prometheus"
           },
           "expr": "flow_control_maintenance_active{target=\"$target\",source=\"schedule\"}",
-          "legendFormat": "시간표",
+          "legendFormat": "일정",
           "refId": "A"
         },
         {
@@ -788,13 +1119,29 @@
       "id": 11,
       "type": "stat",
       "title": "진동 방지가 막은 횟수 (조회 기간)",
+      "transformations": [
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bhysteresis\\b",
+            "renamePattern": "회복 기준(hysteresis)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bconsecutive\\b",
+            "renamePattern": "연속 횟수(consecutive)"
+          }
+        }
+      ],
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
         "x": 18,
-        "y": 11,
+        "y": 16,
         "w": 6,
         "h": 4
       },
@@ -867,13 +1214,29 @@
       "id": 12,
       "type": "stat",
       "title": "저트래픽 모드 전환 (조회 기간)",
+      "transformations": [
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\badaptive\\b",
+            "renamePattern": "일반(adaptive)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\blow_traffic\\b",
+            "renamePattern": "저트래픽(low_traffic)"
+          }
+        }
+      ],
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
         "x": 0,
-        "y": 15,
+        "y": 20,
         "w": 8,
         "h": 4
       },
@@ -946,13 +1309,29 @@
       "id": 13,
       "type": "stat",
       "title": "점검 시작 (조회 기간)",
+      "transformations": [
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bschedule\\b",
+            "renamePattern": "일정(schedule)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bresponse\\b",
+            "renamePattern": "응답(response)"
+          }
+        }
+      ],
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
         "x": 8,
-        "y": 15,
+        "y": 20,
         "w": 8,
         "h": 4
       },
@@ -1031,7 +1410,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 15,
+        "y": 20,
         "w": 8,
         "h": 4
       },
@@ -1108,7 +1487,7 @@
       "panels": [],
       "gridPos": {
         "x": 0,
-        "y": 19,
+        "y": 24,
         "w": 24,
         "h": 1
       }
@@ -1116,14 +1495,14 @@
     {
       "id": 16,
       "type": "timeseries",
-      "title": "나쁘다 비율과 진입·복귀 기준 (출발값 기준선)",
+      "title": "실패율과 저하·위험 기준",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
         "x": 0,
-        "y": 20,
+        "y": 25,
         "w": 12,
         "h": 8
       },
@@ -1134,8 +1513,44 @@
             "uid": "prometheus"
           },
           "expr": "flow_control_health_failure_rate{target=\"$target\"}",
-          "legendFormat": "나쁘다 비율",
+          "legendFormat": "실패율",
           "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "flow_control_health_failure_threshold{target=\"$target\",grade=\"degraded\",line=\"entry\"}",
+          "legendFormat": "저하 기준",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "flow_control_health_failure_threshold{target=\"$target\",grade=\"degraded\",line=\"recovery\"}",
+          "legendFormat": "저하에서 회복 기준",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "flow_control_health_failure_threshold{target=\"$target\",grade=\"critical\",line=\"entry\"}",
+          "legendFormat": "위험 기준",
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "flow_control_health_failure_threshold{target=\"$target\",grade=\"critical\",line=\"recovery\"}",
+          "legendFormat": "위험에서 회복 기준",
+          "refId": "E"
         }
       ],
       "fieldConfig": {
@@ -1145,10 +1560,7 @@
             "lineWidth": 2,
             "fillOpacity": 0,
             "showPoints": "never",
-            "spanNulls": false,
-            "thresholdsStyle": {
-              "mode": "dashed"
-            }
+            "spanNulls": false
           },
           "mappings": [
             {
@@ -1175,34 +1587,32 @@
           "min": 0,
           "color": {
             "mode": "palette-classic"
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegex",
+              "options": "/기준$/"
+            },
+            "properties": [
               {
-                "color": "transparent",
-                "value": null
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
               },
               {
-                "color": "orange",
-                "value": 0.05
-              },
-              {
-                "color": "orange",
-                "value": 0.1
-              },
-              {
-                "color": "red",
-                "value": 0.25
-              },
-              {
-                "color": "red",
-                "value": 0.5
+                "id": "custom.lineWidth",
+                "value": 1
               }
             ]
           }
-        },
-        "overrides": []
+        ]
       },
       "options": {
         "legend": {
@@ -1215,19 +1625,19 @@
           "sort": "none"
         }
       },
-      "description": "점선은 yml 출발값 기준선입니다. DEGRADED 진입 10%, 복귀 5%, CRITICAL 진입 50%, 복귀 25%. yml 값을 바꾸면 이 선도 바꿔야 합니다."
+      "description": "점선은 flow-control 이 지금 쓰는 실패율 기준입니다. 진동 방지가 꺼져 있으면 회복 기준은 저하·위험 기준과 같습니다."
     },
     {
       "id": 17,
       "type": "timeseries",
-      "title": "판정용 p95와 baseline, 진입·복귀 기준선",
+      "title": "판정용 p95와 평소 응답 시간, 저하·회복 기준선",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
         "x": 12,
-        "y": 20,
+        "y": 25,
         "w": 12,
         "h": 8
       },
@@ -1247,7 +1657,7 @@
             "uid": "prometheus"
           },
           "expr": "flow_control_health_baseline_rtt_seconds{target=\"$target\",kind=\"p95\"}",
-          "legendFormat": "쓰는 baseline",
+          "legendFormat": "평소 응답 시간 (적용 중)",
           "refId": "B"
         },
         {
@@ -1256,7 +1666,7 @@
             "uid": "prometheus"
           },
           "expr": "flow_control_health_baseline_policy_seconds{target=\"$target\",kind=\"p95\"}",
-          "legendFormat": "정책 baseline",
+          "legendFormat": "평소 응답 시간 (정책 값)",
           "refId": "C"
         },
         {
@@ -1265,7 +1675,7 @@
             "uid": "prometheus"
           },
           "expr": "flow_control_health_baseline_learned_seconds{target=\"$target\",kind=\"p95\"}",
-          "legendFormat": "배운 baseline",
+          "legendFormat": "평소 응답 시간 (계산한 값)",
           "refId": "D"
         },
         {
@@ -1274,7 +1684,7 @@
             "uid": "prometheus"
           },
           "expr": "flow_control_health_latency_threshold_seconds{target=\"$target\"}",
-          "legendFormat": "진입 기준선",
+          "legendFormat": "저하 기준선",
           "refId": "E"
         },
         {
@@ -1283,7 +1693,7 @@
             "uid": "prometheus"
           },
           "expr": "flow_control_health_latency_recovery_threshold_seconds{target=\"$target\"}",
-          "legendFormat": "복귀 기준선",
+          "legendFormat": "회복 기준선",
           "refId": "F"
         }
       ],
@@ -1392,14 +1802,14 @@
     {
       "id": 18,
       "type": "timeseries",
-      "title": "윈도우에 담긴 건수와 시간 범위",
+      "title": "판정에 쓴 호출 결과 개수와 시간 범위",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
         "x": 0,
-        "y": 28,
+        "y": 33,
         "w": 8,
         "h": 8
       },
@@ -1410,7 +1820,7 @@
             "uid": "prometheus"
           },
           "expr": "flow_control_health_samples{target=\"$target\"}",
-          "legendFormat": "건수",
+          "legendFormat": "호출 결과 개수",
           "refId": "A"
         },
         {
@@ -1490,14 +1900,23 @@
     {
       "id": 19,
       "type": "timeseries",
-      "title": "DEGRADED 연속 횟수와 baseline 학습",
+      "title": "저하 연속 횟수와 평소 응답 시간 계산",
+      "transformations": [
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bmean\\b",
+            "renamePattern": "평균(mean)"
+          }
+        }
+      ],
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
         "x": 8,
-        "y": 28,
+        "y": 33,
         "w": 8,
         "h": 8
       },
@@ -1508,7 +1927,7 @@
             "uid": "prometheus"
           },
           "expr": "flow_control_health_degraded_streak{target=\"$target\"}",
-          "legendFormat": "DEGRADED 연속 횟수",
+          "legendFormat": "저하 연속 횟수",
           "refId": "A"
         },
         {
@@ -1517,7 +1936,7 @@
             "uid": "prometheus"
           },
           "expr": "flow_control_health_baseline_samples{target=\"$target\"}",
-          "legendFormat": "baseline 표본 수",
+          "legendFormat": "평소 응답 시간 계산에 쓴 개수",
           "refId": "B"
         },
         {
@@ -1526,7 +1945,7 @@
             "uid": "prometheus"
           },
           "expr": "flow_control_health_baseline_clamped{target=\"$target\",bound=\"upper\"}",
-          "legendFormat": "{{kind}} 위쪽 한계에 닿음",
+          "legendFormat": "{{kind}} 범위 위쪽 끝에 걸림",
           "refId": "C"
         },
         {
@@ -1535,8 +1954,35 @@
             "uid": "prometheus"
           },
           "expr": "flow_control_health_baseline_clamped{target=\"$target\",bound=\"lower\"}",
-          "legendFormat": "{{kind}} 아래쪽 한계에 닿음",
+          "legendFormat": "{{kind}} 범위 아래쪽 끝에 걸림",
           "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "flow_control_health_baseline_rtt_seconds{target=\"$target\",kind=\"mean\"}",
+          "legendFormat": "평균 응답 시간 (적용 중)",
+          "refId": "E"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "flow_control_health_baseline_policy_seconds{target=\"$target\",kind=\"mean\"}",
+          "legendFormat": "평균 응답 시간 (정책 값)",
+          "refId": "F"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "flow_control_health_baseline_learned_seconds{target=\"$target\",kind=\"mean\"}",
+          "legendFormat": "평균 응답 시간 (계산한 값)",
+          "refId": "G"
         }
       ],
       "fieldConfig": {
@@ -1577,7 +2023,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "baseline 표본 수"
+              "options": "평소 응답 시간 계산에 쓴 개수"
             },
             "properties": [
               {
@@ -1587,6 +2033,26 @@
               {
                 "id": "unit",
                 "value": "short"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegex",
+              "options": "/^평균 응답 시간/"
+            },
+            "properties": [
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "decimals",
+                "value": 3
               }
             ]
           }
@@ -1607,14 +2073,14 @@
     {
       "id": 20,
       "type": "timeseries",
-      "title": "외부 호출 latency p95, p99 (전체 호출)",
+      "title": "외부 호출 응답 시간 p95, p99 (전체 호출)",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
         "x": 16,
-        "y": 28,
+        "y": 33,
         "w": 8,
         "h": 8
       },
@@ -1693,7 +2159,7 @@
       "panels": [],
       "gridPos": {
         "x": 0,
-        "y": 36,
+        "y": 41,
         "w": 24,
         "h": 1
       }
@@ -1701,14 +2167,14 @@
     {
       "id": 22,
       "type": "timeseries",
-      "title": "rate 한도와 실제 초당 호출 수",
+      "title": "초당 호출 한도와 실제 초당 호출 수",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
         "x": 0,
-        "y": 37,
+        "y": 42,
         "w": 12,
         "h": 8
       },
@@ -1719,7 +2185,7 @@
             "uid": "prometheus"
           },
           "expr": "flow_control_limit_rate{target=\"$target\"}",
-          "legendFormat": "적용된 rate",
+          "legendFormat": "적용 중인 초당 호출 한도",
           "refId": "A"
         },
         {
@@ -1728,7 +2194,7 @@
             "uid": "prometheus"
           },
           "expr": "flow_control_limit_rate_proposed{target=\"$target\"}",
-          "legendFormat": "이 서버가 원하는 rate",
+          "legendFormat": "이 서버가 계산한 초당 호출 한도",
           "refId": "B"
         },
         {
@@ -1737,7 +2203,7 @@
             "uid": "prometheus"
           },
           "expr": "flow_control_limit_rate_max{target=\"$target\"}",
-          "legendFormat": "최대치",
+          "legendFormat": "시작 값",
           "refId": "C"
         },
         {
@@ -1819,14 +2285,14 @@
     {
       "id": 23,
       "type": "timeseries",
-      "title": "concurrency 한도와 진행 중인 요청 수",
+      "title": "동시 호출 한도와 진행 중인 호출 수",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
         "x": 12,
-        "y": 37,
+        "y": 42,
         "w": 6,
         "h": 8
       },
@@ -1837,7 +2303,7 @@
             "uid": "prometheus"
           },
           "expr": "flow_control_limit_concurrency{target=\"$target\"}",
-          "legendFormat": "concurrency 한도",
+          "legendFormat": "동시 호출 한도",
           "refId": "A"
         },
         {
@@ -1907,7 +2373,7 @@
       },
       "gridPos": {
         "x": 18,
-        "y": 37,
+        "y": 42,
         "w": 6,
         "h": 8
       },
@@ -1918,7 +2384,7 @@
             "uid": "prometheus"
           },
           "expr": "flow_control_limit_servers{target=\"$target\"}",
-          "legendFormat": "원하는 rate 를 남긴 서버 수",
+          "legendFormat": "같은 외부 서버를 호출하는 서버 수",
           "refId": "A"
         }
       ],
@@ -1978,7 +2444,7 @@
       "panels": [],
       "gridPos": {
         "x": 0,
-        "y": 45,
+        "y": 50,
         "w": 24,
         "h": 1
       }
@@ -1986,14 +2452,14 @@
     {
       "id": 26,
       "type": "timeseries",
-      "title": "한도 대기 시간 p95, p99 와 기다린 요청 비율",
+      "title": "한도 때문에 기다린 시간 p95, p99와 기다린 요청 비율",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
         "x": 0,
-        "y": 46,
+        "y": 51,
         "w": 12,
         "h": 8
       },
@@ -2094,14 +2560,23 @@
     {
       "id": 27,
       "type": "timeseries",
-      "title": "컨슈머 랙 (토픽별)",
+      "title": "토픽별 lag",
+      "transformations": [
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\brequest\\b",
+            "renamePattern": "요청 토픽(request)"
+          }
+        }
+      ],
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
         "x": 12,
-        "y": 46,
+        "y": 51,
         "w": 12,
         "h": 8
       },
@@ -2174,7 +2649,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 54,
+        "y": 59,
         "w": 12,
         "h": 8
       },
@@ -2249,13 +2724,36 @@
       "id": 29,
       "type": "timeseries",
       "title": "만료로 버린 요청 (어디서, 초당)",
+      "transformations": [
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bintake\\b",
+            "renamePattern": "꺼낼 때(intake)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\blimit_wait\\b",
+            "renamePattern": "한도 대기 중(limit_wait)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bretry_schedule\\b",
+            "renamePattern": "재시도 넣기 전(retry_schedule)"
+          }
+        }
+      ],
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
         "x": 12,
-        "y": 54,
+        "y": 59,
         "w": 12,
         "h": 8
       },
@@ -2325,7 +2823,7 @@
       "panels": [],
       "gridPos": {
         "x": 0,
-        "y": 62,
+        "y": 67,
         "w": 24,
         "h": 1
       }
@@ -2333,14 +2831,86 @@
     {
       "id": 31,
       "type": "timeseries",
-      "title": "kind별 초당 호출 수",
+      "title": "결과 종류별 초당 호출 수",
+      "transformations": [
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bSUCCESS\\b",
+            "renamePattern": "성공(SUCCESS)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bBUSINESS_REJECTED\\b",
+            "renamePattern": "업무 거절(BUSINESS_REJECTED)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bTIMEOUT\\b",
+            "renamePattern": "응답 시간 초과(TIMEOUT)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bCONNECTION_FAILED\\b",
+            "renamePattern": "연결 실패(CONNECTION_FAILED)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bNETWORK_ERROR\\b",
+            "renamePattern": "네트워크 오류(NETWORK_ERROR)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bSERVER_ERROR\\b",
+            "renamePattern": "서버 오류(SERVER_ERROR)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bTOO_MANY_REQUESTS\\b",
+            "renamePattern": "요청 과다(TOO_MANY_REQUESTS)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bUNDER_MAINTENANCE\\b",
+            "renamePattern": "점검 중(UNDER_MAINTENANCE)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bINVALID_REQUEST\\b",
+            "renamePattern": "잘못된 요청(INVALID_REQUEST)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bUNEXPECTED_RESPONSE\\b",
+            "renamePattern": "알 수 없는 응답(UNEXPECTED_RESPONSE)"
+          }
+        }
+      ],
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
         "x": 0,
-        "y": 63,
+        "y": 68,
         "w": 12,
         "h": 8
       },
@@ -2408,14 +2978,30 @@
     {
       "id": 32,
       "type": "timeseries",
-      "title": "한도 때문에 막힌 시도 (초당)",
+      "title": "한도 때문에 기다린 요청 (이유별, 초당)",
+      "transformations": [
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bsemaphore\\b",
+            "renamePattern": "세마포어(semaphore)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\btoken_bucket\\b",
+            "renamePattern": "토큰 버킷(token_bucket)"
+          }
+        }
+      ],
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
         "x": 12,
-        "y": 63,
+        "y": 68,
         "w": 12,
         "h": 8
       },
@@ -2425,7 +3011,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (reason) (rate(flow_control_outbound_blocked_attempts_total{target=\"$target\"}[$__rate_interval]))",
+          "expr": "sum by (reason) (rate(flow_control_outbound_blocked_requests_total{target=\"$target\"}[$__rate_interval]))",
           "legendFormat": "{{reason}}",
           "refId": "A"
         }
@@ -2487,7 +3073,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 71,
+        "y": 76,
         "w": 6,
         "h": 8
       },
@@ -2559,7 +3145,7 @@
       },
       "gridPos": {
         "x": 6,
-        "y": 71,
+        "y": 76,
         "w": 6,
         "h": 8
       },
@@ -2625,13 +3211,43 @@
       "id": 35,
       "type": "timeseries",
       "title": "DLQ 전송 (이유별, 초당)",
+      "transformations": [
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bdlq_kind\\b",
+            "renamePattern": "바로 DLQ로 가는 결과(dlq_kind)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bretry_exhausted\\b",
+            "renamePattern": "재시도 소진(retry_exhausted)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\binvalid_message\\b",
+            "renamePattern": "잘못된 메시지(invalid_message)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bprocessing_error\\b",
+            "renamePattern": "처리 오류(processing_error)"
+          }
+        }
+      ],
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
         "x": 12,
-        "y": 71,
+        "y": 76,
         "w": 6,
         "h": 8
       },
@@ -2697,13 +3313,29 @@
       "id": 36,
       "type": "stat",
       "title": "저트래픽 모드에서 반응한 사건 (조회 기간)",
+      "transformations": [
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bconsecutive_failures\\b",
+            "renamePattern": "연속 실패(consecutive_failures)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bconsecutive_timeouts\\b",
+            "renamePattern": "연속 timeout(consecutive_timeouts)"
+          }
+        }
+      ],
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
         "x": 18,
-        "y": 71,
+        "y": 76,
         "w": 6,
         "h": 8
       },
@@ -2780,7 +3412,7 @@
       "panels": [],
       "gridPos": {
         "x": 0,
-        "y": 79,
+        "y": 84,
         "w": 24,
         "h": 1
       }
@@ -2795,7 +3427,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 80,
+        "y": 85,
         "w": 8,
         "h": 8
       },
@@ -2870,13 +3502,57 @@
       "id": 39,
       "type": "timeseries",
       "title": "Redis 오류 (작업과 이유별, 초당)",
+      "transformations": [
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\btoken\\b",
+            "renamePattern": "토큰 꺼내기(token)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bconfiguration\\b",
+            "renamePattern": "한도 설정(configuration)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bproposal\\b",
+            "renamePattern": "한도 제안(proposal)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bping\\b",
+            "renamePattern": "연결 확인(ping)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\btimeout\\b",
+            "renamePattern": "시간 초과(timeout)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bfailure\\b",
+            "renamePattern": "실패(failure)"
+          }
+        }
+      ],
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
         "x": 8,
-        "y": 80,
+        "y": 85,
         "w": 8,
         "h": 8
       },
@@ -2942,13 +3618,29 @@
       "id": 40,
       "type": "stat",
       "title": "버킷 전환 횟수 (조회 기간)",
+      "transformations": [
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bredis\\b",
+            "renamePattern": "공용(redis)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\blocal\\b",
+            "renamePattern": "로컬(local)"
+          }
+        }
+      ],
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
         "x": 16,
-        "y": 80,
+        "y": 85,
         "w": 8,
         "h": 8
       },
@@ -3025,7 +3717,7 @@
       "panels": [],
       "gridPos": {
         "x": 0,
-        "y": 88,
+        "y": 93,
         "w": 24,
         "h": 1
       }
@@ -3033,14 +3725,14 @@
     {
       "id": 42,
       "type": "state-timeline",
-      "title": "새 값 기준 상태",
+      "title": "후보 기준 상태",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
         "x": 0,
-        "y": 89,
+        "y": 94,
         "w": 12,
         "h": 5
       },
@@ -3051,7 +3743,7 @@
             "uid": "prometheus"
           },
           "expr": "(flow_control_dryrun_health_state{target=\"$target\",state=\"RECOVERING\"} * 1) + ignoring(state) (flow_control_dryrun_health_state{target=\"$target\",state=\"DEGRADED\"} * 2) + ignoring(state) (flow_control_dryrun_health_state{target=\"$target\",state=\"CRITICAL\"} * 3)",
-          "legendFormat": "새 값 기준 상태",
+          "legendFormat": "후보 기준 상태",
           "refId": "A"
         }
       ],
@@ -3062,22 +3754,22 @@
               "type": "value",
               "options": {
                 "0": {
-                  "text": "HEALTHY",
+                  "text": "정상(HEALTHY)",
                   "color": "green",
                   "index": 0
                 },
                 "1": {
-                  "text": "RECOVERING",
+                  "text": "회복 중(RECOVERING)",
                   "color": "blue",
                   "index": 1
                 },
                 "2": {
-                  "text": "DEGRADED",
+                  "text": "저하(DEGRADED)",
                   "color": "orange",
                   "index": 2
                 },
                 "3": {
-                  "text": "CRITICAL",
+                  "text": "위험(CRITICAL)",
                   "color": "red",
                   "index": 3
                 }
@@ -3131,14 +3823,14 @@
     {
       "id": 43,
       "type": "stat",
-      "title": "dry-run",
+      "title": "dry-run 진행 중인가",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
         "x": 12,
-        "y": 89,
+        "y": 94,
         "w": 4,
         "h": 5
       },
@@ -3232,7 +3924,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 89,
+        "y": 94,
         "w": 8,
         "h": 5
       },
@@ -3304,14 +3996,14 @@
     {
       "id": 45,
       "type": "timeseries",
-      "title": "새 값 기준 rate 와 concurrency",
+      "title": "후보 기준 초당 호출 한도와 동시 호출 한도",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
         "x": 0,
-        "y": 94,
+        "y": 99,
         "w": 8,
         "h": 8
       },
@@ -3322,7 +4014,7 @@
             "uid": "prometheus"
           },
           "expr": "flow_control_dryrun_limit_rate{target=\"$target\"}",
-          "legendFormat": "새 값 기준 rate",
+          "legendFormat": "후보 기준 초당 호출 한도",
           "refId": "A"
         },
         {
@@ -3331,7 +4023,7 @@
             "uid": "prometheus"
           },
           "expr": "flow_control_limit_rate{target=\"$target\"}",
-          "legendFormat": "지금 rate",
+          "legendFormat": "지금 초당 호출 한도",
           "refId": "B"
         },
         {
@@ -3340,7 +4032,7 @@
             "uid": "prometheus"
           },
           "expr": "flow_control_dryrun_limit_concurrency{target=\"$target\"}",
-          "legendFormat": "새 값 기준 concurrency",
+          "legendFormat": "후보 기준 동시 호출 한도",
           "refId": "C"
         }
       ],
@@ -3413,14 +4105,30 @@
     {
       "id": 46,
       "type": "timeseries",
-      "title": "새 값이었으면 막혔을 호출 (초당)",
+      "title": "후보 한도였다면 막혔을 호출 (이유별, 초당)",
+      "transformations": [
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bsemaphore\\b",
+            "renamePattern": "세마포어(semaphore)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\btoken_bucket\\b",
+            "renamePattern": "토큰 버킷(token_bucket)"
+          }
+        }
+      ],
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
         "x": 8,
-        "y": 94,
+        "y": 99,
         "w": 8,
         "h": 8
       },
@@ -3485,14 +4193,100 @@
     {
       "id": 47,
       "type": "timeseries",
-      "title": "판단이 달라진 응답과 timeout (초당)",
+      "title": "결과 종류가 바뀐 호출과 timeout (초당)",
+      "transformations": [
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bSUCCESS\\b",
+            "renamePattern": "성공(SUCCESS)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bBUSINESS_REJECTED\\b",
+            "renamePattern": "업무 거절(BUSINESS_REJECTED)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bTIMEOUT\\b",
+            "renamePattern": "응답 시간 초과(TIMEOUT)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bCONNECTION_FAILED\\b",
+            "renamePattern": "연결 실패(CONNECTION_FAILED)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bNETWORK_ERROR\\b",
+            "renamePattern": "네트워크 오류(NETWORK_ERROR)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bSERVER_ERROR\\b",
+            "renamePattern": "서버 오류(SERVER_ERROR)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bTOO_MANY_REQUESTS\\b",
+            "renamePattern": "요청 과다(TOO_MANY_REQUESTS)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bUNDER_MAINTENANCE\\b",
+            "renamePattern": "점검 중(UNDER_MAINTENANCE)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bINVALID_REQUEST\\b",
+            "renamePattern": "잘못된 요청(INVALID_REQUEST)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bUNEXPECTED_RESPONSE\\b",
+            "renamePattern": "알 수 없는 응답(UNEXPECTED_RESPONSE)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bwould_timeout\\b",
+            "renamePattern": "timeout 났을 호출(would_timeout)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bunknown\\b",
+            "renamePattern": "결과를 알 수 없는 timeout(unknown)"
+          }
+        }
+      ],
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
         "x": 16,
-        "y": 94,
+        "y": 99,
         "w": 8,
         "h": 8
       },
@@ -3512,7 +4306,7 @@
             "uid": "prometheus"
           },
           "expr": "sum by (result) (rate(flow_control_dryrun_timeouts_total{target=\"$target\"}[$__rate_interval]))",
-          "legendFormat": "timeout {{result}}",
+          "legendFormat": "{{result}}",
           "refId": "B"
         }
       ],
@@ -3564,6 +4358,68 @@
       }
     },
     {
+      "id": 59,
+      "type": "timeseries",
+      "title": "판정에 쓴 호출 수 / 판정 개수",
+      "description": "진행 중인 dry-run 만 보여줍니다. 두 선이 만나면 후보 정책을 적용할 수 있습니다.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 107,
+        "w": 24,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "flow_control_dryrun_judged_calls{target=\"$target\"}",
+          "legendFormat": "판정에 쓴 호출 수",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "flow_control_dryrun_required_calls{target=\"$target\"}",
+          "legendFormat": "판정 개수",
+          "refId": "B"
+        }
+  ],
+  "fieldConfig": {
+    "defaults": {
+      "unit": "short",
+      "decimals": 0,
+      "min": 0,
+      "custom": {
+        "lineWidth": 2,
+        "fillOpacity": 0,
+        "showPoints": "never",
+        "spanNulls": false
+      },
+      "mappings": []
+    },
+    "overrides": []
+  },
+  "options": {
+    "legend": {
+      "displayMode": "list",
+      "placement": "bottom",
+      "showLegend": true
+    },
+    "tooltip": {
+      "mode": "multi",
+      "sort": "none"
+    }
+  }
+},
+    {
       "id": 48,
       "type": "row",
       "title": "시뮬레이터",
@@ -3571,7 +4427,7 @@
       "panels": [],
       "gridPos": {
         "x": 0,
-        "y": 102,
+        "y": 115,
         "w": 24,
         "h": 1
       }
@@ -3580,13 +4436,64 @@
       "id": 49,
       "type": "timeseries",
       "title": "시뮬레이터 결과별 초당 요청 수",
+      "transformations": [
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bSUCCESS\\b",
+            "renamePattern": "성공(SUCCESS)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bBUSINESS_REJECTED\\b",
+            "renamePattern": "업무 거절(BUSINESS_REJECTED)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bRATE_LIMITED\\b",
+            "renamePattern": "요청 과다(RATE_LIMITED)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bOVERLOADED\\b",
+            "renamePattern": "과부하(OVERLOADED)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bSERVER_ERROR\\b",
+            "renamePattern": "서버 오류(SERVER_ERROR)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bMAINTENANCE\\b",
+            "renamePattern": "점검 중(MAINTENANCE)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bINVALID_REQUEST\\b",
+            "renamePattern": "잘못된 요청(INVALID_REQUEST)"
+          }
+        }
+      ],
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
         "x": 0,
-        "y": 103,
+        "y": 116,
         "w": 12,
         "h": 8
       },
@@ -3651,14 +4558,14 @@
     {
       "id": 50,
       "type": "timeseries",
-      "title": "시뮬레이터 latency p95, p99 (받은 순간부터 응답 직전까지)",
+      "title": "시뮬레이터 응답 시간 p95, p99 (받은 순간부터 응답 직전까지)",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
         "x": 12,
-        "y": 103,
+        "y": 116,
         "w": 12,
         "h": 8
       },
@@ -3739,7 +4646,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 111,
+        "y": 124,
         "w": 12,
         "h": 8
       },
@@ -3824,13 +4731,57 @@
       "id": 52,
       "type": "timeseries",
       "title": "걸려 있는 장애",
+      "transformations": [
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bdown\\b",
+            "renamePattern": "서버 중단(down)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bslow\\b",
+            "renamePattern": "느림(slow)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bfailure-rate\\b",
+            "renamePattern": "실패율(failure-rate)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bmaintenance\\b",
+            "renamePattern": "점검(maintenance)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bno-response\\b",
+            "renamePattern": "무응답(no-response)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\bcapacity\\b",
+            "renamePattern": "처리 능력 감소(capacity)"
+          }
+        }
+      ],
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
         "x": 12,
-        "y": 111,
+        "y": 124,
         "w": 8,
         "h": 8
       },
@@ -3903,7 +4854,7 @@
       },
       "gridPos": {
         "x": 20,
-        "y": 111,
+        "y": 124,
         "w": 4,
         "h": 8
       },

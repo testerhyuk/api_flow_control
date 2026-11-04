@@ -199,6 +199,10 @@ public class DryRunMonitor {
         return Optional.ofNullable(running.get(targetSystemId)).map(ShadowEvaluation::concurrencyLimit);
     }
 
+    public Optional<Long> judgedCallsOf(String targetSystemId) {
+        return Optional.ofNullable(running.get(targetSystemId)).map(ShadowEvaluation::judgedCalls);
+    }
+
     public Optional<Duration> overlapOf(String targetSystemId) {
         return Optional.ofNullable(running.get(targetSystemId)).map(ShadowEvaluation::overlap);
     }

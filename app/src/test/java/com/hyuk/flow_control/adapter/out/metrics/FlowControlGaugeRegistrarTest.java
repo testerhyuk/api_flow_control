@@ -10,8 +10,10 @@ import com.hyuk.flow_control.application.service.TargetSystemSemaphore;
 import com.hyuk.flow_control.config.ControlProperties;
 import com.hyuk.flow_control.config.HealthProperties;
 import com.hyuk.flow_control.domain.health.HealthMode;
+import com.hyuk.flow_control.domain.health.HealthRules;
 import com.hyuk.flow_control.domain.health.HealthSnapshot;
 import com.hyuk.flow_control.domain.health.HealthState;
+import com.hyuk.flow_control.domain.health.HealthThresholds;
 import com.hyuk.flow_control.domain.limit.ControlMode;
 import com.hyuk.flow_control.domain.maintenance.MaintenanceSource;
 import com.hyuk.flow_control.domain.policy.ManagedPolicy;
@@ -283,6 +285,65 @@ class FlowControlGaugeRegistrarTest {
         assertThat(gauge("flow.control.limit.rate")).isEqualTo(47.5);
         assertThat(gauge("flow.control.limit.rate.proposed")).isEqualTo(95.0);
         assertThat(gauge("flow.control.limit.servers")).isEqualTo(2.0);
+    }
+
+    @Test
+    @DisplayName("dry-run 이 없으면 판정에 쓴 호출 수와 판정 개수는 값이 없음(NaN)이다")
+    void exposesNoDryRunProgress() {
+        assertThat(gauge("flow.control.dryrun.judged.calls")).isNaN();
+        assertThat(gauge("flow.control.dryrun.required.calls")).isNaN();
+    }
+
+    @Test
+    @DisplayName("dry-run 중이면 판정에 쓴 호출 수와 판정 개수를 낸다")
+    void exposesDryRunProgress() {
+        when(dryRuns.isRunning(TARGET)).thenReturn(true);
+        when(dryRuns.judgedCallsOf(TARGET)).thenReturn(Optional.of(12L));
+        when(dryRuns.requiredCalls()).thenReturn(50);
+
+        assertThat(gauge("flow.control.dryrun.judged.calls")).isEqualTo(12.0);
+        assertThat(gauge("flow.control.dryrun.required.calls")).isEqualTo(50.0);
+    }
+
+    @Test
+    @DisplayName("진동 방지가 켜져 있으면 실패율 기준을 진입과 회복으로 따로 낸다")
+    void exposesFailureThresholds() {
+        HealthRules rules = new HealthRules(
+                new HealthThresholds(50, 0.10, 0.50, 2.0, 0.05, 0.25, 1.5), 3, 2, true);
+
+        assertFailureThresholds(rules, 0.10, 0.05, 0.50, 0.25);
+    }
+
+    @Test
+    @DisplayName("진동 방지가 꺼져 있으면 회복 기준은 진입 기준과 같다")
+    void exposesFailureThresholdsWithoutHysteresis() {
+        HealthRules rules = new HealthRules(
+                new HealthThresholds(50, 0.10, 0.50, 2.0, 0.05, 0.25, 1.5), 3, 2, false);
+
+        assertFailureThresholds(rules, 0.10, 0.10, 0.50, 0.50);
+    }
+
+    private void assertFailureThresholds(HealthRules rules, double degradedEntry, double degradedRecovery,
+                                         double criticalEntry, double criticalRecovery) {
+        SimpleMeterRegistry fresh = new SimpleMeterRegistry();
+        when(evaluator.rules()).thenReturn(rules);
+
+        new FlowControlGaugeRegistrar(fresh, policies, evaluator, adjuster, semaphore, dryRuns, baselines,
+                maintenance,
+                new HealthProperties(Duration.ofSeconds(10), Duration.ofSeconds(1), 50, 0.10, 0.50, 2.0,
+                        Duration.ofSeconds(30)),
+                new ControlProperties(ControlMode.FIXED));
+
+        assertThat(failureThreshold(fresh, "degraded", "entry")).isEqualTo(degradedEntry);
+        assertThat(failureThreshold(fresh, "degraded", "recovery")).isEqualTo(degradedRecovery);
+        assertThat(failureThreshold(fresh, "critical", "entry")).isEqualTo(criticalEntry);
+        assertThat(failureThreshold(fresh, "critical", "recovery")).isEqualTo(criticalRecovery);
+    }
+
+    private double failureThreshold(SimpleMeterRegistry target, String grade, String line) {
+        return target.get("flow.control.health.failure.threshold")
+                .tags("target", TARGET, "grade", grade, "line", line)
+                .gauge().value();
     }
 
     @Test

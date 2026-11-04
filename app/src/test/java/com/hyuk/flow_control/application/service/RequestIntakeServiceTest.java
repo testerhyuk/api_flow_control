@@ -252,6 +252,73 @@ class RequestIntakeServiceTest {
     }
 
     @Test
+    @DisplayName("한 요청이 여러 번 막혀도 이유마다 한 번만 센다")
+    void countsBlockedOncePerReason() {
+        when(outboundCall.send(REQUEST)).thenReturn(
+                new CallAttempt.BlockedBySemaphore(),
+                new CallAttempt.BlockedByTokenBucket(Duration.ofMillis(1)),
+                new CallAttempt.BlockedBySemaphore(),
+                new CallAttempt.BlockedByTokenBucket(Duration.ofMillis(1)),
+                new CallAttempt.Called(RESULT));
+
+        service.process(REQUEST, later());
+
+        verify(metrics, times(1)).recordBlockedBySemaphore(TARGET);
+        verify(metrics, times(1)).recordBlockedByTokenBucket(TARGET);
+    }
+
+    @Test
+    @DisplayName("막히지 않은 이유는 세지 않는다")
+    void doesNotCountOtherReason() {
+        when(outboundCall.send(REQUEST)).thenReturn(
+                new CallAttempt.BlockedBySemaphore(),
+                new CallAttempt.BlockedBySemaphore(),
+                new CallAttempt.Called(RESULT));
+
+        service.process(REQUEST, later());
+
+        verify(metrics, times(1)).recordBlockedBySemaphore(TARGET);
+        verify(metrics, never()).recordBlockedByTokenBucket(any());
+    }
+
+    @Test
+    @DisplayName("바로 호출되면 막힘으로 세지 않는다")
+    void doesNotCountWhenNotBlocked() {
+        when(outboundCall.send(REQUEST)).thenReturn(new CallAttempt.Called(RESULT));
+
+        service.process(REQUEST, later());
+
+        verify(metrics, never()).recordBlockedBySemaphore(any());
+        verify(metrics, never()).recordBlockedByTokenBucket(any());
+    }
+
+    @Test
+    @DisplayName("기다리다 만료된 요청도 막힌 요청으로 센다")
+    void countsBlockedEvenWhenExpired() throws InterruptedException {
+        when(outboundCall.send(REQUEST)).thenReturn(new CallAttempt.BlockedBySemaphore());
+        when(semaphore.awaitAvailable(eq(TARGET), any())).thenReturn(false);
+
+        assertThat(service.process(REQUEST, later())).isInstanceOf(IntakeResult.Expired.class);
+
+        verify(metrics, times(1)).recordBlockedBySemaphore(TARGET);
+    }
+
+    @Test
+    @DisplayName("재시도로 다시 들어온 요청은 막히면 새로 센다")
+    void countsAgainWhenProcessedAgain() {
+        when(outboundCall.send(REQUEST)).thenReturn(
+                new CallAttempt.BlockedBySemaphore(),
+                new CallAttempt.Called(RESULT),
+                new CallAttempt.BlockedBySemaphore(),
+                new CallAttempt.Called(RESULT));
+
+        service.process(REQUEST, later());
+        service.process(REQUEST, later());
+
+        verify(metrics, times(2)).recordBlockedBySemaphore(TARGET);
+    }
+
+    @Test
     @DisplayName("대기 중에 중단되면 대기 시간을 기록하지 않는다")
     void doesNotRecordWaitWhenInterrupted() throws InterruptedException {
         when(outboundCall.send(REQUEST)).thenReturn(new CallAttempt.BlockedByTokenBucket(Duration.ofSeconds(10)));
