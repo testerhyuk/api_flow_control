@@ -76,6 +76,7 @@ class ShadowEvaluation {
     private Instant lastEvaluatedAt;
     private int newSamples;
     private int samplesSinceChange;
+    private boolean pausedByMaintenance;
 
     ShadowEvaluation(DryRun dryRun, ManagedPolicy base, HealthStatus actualStatus, double actualRate,
                      ResponseJudge judge, HealthRules rules, LowTrafficRules lowTraffic, RateAdjustmentRule rateRule,
@@ -212,9 +213,14 @@ class ShadowEvaluation {
         if (underMaintenance || candidateMaintenance) {
             streaks.drain();
             tracker.pause();
+            pausedByMaintenance = true;
             timeInState.merge(before.state(), elapsed, Duration::plus);
             lastEvaluatedAt = now;
             return;
+        }
+        if (pausedByMaintenance) {
+            pausedByMaintenance = false;
+            restartAfterMaintenance(before, nowNanos);
         }
 
         OutcomeStatistics current = OutcomeWindow.latest(outcomes.descendingIterator(), maxSamples, since).statistics();
@@ -227,7 +233,7 @@ class ShadowEvaluation {
 
         if (step.stateChanged()) {
             transitions++;
-            metrics.recordDryRunStateTransition(dryRun.targetSystemId(), before.state(), next.state());
+            metrics.recordDryRunStateTransition(dryRun.targetSystemId(), step.before().state(), next.state());
         }
 
         statistics = current;
@@ -242,6 +248,19 @@ class ShadowEvaluation {
         }
         rate = nextRate;
         concurrencyLimit = nextConcurrency;
+    }
+
+    private void restartAfterMaintenance(HealthStatus before, long nowNanos) {
+        tracker.restartRecovering();
+        if (before.state() != tracker.status().state()) {
+            transitions++;
+            metrics.recordDryRunStateTransition(dryRun.targetSystemId(), before.state(), tracker.status().state());
+        }
+
+        double floor = rateRule.floor(candidate.limits());
+        bucket.change(floor, candidate.limits().burstCapacityAt(floor), nowNanos);
+        rate = floor;
+        samplesSinceChange = 0;
     }
 
     private void countMaintenanceTime(Instant now, Duration elapsed, boolean candidateMaintenance) {
