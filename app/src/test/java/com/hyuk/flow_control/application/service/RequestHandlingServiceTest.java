@@ -443,6 +443,47 @@ class RequestHandlingServiceTest {
     }
 
     @Test
+    @DisplayName("재시도 전에 만료되면 방금 받은 외부 서버 응답을 결과에 담아 보낸다")
+    void reportsResponseWhenExpiredAtRetrySchedule() {
+        OutboundRequest old = new OutboundRequest("req-old", TARGET, "{}",
+                Instant.now().minus(Duration.ofMinutes(9)).minusSeconds(30));
+        DeliveryContext secondStage = new DeliveryContext(RetryStage.SECOND, 2, Instant.now(), Instant.now(), "o",
+                OutcomeKind.TIMEOUT, "loan");
+        OutboundResult failed = new OutboundResult(
+                OutcomeKind.SERVER_ERROR, Duration.ofMillis(100), null, "<html>503</html>", 503, "E503");
+        when(intake.process(eq(old), any())).thenReturn(new IntakeResult.Called(failed));
+
+        service.handle(old, secondStage);
+
+        RequestResult sent = capturedResult("loan");
+        assertThat(sent.outcome()).isEqualTo(FinalOutcome.EXPIRED);
+        assertThat(sent.expiredWhere()).isEqualTo(ExpiryPoint.RETRY_SCHEDULE);
+        assertThat(sent.kind()).isEqualTo(OutcomeKind.SERVER_ERROR);
+        assertThat(sent.statusCode()).isEqualTo(503);
+        assertThat(sent.resultCode()).isEqualTo("E503");
+        assertThat(sent.responseBody()).isEqualTo("<html>503</html>");
+        assertThat(sent.attempts()).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("응답을 받지 못하고 재시도 전에 만료되면 응답 값은 비워서 보낸다")
+    void leavesResponseEmptyWhenExpiredWithoutResponse() {
+        OutboundRequest old = new OutboundRequest("req-old", TARGET, "{}",
+                Instant.now().minus(Duration.ofMinutes(9)).minusSeconds(30));
+        DeliveryContext secondStage = new DeliveryContext(RetryStage.SECOND, 2, Instant.now(), Instant.now(), "o",
+                OutcomeKind.TIMEOUT, "loan");
+        when(intake.process(eq(old), any())).thenReturn(new IntakeResult.Called(result(OutcomeKind.TIMEOUT, null)));
+
+        service.handle(old, secondStage);
+
+        RequestResult sent = capturedResult("loan");
+        assertThat(sent.kind()).isEqualTo(OutcomeKind.TIMEOUT);
+        assertThat(sent.statusCode()).isNull();
+        assertThat(sent.resultCode()).isNull();
+        assertThat(sent.responseBody()).isNull();
+    }
+
+    @Test
     @DisplayName("잘못된 메시지는 요청 ID 없이 원래 값을 담아 결과로 보낸다")
     void reportsInvalidMessage() {
         service.rejectInvalid(TARGET, "not-json", FROM_LOAN, "JSON 이 아닙니다");

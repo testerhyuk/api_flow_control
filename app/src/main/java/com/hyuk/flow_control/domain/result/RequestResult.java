@@ -63,4 +63,11 @@ public record RequestResult(
         return new RequestResult(requestId, targetSystemId, FinalOutcome.EXPIRED, lastKind, null, null, null, null,
                 where, attempts, finishedAt, null);
     }
+
+    public static RequestResult expiredAfterCall(String requestId, String targetSystemId, ExpiryPoint where,
+                                                 OutboundResult lastResult, int attempts, Instant finishedAt) {
+        return new RequestResult(requestId, targetSystemId, FinalOutcome.EXPIRED, lastResult.kind(),
+                lastResult.statusCode(), lastResult.resultCode(), lastResult.responseBody(), null, where, attempts,
+                finishedAt, null);
+    }
 }

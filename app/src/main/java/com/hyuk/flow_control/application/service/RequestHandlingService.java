@@ -133,7 +133,9 @@ public class RequestHandlingService implements RequestHandlingUseCase {
 
         Instant now = Instant.now();
         if (request.createdAt() != null && ttl.isExpiredAt(request.createdAt(), now.plus(next.get().delay()))) {
-            return expire(request, failed, ExpiryPoint.RETRY_SCHEDULE, kind, now);
+            return expire(request, failed, ExpiryPoint.RETRY_SCHEDULE, kind, now,
+                    RequestResult.expiredAfterCall(request.requestId(), request.targetSystemId(),
+                            ExpiryPoint.RETRY_SCHEDULE, result, failed.failedAttempts(), now));
         }
 
         publisher.scheduleRetry(request, failed.movedTo(next.get()), kind);
@@ -157,13 +159,18 @@ public class RequestHandlingService implements RequestHandlingUseCase {
 
     private HandlingOutcome expire(OutboundRequest request, DeliveryContext context, ExpiryPoint where,
                                    OutcomeKind lastKind, Instant at) {
+        return expire(request, context, where, lastKind, at, RequestResult.expired(request.requestId(),
+                request.targetSystemId(), where, lastKind, context.failedAttempts(), at));
+    }
+
+    private HandlingOutcome expire(OutboundRequest request, DeliveryContext context, ExpiryPoint where,
+                                   OutcomeKind lastKind, Instant at, RequestResult result) {
         Duration age = RequestTtl.ageAt(request.createdAt(), at);
         publisher.expire(request, context, where, lastKind, age);
         metrics.recordExpired(request.targetSystemId(), where);
         log.debug("유효기간이 지난 요청을 만료 토픽으로 보냈습니다 : {} {} where={} age={}s attempts={}",
                 request.targetSystemId(), request.requestId(), where.label(), age.toSeconds(), context.failedAttempts());
-        report(context, RequestResult.expired(request.requestId(), request.targetSystemId(), where, lastKind,
-                context.failedAttempts(), at));
+        report(context, result);
 
         return new HandlingOutcome.Expired(where);
     }
