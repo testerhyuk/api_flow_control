@@ -1,0 +1,143 @@
+# AWS 실험 환경의 컨테이너다. 서버마다 자기 역할의 프로필만 켠다 (kafka, store, mock, app, load).
+# 값은 서버가 처음 켜질 때 bootstrap 이 만든 .env 에서 온다.
+name: flow-control
+
+services:
+  kafka:
+    profiles: ["kafka"]
+    image: apache/kafka:4.3.1
+    container_name: flow-control-kafka
+    restart: unless-stopped
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+    environment:
+      CLUSTER_ID: 4L6g3nShT-eMCtK--X86sw
+      KAFKA_NODE_ID: ${KAFKA_NODE_ID}
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@${KAFKA_1_IP}:9093,2@${KAFKA_2_IP}:9093,3@${KAFKA_3_IP}:9093
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://${PRIVATE_IP}:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+
+  postgres:
+    profiles: ["store"]
+    image: postgres:18.4
+    container_name: flow-control-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: flow_control
+      POSTGRES_USER: flow_control
+      POSTGRES_PASSWORD: flow_control
+    volumes:
+      - postgres-data:/var/lib/postgresql
+
+  redis:
+    profiles: ["store"]
+    image: redis:8.10.2
+    container_name: flow-control-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+  mock-target-a:
+    profiles: ["mock"]
+    restart: unless-stopped
+    image: ${IMAGE_REPOSITORY}/mock-target:${IMAGE_TAG}
+    container_name: flow-control-mock-target-a
+    command: ["--mock-target.target=target-a"]
+    ports:
+      - "9001:9001"
+      - "9101:9101"
+    mem_limit: 1g
+
+  mock-target-b:
+    profiles: ["mock"]
+    restart: unless-stopped
+    image: ${IMAGE_REPOSITORY}/mock-target:${IMAGE_TAG}
+    container_name: flow-control-mock-target-b
+    command: ["--mock-target.target=target-b"]
+    ports:
+      - "9002:9002"
+      - "9102:9102"
+    mem_limit: 1g
+
+  mock-target-c:
+    profiles: ["mock"]
+    restart: unless-stopped
+    image: ${IMAGE_REPOSITORY}/mock-target:${IMAGE_TAG}
+    container_name: flow-control-mock-target-c
+    command: ["--mock-target.target=target-c"]
+    ports:
+      - "9003:9003"
+      - "9103:9103"
+    mem_limit: 1g
+
+  app:
+    profiles: ["app"]
+    restart: unless-stopped
+    image: ${IMAGE_REPOSITORY}/app:${IMAGE_TAG}
+    container_name: flow-control-app
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+    environment:
+      SPRING_PROFILES_ACTIVE: experiment
+      SPRING_DATASOURCE_URL: jdbc:postgresql://${STORE_IP}:5432/flow_control
+      SPRING_DATA_REDIS_HOST: ${STORE_IP}
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
+    mem_limit: 3g
+
+  record-ingestor:
+    profiles: ["load"]
+    restart: unless-stopped
+    image: ${IMAGE_REPOSITORY}/record-ingestor:${IMAGE_TAG}
+    container_name: flow-control-record-ingestor
+    ports:
+      - "8095:8095"
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
+    mem_limit: 1g
+
+  prometheus:
+    profiles: ["load"]
+    image: prom/prometheus:v3.13.4
+    container_name: flow-control-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ${PROMETHEUS_CONFIG}:/etc/prometheus/prometheus.yml:ro
+      - ../prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+
+  grafana:
+    profiles: ["load"]
+    image: grafana/grafana:13.2.3
+    container_name: flow-control-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - ../grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+
+volumes:
+  postgres-data:
+  prometheus-data:

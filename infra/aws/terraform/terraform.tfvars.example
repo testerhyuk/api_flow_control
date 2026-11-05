@@ -1,0 +1,4 @@
+# terraform.tfvars 로 복사해서 쓴다. terraform.tfvars 는 커밋하지 않는다.
+image_tag           = "0000000"
+ssh_public_key_path = "~/.ssh/flow-control.pub"
+second_app          = false

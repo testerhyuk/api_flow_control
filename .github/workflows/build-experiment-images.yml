@@ -1,0 +1,59 @@
+name: Build experiment images
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE_REPOSITORY: ghcr.io/${{ github.repository }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Run all tests and build jars
+        run: sh ./gradlew test bootJar
+
+      - name: Set image tag
+        id: tag
+        run: echo "value=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: app
+          push: true
+          tags: ${{ env.IMAGE_REPOSITORY }}/app:${{ steps.tag.outputs.value }}
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: mock-target-system
+          push: true
+          tags: ${{ env.IMAGE_REPOSITORY }}/mock-target:${{ steps.tag.outputs.value }}
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: record-ingestor
+          push: true
+          tags: ${{ env.IMAGE_REPOSITORY }}/record-ingestor:${{ steps.tag.outputs.value }}
+
+      - name: Show image tag
+        run: echo "image_tag = \"${{ steps.tag.outputs.value }}\"" >> "$GITHUB_STEP_SUMMARY"
