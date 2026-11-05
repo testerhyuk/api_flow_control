@@ -1,0 +1,49 @@
+#!/bin/bash
+# 서버가 처음 켜질 때 한 번 실행된다. 기록은 /var/log/cloud-init-output.log 에 남는다.
+set -euxo pipefail
+
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y docker.io docker-compose-v2 jq curl
+systemctl enable --now docker
+usermod -aG docker ubuntu
+
+base=/opt/flow-control
+mkdir -p "$base/repo" "$base/results"
+
+curl -fsSL --retry 5 "https://github.com/${repository}/archive/${image_tag}.tar.gz" \
+  | tar -xz --strip-components=1 -C "$base/repo"
+
+cat > "$base/.env" <<'ENV'
+IMAGE_REPOSITORY=${image_repository}
+IMAGE_TAG=${image_tag}
+PRIVATE_IP=${private_ip}
+KAFKA_NODE_ID=${kafka_node_id}
+KAFKA_1_IP=${kafka_1_ip}
+KAFKA_2_IP=${kafka_2_ip}
+KAFKA_3_IP=${kafka_3_ip}
+KAFKA_BOOTSTRAP_SERVERS=${kafka_1_ip}:9092,${kafka_2_ip}:9092,${kafka_3_ip}:9092
+STORE_IP=${store_ip}
+PROMETHEUS_CONFIG=/opt/flow-control/prometheus.yml
+ENV
+
+printf '%s' '${prometheus_config}' | base64 -d > "$base/prometheus.yml"
+
+cat > "$base/experiment.env" <<'ENV'
+export IMAGE_TAG=${image_tag}
+export INGESTOR_URL=http://127.0.0.1:8095
+export TARGET_A_ADMIN_URL=http://${mock_ip}:9101
+export TARGET_B_ADMIN_URL=http://${mock_ip}:9102
+export TARGET_C_ADMIN_URL=http://${mock_ip}:9103
+export APP_URL=http://${app_ip}:8080
+export MOCK_IP=${mock_ip}
+export RESULTS_DIR=/opt/flow-control/results
+ENV
+
+chown -R ubuntu:ubuntu "$base"
+
+docker compose \
+  --env-file "$base/.env" \
+  -f "$base/repo/infra/aws/docker-compose.yml" \
+  --profile "${profile}" \
+  up -d

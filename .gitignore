@@ -41,3 +41,9 @@ out/
 
 ### 실험 결과 ###
 /infra/experiment/results/
+
+### Terraform ###
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars

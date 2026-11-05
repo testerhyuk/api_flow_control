@@ -14,6 +14,7 @@
 #   target-a.json   mock 장애 시간표. target-b.json, target-c.json 도 같다. 없으면 그 mock 은 장애 없이 돌린다.
 #
 # 결과는 RESULTS_DIR (기본 infra/experiment/results) 아래 회차별 폴더에 저장한다.
+# IMAGE_TAG 가 있으면 어떤 코드로 돌렸는지 알 수 있게 run.txt 에 함께 남긴다.
 # 종료 코드: 0 정상, 1 시작 실패나 중단, 2 끝났지만 전송 실패나 장애 실행 실패가 있어 다시 돌려야 하는 회차.
 
 set -uo pipefail
@@ -153,6 +154,7 @@ done
 {
     printf 'scenario=%s\n' "$(basename "$scenario_dir")"
     printf 'seed=%s\n' "$seed"
+    printf 'imageTag=%s\n' "${IMAGE_TAG:-unknown}"
     printf 'startedAt=%s\n' "$started_at"
     printf 'finishedAt=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 } > "$result_dir/run.txt"
