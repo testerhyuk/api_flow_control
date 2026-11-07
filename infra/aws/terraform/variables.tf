@@ -28,7 +28,7 @@ variable "region" {
 variable "availability_zone" {
   description = "모든 서버를 둘 가용 영역"
   type        = string
-  default     = "ap-northeast-2a"
+  default     = "ap-northeast-2b"
 }
 
 variable "repository" {
