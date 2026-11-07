@@ -5,10 +5,10 @@
 DLQ 메시지의 값은 원래 요청 JSON 그대로라서, 원래 요청 토픽에 그대로 넣으면 처음부터 다시 처리된다.
 실패 정보(이유, 시도 횟수, 마지막 kind, 처음 들어온 위치)는 Kafka 헤더에 있으므로 kafka-ui(http://localhost:8090)에서 먼저 확인한다.
 
-target-a 의 DLQ 를 요청 토픽으로 옮기는 명령 (CMD):
+target-a 의 DLQ 를 요청 토픽으로 옮기는 명령 (`infra` 폴더의 CMD):
 
 ```
-docker exec flow-control-kafka-1 /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server kafka-1:29092 --topic flow-control.dlq.target-a --group dlq-redrive --consumer-property auto.offset.reset=earliest --timeout-ms 10000 | docker exec -i flow-control-kafka-1 /opt/kafka/bin/kafka-console-producer.sh --bootstrap-server kafka-1:29092 --topic flow-control.requests.target-a
+docker compose exec -T kafka-1 /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server kafka-1:29092 --topic flow-control.dlq.target-a --group dlq-redrive --consumer-property auto.offset.reset=earliest --timeout-ms 10000 | docker compose exec -T kafka-1 /opt/kafka/bin/kafka-console-producer.sh --bootstrap-server kafka-1:29092 --topic flow-control.requests.target-a
 ```
 
 - `dlq-redrive` 그룹이 어디까지 옮겼는지 기억하므로, 다시 실행하면 그 뒤에 새로 쌓인 메시지만 옮긴다.
