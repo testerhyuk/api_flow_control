@@ -1,7 +1,7 @@
 package com.hyuk.flow_control.application.service;
 
 import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
-import com.hyuk.flow_control.application.port.out.RequestIntakeControl;
+import com.hyuk.flow_control.application.port.out.RequestIntakeControlLookup;
 import com.hyuk.flow_control.application.port.out.TargetSystemClient;
 import com.hyuk.flow_control.application.settings.ControlSettings;
 import com.hyuk.flow_control.application.settings.MaintenanceSettings;
@@ -11,7 +11,6 @@ import com.hyuk.flow_control.domain.request.OutboundResult;
 import com.hyuk.flow_control.domain.request.OutcomeKind;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -29,7 +28,7 @@ public class MaintenanceMonitor {
     private static final Logger log = LoggerFactory.getLogger(MaintenanceMonitor.class);
 
     private final PolicyRegistry policies;
-    private final ObjectProvider<RequestIntakeControl> intake;
+    private final RequestIntakeControlLookup intake;
     private final TargetSystemClient client;
     private final FlowControlMetrics metrics;
     private final Duration probeInterval;
@@ -40,7 +39,7 @@ public class MaintenanceMonitor {
     @Autowired
     public MaintenanceMonitor(
             PolicyRegistry policies,
-            ObjectProvider<RequestIntakeControl> intake,
+            RequestIntakeControlLookup intake,
             TargetSystemClient client,
             FlowControlMetrics metrics,
             MaintenanceSettings maintenanceSettings,
@@ -51,7 +50,7 @@ public class MaintenanceMonitor {
 
     MaintenanceMonitor(
             PolicyRegistry policies,
-            ObjectProvider<RequestIntakeControl> intake,
+            RequestIntakeControlLookup intake,
             TargetSystemClient client,
             FlowControlMetrics metrics,
             MaintenanceSettings maintenanceSettings,
@@ -149,11 +148,11 @@ public class MaintenanceMonitor {
     }
 
     private void pause(String targetSystemId) {
-        intake.ifAvailable(control -> control.pause(targetSystemId));
+        intake.find().ifPresent(control -> control.pause(targetSystemId));
     }
 
     private void resume(String targetSystemId) {
-        intake.ifAvailable(control -> control.resume(targetSystemId));
+        intake.find().ifPresent(control -> control.resume(targetSystemId));
     }
 
     private static final class Window {

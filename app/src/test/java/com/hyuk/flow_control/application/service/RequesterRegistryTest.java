@@ -6,10 +6,9 @@ import com.hyuk.flow_control.domain.requester.Requester;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.ObjectProvider;
+import com.hyuk.flow_control.application.port.out.RequesterChangeListeners;
 
 import java.util.List;
-import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -26,16 +25,14 @@ class RequesterRegistryTest {
     private RequesterRepository repository;
     private RequesterChangeListener first;
     private RequesterChangeListener second;
-    private ObjectProvider<RequesterChangeListener> listeners;
+    private RequesterChangeListeners listeners;
 
     @BeforeEach
-    @SuppressWarnings("unchecked")
     void setUp() {
         repository = mock(RequesterRepository.class);
         first = mock(RequesterChangeListener.class);
         second = mock(RequesterChangeListener.class);
-        listeners = mock(ObjectProvider.class);
-        when(listeners.orderedStream()).thenAnswer(invocation -> Stream.of(first, second));
+        listeners = () -> List.of(first, second);
     }
 
     @Test
