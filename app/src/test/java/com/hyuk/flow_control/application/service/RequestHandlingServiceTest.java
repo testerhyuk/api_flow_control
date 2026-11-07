@@ -67,7 +67,7 @@ class RequestHandlingServiceTest {
 
     private RequestHandlingService serviceIn(ControlMode mode) {
         return new RequestHandlingService(intake, publisher, results, metrics,
-                new IntakeProperties(TTL, Duration.ofSeconds(5)), new ControlProperties(mode));
+                new IntakeProperties(TTL, Duration.ofSeconds(5)).settings(), new ControlProperties(mode).settings());
     }
 
     private void verifyOnlyAgeRecorded() {

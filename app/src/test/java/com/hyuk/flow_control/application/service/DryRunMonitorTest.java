@@ -67,8 +67,8 @@ class DryRunMonitorTest {
                 mock(MaintenanceMonitor.class), mock(ResponseJudge.class),
                 mock(FlowControlMetrics.class),
                 new HealthProperties(Duration.ofSeconds(10), Duration.ofSeconds(1), 50, 0.10, 0.50, 2.0,
-                        Duration.ofSeconds(30)),
-                new LimitAdjustmentProperties(0.5));
+                        Duration.ofSeconds(30)).settings(),
+                new LimitAdjustmentProperties(0.5).settings());
     }
 
     @Test

@@ -1,5 +1,6 @@
 package com.hyuk.flow_control.config;
 
+import com.hyuk.flow_control.application.settings.ControlSettings;
 import com.hyuk.flow_control.domain.limit.ControlMode;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
@@ -12,5 +13,9 @@ public record ControlProperties(
         if (controlMode == null) {
             controlMode = ControlMode.ADAPTIVE;
         }
+    }
+
+    public ControlSettings settings() {
+        return new ControlSettings(controlMode);
     }
 }

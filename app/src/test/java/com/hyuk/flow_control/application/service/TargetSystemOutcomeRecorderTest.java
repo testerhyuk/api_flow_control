@@ -265,6 +265,6 @@ class TargetSystemOutcomeRecorderTest {
         HealthProperties properties = new HealthProperties(
                 window, Duration.ofSeconds(1), 50, 0.10, 0.50, 2.0, Duration.ofSeconds(30));
 
-        return new TargetSystemOutcomeRecorder(policyReader, properties);
+        return new TargetSystemOutcomeRecorder(policyReader, properties.settings());
     }
 }

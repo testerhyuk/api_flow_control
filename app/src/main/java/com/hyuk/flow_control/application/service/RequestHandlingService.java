@@ -6,8 +6,8 @@ import com.hyuk.flow_control.application.port.in.RequestIntakeUseCase;
 import com.hyuk.flow_control.application.port.out.FailedRequestPublisher;
 import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
 import com.hyuk.flow_control.application.port.out.ResultPublisher;
-import com.hyuk.flow_control.config.ControlProperties;
-import com.hyuk.flow_control.config.IntakeProperties;
+import com.hyuk.flow_control.application.settings.ControlSettings;
+import com.hyuk.flow_control.application.settings.IntakeSettings;
 import com.hyuk.flow_control.domain.expiry.ExpiryPoint;
 import com.hyuk.flow_control.domain.expiry.RequestTtl;
 import com.hyuk.flow_control.domain.limit.ControlMode;
@@ -46,14 +46,14 @@ public class RequestHandlingService implements RequestHandlingUseCase {
             FailedRequestPublisher publisher,
             ResultPublisher results,
             FlowControlMetrics metrics,
-            IntakeProperties intakeProperties,
-            ControlProperties controlProperties) {
+            IntakeSettings intakeSettings,
+            ControlSettings controlSettings) {
         this.intake = intake;
         this.publisher = publisher;
         this.results = results;
         this.metrics = metrics;
-        this.ttl = new RequestTtl(intakeProperties.requestTtl());
-        this.maintenanceAware = controlProperties.controlMode() == ControlMode.ADAPTIVE;
+        this.ttl = new RequestTtl(intakeSettings.requestTtl());
+        this.maintenanceAware = controlSettings.controlMode() == ControlMode.ADAPTIVE;
     }
 
     @Override

@@ -1,5 +1,7 @@
 package com.hyuk.flow_control.config;
 
+import com.hyuk.flow_control.application.settings.BaselineSettings;
+import com.hyuk.flow_control.application.settings.HealthSettings;
 import com.hyuk.flow_control.domain.health.HealthRules;
 import com.hyuk.flow_control.domain.health.HealthThresholds;
 import com.hyuk.flow_control.domain.health.LowTrafficRules;
@@ -121,6 +123,12 @@ public record HealthProperties(
 
     public int requiredGoodCount() {
         return (int) Math.ceil((double) recoveryDuration.toMillis() / evaluationInterval.toMillis());
+    }
+
+    public HealthSettings settings() {
+        return new HealthSettings(window, minimumCalls, rules(), lowTraffic.rules(), baselineAuto,
+                new BaselineSettings(baseline.window(), baseline.minimumSamples(), baseline.lowerRatio(),
+                        baseline.upperRatio()));
     }
 
     public record RecoveryThreshold(

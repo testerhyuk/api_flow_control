@@ -3,8 +3,8 @@ package com.hyuk.flow_control.application.service;
 import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
 import com.hyuk.flow_control.application.port.out.RequestIntakeControl;
 import com.hyuk.flow_control.application.port.out.TargetSystemClient;
-import com.hyuk.flow_control.config.ControlProperties;
-import com.hyuk.flow_control.config.MaintenanceProperties;
+import com.hyuk.flow_control.application.settings.ControlSettings;
+import com.hyuk.flow_control.application.settings.MaintenanceSettings;
 import com.hyuk.flow_control.domain.limit.ControlMode;
 import com.hyuk.flow_control.domain.maintenance.MaintenanceSource;
 import com.hyuk.flow_control.domain.request.OutboundResult;
@@ -43,9 +43,9 @@ public class MaintenanceMonitor {
             ObjectProvider<RequestIntakeControl> intake,
             TargetSystemClient client,
             FlowControlMetrics metrics,
-            MaintenanceProperties maintenanceProperties,
-            ControlProperties controlProperties) {
-        this(policies, intake, client, metrics, maintenanceProperties, controlProperties,
+            MaintenanceSettings maintenanceSettings,
+            ControlSettings controlSettings) {
+        this(policies, intake, client, metrics, maintenanceSettings, controlSettings,
                 Executors.newVirtualThreadPerTaskExecutor());
     }
 
@@ -54,15 +54,15 @@ public class MaintenanceMonitor {
             ObjectProvider<RequestIntakeControl> intake,
             TargetSystemClient client,
             FlowControlMetrics metrics,
-            MaintenanceProperties maintenanceProperties,
-            ControlProperties controlProperties,
+            MaintenanceSettings maintenanceSettings,
+            ControlSettings controlSettings,
             Executor probes) {
         this.policies = policies;
         this.intake = intake;
         this.client = client;
         this.metrics = metrics;
-        this.probeInterval = maintenanceProperties.probeInterval();
-        this.enabled = controlProperties.controlMode() == ControlMode.ADAPTIVE;
+        this.probeInterval = maintenanceSettings.probeInterval();
+        this.enabled = controlSettings.controlMode() == ControlMode.ADAPTIVE;
         this.probes = probes;
     }
 

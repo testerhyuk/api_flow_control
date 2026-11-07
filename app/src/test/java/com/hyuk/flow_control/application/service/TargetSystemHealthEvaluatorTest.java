@@ -617,7 +617,7 @@ class TargetSystemHealthEvaluatorTest {
         HealthProperties properties = new HealthProperties(
                 Duration.ofSeconds(10), interval, 10, 0.10, 0.50, 2.0, recoveryDuration,
                 antiOscillation, null, 3, null, true, null);
-        return new TargetSystemHealthEvaluator(recorder, policyReader, baselines, maintenance, properties, metrics);
+        return new TargetSystemHealthEvaluator(recorder, policyReader, baselines, maintenance, properties.settings(), metrics);
     }
 
     private static List<HealthState> statesAfterEvaluations(TargetSystemHealthEvaluator evaluator, int times) {

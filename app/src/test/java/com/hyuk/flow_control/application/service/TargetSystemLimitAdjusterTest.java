@@ -552,8 +552,8 @@ class TargetSystemLimitAdjusterTest {
         LimitAdjustmentProperties adjustmentProperties = new LimitAdjustmentProperties(0.5);
 
         return new TargetSystemLimitAdjuster(evaluator, policyReader, rateLimiter, semaphore, sharedRates,
-                baselines, maintenance, metrics, adjustmentProperties, healthProperties,
-                new ControlProperties(mode));
+                baselines, maintenance, metrics, adjustmentProperties.settings(), healthProperties.settings(),
+                new ControlProperties(mode).settings());
     }
 
     private static HealthSnapshot snapshot(HealthState state, int newSamples) {

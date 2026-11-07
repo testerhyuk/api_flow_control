@@ -213,6 +213,6 @@ class BaselineEstimatorTest {
         HealthProperties properties = new HealthProperties(
                 Duration.ofSeconds(10), Duration.ofSeconds(1), 50, 0.10, 0.50, 2.0, Duration.ofSeconds(30),
                 true, null, 3, null, enabled, new HealthProperties.Baseline(window, 10, 0.5, 1.5));
-        return new BaselineEstimator(policyReader, properties);
+        return new BaselineEstimator(policyReader, properties.settings());
     }
 }

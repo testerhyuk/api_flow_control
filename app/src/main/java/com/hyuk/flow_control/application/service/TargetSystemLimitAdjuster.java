@@ -6,9 +6,9 @@ import com.hyuk.flow_control.application.port.out.SharedRateStore;
 import com.hyuk.flow_control.application.port.out.SharedRateStoreUnavailableException;
 import com.hyuk.flow_control.application.port.out.TargetSystemPolicyReader;
 import com.hyuk.flow_control.application.port.out.TargetSystemRateLimiter;
-import com.hyuk.flow_control.config.ControlProperties;
-import com.hyuk.flow_control.config.HealthProperties;
-import com.hyuk.flow_control.config.LimitAdjustmentProperties;
+import com.hyuk.flow_control.application.settings.ControlSettings;
+import com.hyuk.flow_control.application.settings.HealthSettings;
+import com.hyuk.flow_control.application.settings.LimitAdjustmentSettings;
 import com.hyuk.flow_control.domain.health.HealthSnapshot;
 import com.hyuk.flow_control.domain.limit.ControlMode;
 import com.hyuk.flow_control.domain.limit.RateAdjustmentRule;
@@ -58,9 +58,9 @@ public class TargetSystemLimitAdjuster implements PolicyChangeListener {
             BaselineEstimator baselines,
             MaintenanceMonitor maintenance,
             FlowControlMetrics metrics,
-            LimitAdjustmentProperties adjustmentProperties,
-            HealthProperties healthProperties,
-            ControlProperties controlProperties) {
+            LimitAdjustmentSettings adjustmentSettings,
+            HealthSettings healthSettings,
+            ControlSettings controlSettings) {
         this.evaluator = evaluator;
         this.policyReader = policyReader;
         this.rateLimiter = rateLimiter;
@@ -69,8 +69,8 @@ public class TargetSystemLimitAdjuster implements PolicyChangeListener {
         this.baselines = baselines;
         this.maintenance = maintenance;
         this.metrics = metrics;
-        this.rule = ruleOf(adjustmentProperties, healthProperties);
-        this.controlMode = controlProperties.controlMode();
+        this.rule = ruleOf(adjustmentSettings, healthSettings);
+        this.controlMode = controlSettings.controlMode();
 
         policyReader.readAll().forEach(this::register);
 
@@ -81,12 +81,12 @@ public class TargetSystemLimitAdjuster implements PolicyChangeListener {
         }
     }
 
-    public static RateAdjustmentRule ruleOf(LimitAdjustmentProperties adjustmentProperties,
-                                            HealthProperties healthProperties) {
+    public static RateAdjustmentRule ruleOf(LimitAdjustmentSettings adjustmentSettings,
+                                            HealthSettings healthSettings) {
         return new RateAdjustmentRule(
-                adjustmentProperties.degradedRatio(),
-                healthProperties.minimumCalls(),
-                healthProperties.minimumCalls() / (healthProperties.window().toNanos() / 1_000_000_000.0));
+                adjustmentSettings.degradedRatio(),
+                healthSettings.minimumCalls(),
+                healthSettings.minimumCalls() / (healthSettings.window().toNanos() / 1_000_000_000.0));
     }
 
     @Override

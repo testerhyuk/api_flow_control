@@ -266,6 +266,6 @@ class MaintenanceMonitorTest {
         }).when(provider).ifAvailable(any());
 
         return new MaintenanceMonitor(policies, provider, client, metrics,
-                new MaintenanceProperties(probeInterval), new ControlProperties(mode), probes);
+                new MaintenanceProperties(probeInterval).settings(), new ControlProperties(mode).settings(), probes);
     }
 }

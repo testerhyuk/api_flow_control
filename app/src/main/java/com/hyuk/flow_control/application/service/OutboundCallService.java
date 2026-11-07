@@ -4,7 +4,7 @@ import com.hyuk.flow_control.application.port.in.OutboundCallUseCase;
 import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
 import com.hyuk.flow_control.application.port.out.TargetSystemClient;
 import com.hyuk.flow_control.application.port.out.TargetSystemRateLimiter;
-import com.hyuk.flow_control.config.ControlProperties;
+import com.hyuk.flow_control.application.settings.ControlSettings;
 import com.hyuk.flow_control.domain.health.HealthState;
 import com.hyuk.flow_control.domain.limit.ControlMode;
 import com.hyuk.flow_control.domain.request.CallAttempt;
@@ -36,7 +36,7 @@ public class OutboundCallService implements OutboundCallUseCase {
             MaintenanceMonitor maintenance,
             FlowControlMetrics metrics,
             DryRunMonitor dryRuns,
-            ControlProperties controlProperties) {
+            ControlSettings controlSettings) {
         this.client = client;
         this.semaphore = semaphore;
         this.rateLimiter = rateLimiter;
@@ -46,7 +46,7 @@ public class OutboundCallService implements OutboundCallUseCase {
         this.maintenance = maintenance;
         this.metrics = metrics;
         this.dryRuns = dryRuns;
-        this.controlled = controlProperties.controlMode() != ControlMode.NONE;
+        this.controlled = controlSettings.controlMode() != ControlMode.NONE;
     }
 
     @Override

@@ -5,7 +5,8 @@ import com.hyuk.flow_control.domain.health.BaselineBound;
 import com.hyuk.flow_control.domain.health.BaselineKind;
 import com.hyuk.flow_control.application.port.out.PolicyChangeListener;
 import com.hyuk.flow_control.application.port.out.TargetSystemPolicyReader;
-import com.hyuk.flow_control.config.HealthProperties;
+import com.hyuk.flow_control.application.settings.BaselineSettings;
+import com.hyuk.flow_control.application.settings.HealthSettings;
 import com.hyuk.flow_control.domain.health.OutcomeStatistics;
 import com.hyuk.flow_control.domain.policy.ManagedPolicy;
 import com.hyuk.flow_control.domain.policy.TargetSystemPolicy;
@@ -32,13 +33,13 @@ public class BaselineEstimator implements PolicyChangeListener {
 
     private final TargetSystemPolicyReader policyReader;
     private final boolean enabled;
-    private final HealthProperties.Baseline settings;
+    private final BaselineSettings settings;
     private final Map<String, Learning> learnings = new ConcurrentHashMap<>();
 
-    public BaselineEstimator(TargetSystemPolicyReader policyReader, HealthProperties healthProperties) {
+    public BaselineEstimator(TargetSystemPolicyReader policyReader, HealthSettings healthSettings) {
         this.policyReader = policyReader;
-        this.enabled = healthProperties.baselineAuto();
-        this.settings = healthProperties.baseline();
+        this.enabled = healthSettings.baselineAuto();
+        this.settings = healthSettings.baseline();
 
         policyReader.readAll().keySet().forEach(targetSystemId -> learnings.put(targetSystemId, new Learning()));
     }

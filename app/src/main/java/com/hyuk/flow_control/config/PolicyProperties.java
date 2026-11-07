@@ -1,5 +1,6 @@
 package com.hyuk.flow_control.config;
 
+import com.hyuk.flow_control.application.settings.DryRunSettings;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.time.Duration;
@@ -16,5 +17,9 @@ public record PolicyProperties(
         if (dryRunMaxDuration == null || !dryRunMaxDuration.isPositive()) {
             throw new IllegalArgumentException("dry-run-max-duration 은 0보다 커야 합니다");
         }
+    }
+
+    public DryRunSettings dryRunSettings() {
+        return new DryRunSettings(dryRunMaxDuration);
     }
 }
