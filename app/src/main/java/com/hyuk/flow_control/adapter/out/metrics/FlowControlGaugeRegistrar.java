@@ -1,15 +1,12 @@
 package com.hyuk.flow_control.adapter.out.metrics;
 
+import com.hyuk.flow_control.application.port.in.FlowControlStatusQuery;
+import com.hyuk.flow_control.application.port.in.PolicyQuery;
 import com.hyuk.flow_control.application.port.out.PolicyChangeListener;
-import com.hyuk.flow_control.application.service.BaselineEstimator;
-import com.hyuk.flow_control.application.service.DryRunMonitor;
-import com.hyuk.flow_control.application.service.MaintenanceMonitor;
-import com.hyuk.flow_control.application.service.PolicyRegistry;
-import com.hyuk.flow_control.application.service.TargetSystemHealthEvaluator;
-import com.hyuk.flow_control.application.service.TargetSystemLimitAdjuster;
-import com.hyuk.flow_control.application.service.TargetSystemSemaphore;
 import com.hyuk.flow_control.config.ControlProperties;
 import com.hyuk.flow_control.config.HealthProperties;
+import com.hyuk.flow_control.domain.health.BaselineBound;
+import com.hyuk.flow_control.domain.health.BaselineKind;
 import com.hyuk.flow_control.domain.health.HealthMode;
 import com.hyuk.flow_control.domain.health.HealthState;
 import com.hyuk.flow_control.domain.health.HealthThresholds;
@@ -28,35 +25,20 @@ import java.util.function.Supplier;
 @Order(0)
 public class FlowControlGaugeRegistrar implements PolicyChangeListener {
     private final MeterRegistry registry;
-    private final PolicyRegistry policies;
-    private final TargetSystemHealthEvaluator evaluator;
-    private final TargetSystemLimitAdjuster adjuster;
-    private final TargetSystemSemaphore semaphore;
-    private final DryRunMonitor dryRuns;
-    private final BaselineEstimator baselines;
-    private final MaintenanceMonitor maintenance;
+    private final PolicyQuery policies;
+    private final FlowControlStatusQuery status;
     private final HealthThresholds thresholds;
 
     public FlowControlGaugeRegistrar(
             MeterRegistry registry,
-            PolicyRegistry policies,
-            TargetSystemHealthEvaluator evaluator,
-            TargetSystemLimitAdjuster adjuster,
-            TargetSystemSemaphore semaphore,
-            DryRunMonitor dryRuns,
-            BaselineEstimator baselines,
-            MaintenanceMonitor maintenance,
+            PolicyQuery policies,
+            FlowControlStatusQuery status,
             HealthProperties healthProperties,
             ControlProperties controlProperties) {
         this.registry = registry;
         this.policies = policies;
-        this.evaluator = evaluator;
-        this.adjuster = adjuster;
-        this.semaphore = semaphore;
-        this.dryRuns = dryRuns;
-        this.baselines = baselines;
-        this.maintenance = maintenance;
-        this.thresholds = evaluator.rules().activeThresholds();
+        this.status = status;
+        this.thresholds = status.activeThresholds();
 
         registerGlobalGauges(controlProperties.controlMode(), healthProperties);
         policies.readAll().keySet().forEach(this::registerGauges);
@@ -87,66 +69,66 @@ public class FlowControlGaugeRegistrar implements PolicyChangeListener {
     private void registerGauges(String targetSystemId) {
         for (HealthState state : HealthState.values()) {
             Gauge.builder("flow.control.health.state",
-                            () -> evaluator.snapshotOf(targetSystemId).state() == state ? 1 : 0)
+                            () -> status.healthOf(targetSystemId).state() == state ? 1 : 0)
                     .tag("target", targetSystemId)
                     .tag("state", state.name())
                     .register(registry);
         }
 
         register("flow.control.health.failure.rate", targetSystemId, null,
-                () -> evaluator.snapshotOf(targetSystemId).failureRate());
+                () -> status.healthOf(targetSystemId).failureRate());
         register("flow.control.health.p95", targetSystemId, "seconds",
-                () -> secondsOrNaN(evaluator.snapshotOf(targetSystemId).p95()));
+                () -> secondsOrNaN(status.healthOf(targetSystemId).p95()));
         register("flow.control.health.samples", targetSystemId, null,
-                () -> evaluator.snapshotOf(targetSystemId).sampleCount());
+                () -> status.healthOf(targetSystemId).sampleCount());
         registerFailureThreshold(targetSystemId, "degraded", "entry", thresholds.degradedFailureRate());
         registerFailureThreshold(targetSystemId, "degraded", "recovery", thresholds.degradedRecoveryFailureRate());
         registerFailureThreshold(targetSystemId, "critical", "entry", thresholds.criticalFailureRate());
         registerFailureThreshold(targetSystemId, "critical", "recovery", thresholds.criticalRecoveryFailureRate());
         register("flow.control.health.latency.threshold", targetSystemId, "seconds",
-                () -> toSeconds(thresholds.latencyThreshold(baselines.effective(targetSystemId).p95())));
+                () -> toSeconds(thresholds.latencyThreshold(status.baselinesOf(targetSystemId).p95())));
         register("flow.control.health.latency.recovery.threshold", targetSystemId, "seconds",
-                () -> toSeconds(thresholds.recoveryLatencyThreshold(baselines.effective(targetSystemId).p95())));
+                () -> toSeconds(thresholds.recoveryLatencyThreshold(status.baselinesOf(targetSystemId).p95())));
         register("flow.control.health.degraded.streak", targetSystemId, null,
-                () -> evaluator.snapshotOf(targetSystemId).degradedStreak());
+                () -> status.healthOf(targetSystemId).degradedStreak());
         register("flow.control.health.window.span", targetSystemId, "seconds",
-                () -> secondsOrNaN(evaluator.snapshotOf(targetSystemId).windowSpan()));
+                () -> secondsOrNaN(status.healthOf(targetSystemId).windowSpan()));
 
         for (HealthMode mode : HealthMode.values()) {
             Gauge.builder("flow.control.health.mode",
-                            () -> evaluator.snapshotOf(targetSystemId).mode() == mode ? 1 : 0)
+                            () -> status.healthOf(targetSystemId).mode() == mode ? 1 : 0)
                     .tag("target", targetSystemId)
                     .tag("mode", mode.name().toLowerCase())
                     .register(registry);
         }
 
         register("flow.control.health.baseline.samples", targetSystemId, null,
-                () -> baselines.sampleCount(targetSystemId));
+                () -> status.baselineSampleCount(targetSystemId));
 
-        for (BaselineEstimator.Kind kind : BaselineEstimator.Kind.values()) {
+        for (BaselineKind kind : BaselineKind.values()) {
             registerBaseline(targetSystemId, kind);
         }
 
         for (MaintenanceSource source : MaintenanceSource.values()) {
             Gauge.builder("flow.control.maintenance.active",
-                            () -> maintenance.isActive(targetSystemId, source) ? 1 : 0)
+                            () -> status.maintenanceActive(targetSystemId, source) ? 1 : 0)
                     .tag("target", targetSystemId)
                     .tag("source", source.label())
                     .register(registry);
         }
 
         register("flow.control.limit.rate", targetSystemId, null,
-                () -> adjuster.appliedRateOf(targetSystemId));
+                () -> status.appliedRate(targetSystemId));
         register("flow.control.limit.rate.proposed", targetSystemId, null,
-                () -> adjuster.rateOf(targetSystemId));
+                () -> status.proposedRate(targetSystemId));
         register("flow.control.limit.servers", targetSystemId, null,
-                () -> adjuster.serversOf(targetSystemId));
+                () -> status.servers(targetSystemId));
         register("flow.control.limit.rate.max", targetSystemId, null,
                 () -> policies.read(targetSystemId).effectiveRate());
         register("flow.control.limit.concurrency", targetSystemId, null,
-                () -> semaphore.limitOf(targetSystemId));
+                () -> status.concurrencyLimit(targetSystemId));
         register("flow.control.inflight", targetSystemId, null,
-                () -> semaphore.inFlightOf(targetSystemId));
+                () -> status.inFlight(targetSystemId));
         register("flow.control.policy.version", targetSystemId, null,
                 () -> policies.policyOf(targetSystemId).version());
 
@@ -155,11 +137,11 @@ public class FlowControlGaugeRegistrar implements PolicyChangeListener {
 
     private void registerDryRunGauges(String targetSystemId) {
         register("flow.control.dryrun.active", targetSystemId, null,
-                () -> dryRuns.isRunning(targetSystemId) ? 1 : 0);
+                () -> status.dryRunActive(targetSystemId) ? 1 : 0);
 
         for (HealthState state : HealthState.values()) {
             Gauge.builder("flow.control.dryrun.health.state",
-                            () -> dryRuns.stateOf(targetSystemId)
+                            () -> status.dryRunState(targetSystemId)
                                     .map(current -> current == state ? 1.0 : 0.0)
                                     .orElse(Double.NaN))
                     .tag("target", targetSystemId)
@@ -168,15 +150,15 @@ public class FlowControlGaugeRegistrar implements PolicyChangeListener {
         }
 
         register("flow.control.dryrun.limit.rate", targetSystemId, null,
-                () -> dryRuns.rateOf(targetSystemId).orElse(Double.NaN));
+                () -> status.dryRunRate(targetSystemId).orElse(Double.NaN));
         register("flow.control.dryrun.limit.concurrency", targetSystemId, null,
-                () -> dryRuns.concurrencyLimitOf(targetSystemId).map(Integer::doubleValue).orElse(Double.NaN));
+                () -> status.dryRunConcurrencyLimit(targetSystemId).map(Integer::doubleValue).orElse(Double.NaN));
         register("flow.control.dryrun.overlap", targetSystemId, "seconds",
-                () -> dryRuns.overlapOf(targetSystemId).map(FlowControlGaugeRegistrar::toSeconds).orElse(Double.NaN));
+                () -> status.dryRunOverlap(targetSystemId).map(FlowControlGaugeRegistrar::toSeconds).orElse(Double.NaN));
         register("flow.control.dryrun.judged.calls", targetSystemId, null,
-                () -> dryRuns.judgedCallsOf(targetSystemId).map(Long::doubleValue).orElse(Double.NaN));
+                () -> status.dryRunJudgedCalls(targetSystemId).map(Long::doubleValue).orElse(Double.NaN));
         register("flow.control.dryrun.required.calls", targetSystemId, null,
-                () -> dryRuns.isRunning(targetSystemId) ? dryRuns.requiredCalls() : Double.NaN);
+                () -> status.dryRunActive(targetSystemId) ? status.dryRunRequiredCalls() : Double.NaN);
     }
 
     private void registerFailureThreshold(String targetSystemId, String grade, String line, double value) {
@@ -187,11 +169,11 @@ public class FlowControlGaugeRegistrar implements PolicyChangeListener {
                 .register(registry);
     }
 
-    private void registerBaseline(String targetSystemId, BaselineEstimator.Kind kind) {
+    private void registerBaseline(String targetSystemId, BaselineKind kind) {
         Gauge.builder("flow.control.health.baseline.rtt",
-                        () -> toSeconds(kind == BaselineEstimator.Kind.MEAN
-                                ? baselines.effective(targetSystemId).mean()
-                                : baselines.effective(targetSystemId).p95()))
+                        () -> toSeconds(kind == BaselineKind.MEAN
+                                ? status.baselinesOf(targetSystemId).mean()
+                                : status.baselinesOf(targetSystemId).p95()))
                 .tag("target", targetSystemId)
                 .tag("kind", kind.label())
                 .baseUnit("seconds")
@@ -203,7 +185,7 @@ public class FlowControlGaugeRegistrar implements PolicyChangeListener {
                 .baseUnit("seconds")
                 .register(registry);
         Gauge.builder("flow.control.health.baseline.learned",
-                        () -> baselines.learned(targetSystemId, kind)
+                        () -> status.learnedBaseline(targetSystemId, kind)
                                 .map(FlowControlGaugeRegistrar::toSeconds)
                                 .orElse(Double.NaN))
                 .tag("target", targetSystemId)
@@ -211,9 +193,9 @@ public class FlowControlGaugeRegistrar implements PolicyChangeListener {
                 .baseUnit("seconds")
                 .register(registry);
 
-        for (BaselineEstimator.Bound bound : BaselineEstimator.Bound.values()) {
+        for (BaselineBound bound : BaselineBound.values()) {
             Gauge.builder("flow.control.health.baseline.clamped",
-                            () -> baselines.clampedBound(targetSystemId, kind).filter(bound::equals).isPresent() ? 1 : 0)
+                            () -> status.clampedBaseline(targetSystemId, kind).filter(bound::equals).isPresent() ? 1 : 0)
                     .tag("target", targetSystemId)
                     .tag("kind", kind.label())
                     .tag("bound", bound.label())

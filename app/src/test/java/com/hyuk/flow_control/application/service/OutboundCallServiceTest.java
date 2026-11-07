@@ -67,7 +67,7 @@ class OutboundCallServiceTest {
 
     private OutboundCallService service(ControlMode mode) {
         return new OutboundCallService(client, semaphore, rateLimiter, recorder, evaluator, baselines, maintenance,
-                metrics, dryRuns, new ControlProperties(mode));
+                metrics, dryRuns, new ControlProperties(mode).settings());
     }
 
     @Test

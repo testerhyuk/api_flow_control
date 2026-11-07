@@ -6,8 +6,8 @@ import com.hyuk.flow_control.application.port.in.RequestHandlingUseCase;
 import com.hyuk.flow_control.application.port.out.PolicyChangeListener;
 import com.hyuk.flow_control.application.port.out.RequestIntakeControl;
 import com.hyuk.flow_control.application.port.out.RequesterChangeListener;
-import com.hyuk.flow_control.application.service.PolicyRegistry;
-import com.hyuk.flow_control.application.service.RequesterRegistry;
+import com.hyuk.flow_control.application.port.in.PolicyQuery;
+import com.hyuk.flow_control.application.port.in.RequesterQuery;
 import com.hyuk.flow_control.config.IntakeProperties;
 import com.hyuk.flow_control.domain.policy.ManagedPolicy;
 import com.hyuk.flow_control.domain.requester.Requester;
@@ -53,8 +53,8 @@ public class KafkaRequestIntakeContainers
     private final RequestHandlingUseCase handling;
     private final JsonMapper jsonMapper;
     private final KafkaAdmin kafkaAdmin;
-    private final PolicyRegistry policies;
-    private final RequesterRegistry requesters;
+    private final PolicyQuery policies;
+    private final RequesterQuery requesters;
     private final MeterRegistry meterRegistry;
     private final String requestGroupId;
     private final boolean autoStartup;
@@ -65,8 +65,8 @@ public class KafkaRequestIntakeContainers
 
     public KafkaRequestIntakeContainers(
             ConsumerFactory<String, String> consumerFactory,
-            PolicyRegistry policies,
-            RequesterRegistry requesters,
+            PolicyQuery policies,
+            RequesterQuery requesters,
             RequestHandlingUseCase handling,
             JsonMapper jsonMapper,
             KafkaAdmin kafkaAdmin,

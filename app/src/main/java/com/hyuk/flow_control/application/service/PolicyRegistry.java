@@ -1,7 +1,9 @@
 package com.hyuk.flow_control.application.service;
 
+import com.hyuk.flow_control.application.port.in.PolicyQuery;
 import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
 import com.hyuk.flow_control.application.port.out.PolicyChangeListener;
+import com.hyuk.flow_control.application.port.out.PolicyChangeListeners;
 import com.hyuk.flow_control.application.port.out.PolicyRepository;
 import com.hyuk.flow_control.application.port.out.TargetSystemPolicyReader;
 import com.hyuk.flow_control.domain.policy.LoadedPolicy;
@@ -9,9 +11,7 @@ import com.hyuk.flow_control.domain.policy.ManagedPolicy;
 import com.hyuk.flow_control.domain.policy.TargetSystemPolicy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
-import org.springframework.util.ClassUtils;
 
 import java.util.Collection;
 import java.util.HashMap;
@@ -22,11 +22,11 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Component
-public class PolicyRegistry implements TargetSystemPolicyReader {
+public class PolicyRegistry implements TargetSystemPolicyReader, PolicyQuery {
     private static final Logger log = LoggerFactory.getLogger(PolicyRegistry.class);
 
     private final PolicyRepository repository;
-    private final ObjectProvider<PolicyChangeListener> listeners;
+    private final PolicyChangeListeners listeners;
     private final FlowControlMetrics metrics;
     private final Map<String, ManagedPolicy> current = new ConcurrentHashMap<>();
     private final Map<String, Long> reportedInvalidVersions = new ConcurrentHashMap<>();
@@ -36,7 +36,7 @@ public class PolicyRegistry implements TargetSystemPolicyReader {
     private final Set<String> registeredTargets = new HashSet<>();
 
     public PolicyRegistry(PolicyRepository repository,
-                          ObjectProvider<PolicyChangeListener> listeners,
+                          PolicyChangeListeners listeners,
                           FlowControlMetrics metrics) {
         this.repository = repository;
         this.listeners = listeners;
@@ -71,6 +71,7 @@ public class PolicyRegistry implements TargetSystemPolicyReader {
         return Map.copyOf(limits);
     }
 
+    @Override
     public ManagedPolicy policyOf(String targetSystemId) {
         ManagedPolicy policy = current.get(targetSystemId);
 
@@ -81,6 +82,7 @@ public class PolicyRegistry implements TargetSystemPolicyReader {
         return policy;
     }
 
+    @Override
     public Collection<ManagedPolicy> policies() {
         return List.copyOf(current.values());
     }
@@ -146,12 +148,9 @@ public class PolicyRegistry implements TargetSystemPolicyReader {
     }
 
     private List<String> listenerNames() {
-        return listeners.orderedStream().map(PolicyRegistry::nameOf).toList();
+        return listeners.all().stream().map(listeners::nameOf).toList();
     }
 
-    private static String nameOf(PolicyChangeListener listener) {
-        return ClassUtils.getUserClass(listener).getSimpleName();
-    }
 
     private void disableRemoved(Set<String> present, Set<String> notified) {
         List.copyOf(current.keySet()).stream()
@@ -220,7 +219,7 @@ public class PolicyRegistry implements TargetSystemPolicyReader {
 
     private void notifyEach(String targetSystemId, Change change) {
         Map<PolicyChangeListener, Change> failed = failedChanges.getOrDefault(targetSystemId, Map.of());
-        listeners.orderedStream().forEach(listener -> {
+        listeners.all().forEach(listener -> {
             Change last = failed.get(listener);
             deliver(targetSystemId, listener, last == null ? change : last.mergedWith(change), false);
         });
@@ -229,7 +228,7 @@ public class PolicyRegistry implements TargetSystemPolicyReader {
     private void retryFailed(Set<String> notified) {
         List.copyOf(failedChanges.keySet()).stream()
                 .filter(targetSystemId -> !notified.contains(targetSystemId))
-                .forEach(targetSystemId -> listeners.orderedStream().forEach(listener -> {
+                .forEach(targetSystemId -> listeners.all().forEach(listener -> {
                     Change failed = failedChanges.getOrDefault(targetSystemId, Map.of()).get(listener);
                     if (failed != null) {
                         deliver(targetSystemId, listener, failed, true);
@@ -238,7 +237,7 @@ public class PolicyRegistry implements TargetSystemPolicyReader {
     }
 
     private void deliver(String targetSystemId, PolicyChangeListener listener, Change change, boolean retry) {
-        String name = nameOf(listener);
+        String name = listeners.nameOf(listener);
         try {
             change.deliverTo(listener);
         } catch (RuntimeException e) {

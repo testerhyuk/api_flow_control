@@ -5,7 +5,7 @@ import com.hyuk.flow_control.application.port.in.DryRunUseCase;
 import com.hyuk.flow_control.application.port.in.PolicyContent;
 import com.hyuk.flow_control.application.port.in.PolicyManagementUseCase;
 import com.hyuk.flow_control.application.port.out.DryRunRepository;
-import com.hyuk.flow_control.config.PolicyProperties;
+import com.hyuk.flow_control.application.settings.DryRunSettings;
 import com.hyuk.flow_control.domain.dryrun.DryRun;
 import com.hyuk.flow_control.domain.dryrun.DryRunEnd;
 import com.hyuk.flow_control.domain.dryrun.DryRunNotFoundException;
@@ -32,11 +32,11 @@ public class DryRunService implements DryRunUseCase {
     private final Duration maxDuration;
 
     public DryRunService(DryRunRepository dryRuns, PolicyManagementUseCase policies, DryRunMonitor monitor,
-                         PolicyProperties policyProperties) {
+                         DryRunSettings dryRunSettings) {
         this.dryRuns = dryRuns;
         this.policies = policies;
         this.monitor = monitor;
-        this.maxDuration = policyProperties.dryRunMaxDuration();
+        this.maxDuration = dryRunSettings.maxDuration();
     }
 
     @Override

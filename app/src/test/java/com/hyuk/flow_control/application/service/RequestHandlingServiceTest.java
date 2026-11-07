@@ -1,5 +1,6 @@
 package com.hyuk.flow_control.application.service;
 
+import com.hyuk.flow_control.application.port.in.IntakeInterruptedException;
 import com.hyuk.flow_control.application.port.in.RequestIntakeUseCase;
 import com.hyuk.flow_control.application.port.out.FailedRequestPublisher;
 import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
@@ -66,7 +67,7 @@ class RequestHandlingServiceTest {
 
     private RequestHandlingService serviceIn(ControlMode mode) {
         return new RequestHandlingService(intake, publisher, results, metrics,
-                new IntakeProperties(TTL, Duration.ofSeconds(5)), new ControlProperties(mode));
+                new IntakeProperties(TTL, Duration.ofSeconds(5)).settings(), new ControlProperties(mode).settings());
     }
 
     private void verifyOnlyAgeRecorded() {

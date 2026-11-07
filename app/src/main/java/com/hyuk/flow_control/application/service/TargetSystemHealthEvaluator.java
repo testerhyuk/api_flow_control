@@ -3,7 +3,7 @@ package com.hyuk.flow_control.application.service;
 import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
 import com.hyuk.flow_control.application.port.out.PolicyChangeListener;
 import com.hyuk.flow_control.application.port.out.TargetSystemPolicyReader;
-import com.hyuk.flow_control.config.HealthProperties;
+import com.hyuk.flow_control.application.settings.HealthSettings;
 import com.hyuk.flow_control.domain.health.HealthMode;
 import com.hyuk.flow_control.domain.health.HealthRules;
 import com.hyuk.flow_control.domain.health.HealthSnapshot;
@@ -46,25 +46,25 @@ public class TargetSystemHealthEvaluator implements PolicyChangeListener {
             TargetSystemPolicyReader policyReader,
             BaselineEstimator baselines,
             MaintenanceMonitor maintenance,
-            HealthProperties healthProperties,
+            HealthSettings healthSettings,
             FlowControlMetrics metrics) {
         this.recorder = recorder;
         this.baselines = baselines;
         this.maintenance = maintenance;
         this.metrics = metrics;
-        this.rules = healthProperties.rules();
-        this.minimumCalls = healthProperties.minimumCalls();
-        this.lowTraffic = healthProperties.lowTraffic().rules();
+        this.rules = healthSettings.rules();
+        this.minimumCalls = healthSettings.minimumCalls();
+        this.lowTraffic = healthSettings.lowTraffic();
 
         policyReader.readAll().keySet().forEach(targetSystemId -> targets.put(targetSystemId, newTarget()));
     }
 
-    public static HealthThresholds thresholdsOf(HealthProperties healthProperties) {
-        return healthProperties.thresholds();
+    public static HealthThresholds thresholdsOf(HealthSettings healthSettings) {
+        return healthSettings.rules().thresholds();
     }
 
-    public static int requiredGoodCountOf(HealthProperties healthProperties) {
-        return healthProperties.requiredGoodCount();
+    public static int requiredGoodCountOf(HealthSettings healthSettings) {
+        return healthSettings.rules().requiredGoodCount();
     }
 
     @Override

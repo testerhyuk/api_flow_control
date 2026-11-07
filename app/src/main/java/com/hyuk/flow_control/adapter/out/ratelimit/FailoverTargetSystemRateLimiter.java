@@ -1,8 +1,6 @@
 package com.hyuk.flow_control.adapter.out.ratelimit;
 
-import com.hyuk.flow_control.adapter.out.redis.RedisAvailability;
-import com.hyuk.flow_control.adapter.out.redis.RedisErrors;
-import com.hyuk.flow_control.adapter.out.redis.RedisTokenBuckets;
+import com.hyuk.flow_control.adapter.out.SharedTokenBuckets;
 import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
 import com.hyuk.flow_control.application.port.out.PolicyChangeListener;
 import com.hyuk.flow_control.application.port.out.TargetSystemPolicyReader;
@@ -23,19 +21,16 @@ import java.util.concurrent.ConcurrentHashMap;
 @Order(0)
 public class FailoverTargetSystemRateLimiter implements TargetSystemRateLimiter, PolicyChangeListener {
     private final LocalTokenBuckets local = new LocalTokenBuckets();
-    private final RedisTokenBuckets shared;
-    private final RedisAvailability availability;
+    private final SharedTokenBuckets shared;
     private final FlowControlMetrics metrics;
     private final Map<String, TargetSystemPolicy> policies = new ConcurrentHashMap<>();
     private final Map<String, Double> rates = new ConcurrentHashMap<>();
     private final Map<String, BucketConfiguration> writtenToShared = new ConcurrentHashMap<>();
 
     public FailoverTargetSystemRateLimiter(TargetSystemPolicyReader policyReader,
-                                           RedisTokenBuckets shared,
-                                           RedisAvailability availability,
+                                           SharedTokenBuckets shared,
                                            FlowControlMetrics metrics) {
         this.shared = shared;
-        this.availability = availability;
         this.metrics = metrics;
 
         policyReader.readAll().forEach(this::register);
@@ -53,7 +48,7 @@ public class FailoverTargetSystemRateLimiter implements TargetSystemRateLimiter,
 
     @Override
     public RateLimitResult tryConsume(String targetSystemId) {
-        if (availability.isAvailable()) {
+        if (shared.isAvailable()) {
             long startedAt = System.nanoTime();
             try {
                 ConsumptionProbe probe = shared.tryConsume(targetSystemId);
@@ -76,7 +71,7 @@ public class FailoverTargetSystemRateLimiter implements TargetSystemRateLimiter,
         local.replaceConfiguration(targetSystemId, configuration);
         shared.configure(targetSystemId, configuration);
 
-        if (!availability.isAvailable() || configuration.equals(writtenToShared.get(targetSystemId))) {
+        if (!shared.isAvailable() || configuration.equals(writtenToShared.get(targetSystemId))) {
             return;
         }
 
@@ -97,9 +92,9 @@ public class FailoverTargetSystemRateLimiter implements TargetSystemRateLimiter,
     }
 
     private void failOver(String operation, Exception e) {
-        metrics.recordRedisError(operation, RedisErrors.isTimeout(e));
+        metrics.recordRedisError(operation, shared.isTimeout(e));
         writtenToShared.clear();
-        availability.markUnavailable(e);
+        shared.markUnavailable(e);
     }
 
     private TargetSystemPolicy policyOf(String targetSystemId) {

@@ -1,4 +1,4 @@
-package com.hyuk.flow_control.application.service;
+package com.hyuk.flow_control.application.port.in;
 
 public class IntakeInterruptedException extends RuntimeException {
     public IntakeInterruptedException(InterruptedException cause) {

@@ -1,5 +1,6 @@
 package com.hyuk.flow_control.config;
 
+import com.hyuk.flow_control.application.settings.IntakeSettings;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.ConstructorBinding;
 import org.springframework.boot.context.properties.bind.DefaultValue;
@@ -42,5 +43,9 @@ public record IntakeProperties(
         this.lagInterval = lagInterval;
         this.topicReplicas = topicReplicas;
         this.retryProcessingMargin = retryProcessingMargin;
+    }
+
+    public IntakeSettings settings() {
+        return new IntakeSettings(requestTtl);
     }
 }

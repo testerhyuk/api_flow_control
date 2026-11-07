@@ -1,10 +1,11 @@
 package com.hyuk.flow_control.application.service;
 
+import com.hyuk.flow_control.domain.health.Baselines;
 import com.hyuk.flow_control.application.port.out.DryRunRepository;
 import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
 import com.hyuk.flow_control.application.port.out.ResponseJudge;
-import com.hyuk.flow_control.config.HealthProperties;
-import com.hyuk.flow_control.config.LimitAdjustmentProperties;
+import com.hyuk.flow_control.application.settings.HealthSettings;
+import com.hyuk.flow_control.application.settings.LimitAdjustmentSettings;
 import com.hyuk.flow_control.domain.dryrun.DryRun;
 import com.hyuk.flow_control.domain.dryrun.DryRunEnd;
 import com.hyuk.flow_control.domain.dryrun.DryRunResult;
@@ -56,8 +57,8 @@ public class DryRunMonitor {
             MaintenanceMonitor maintenance,
             ResponseJudge judge,
             FlowControlMetrics metrics,
-            HealthProperties healthProperties,
-            LimitAdjustmentProperties adjustmentProperties) {
+            HealthSettings healthSettings,
+            LimitAdjustmentSettings adjustmentSettings) {
         this.repository = repository;
         this.policies = policies;
         this.evaluator = evaluator;
@@ -66,11 +67,11 @@ public class DryRunMonitor {
         this.maintenance = maintenance;
         this.judge = judge;
         this.metrics = metrics;
-        this.rules = healthProperties.rules();
-        this.lowTraffic = healthProperties.lowTraffic().rules();
-        this.rateRule = TargetSystemLimitAdjuster.ruleOf(adjustmentProperties, healthProperties);
-        this.window = healthProperties.window();
-        this.maxSamples = healthProperties.minimumCalls();
+        this.rules = healthSettings.rules();
+        this.lowTraffic = healthSettings.lowTraffic();
+        this.rateRule = TargetSystemLimitAdjuster.ruleOf(adjustmentSettings, healthSettings);
+        this.window = healthSettings.window();
+        this.maxSamples = healthSettings.minimumCalls();
     }
 
     public synchronized void refresh() {
@@ -240,7 +241,7 @@ public class DryRunMonitor {
         log.info("dry-run 을 시작했습니다 : {} 버전 {} 기준, {} 까지", targetSystemId, dryRun.baseVersion(), dryRun.expiresAt());
     }
 
-    private BaselineEstimator.Baselines candidateBaseline(DryRun dryRun) {
+    private Baselines candidateBaseline(DryRun dryRun) {
         return baselines.effective(dryRun.targetSystemId(), dryRun.candidate().limits());
     }
 

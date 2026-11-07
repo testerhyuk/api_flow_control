@@ -2,7 +2,7 @@ package com.hyuk.flow_control.application.service;
 
 import com.hyuk.flow_control.application.port.out.PolicyChangeListener;
 import com.hyuk.flow_control.application.port.out.TargetSystemPolicyReader;
-import com.hyuk.flow_control.config.HealthProperties;
+import com.hyuk.flow_control.application.settings.HealthSettings;
 import com.hyuk.flow_control.domain.health.LowTrafficEvent;
 import com.hyuk.flow_control.domain.health.LowTrafficRules;
 import com.hyuk.flow_control.domain.health.LowTrafficStreaks;
@@ -34,11 +34,11 @@ public class TargetSystemOutcomeRecorder implements PolicyChangeListener {
 
     public TargetSystemOutcomeRecorder(
             TargetSystemPolicyReader policyReader,
-            HealthProperties healthProperties
+            HealthSettings healthSettings
             ) {
-        this.window = healthProperties.window();
-        this.maxSamples = healthProperties.minimumCalls();
-        this.lowTraffic = healthProperties.lowTraffic().rules();
+        this.window = healthSettings.window();
+        this.maxSamples = healthSettings.minimumCalls();
+        this.lowTraffic = healthSettings.lowTraffic();
 
         policyReader.readAll().keySet().forEach(targetSystemId ->
                 outcomes.put(targetSystemId, new Outcomes(lowTraffic)));

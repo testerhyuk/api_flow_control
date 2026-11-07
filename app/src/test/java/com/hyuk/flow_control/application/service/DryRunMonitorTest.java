@@ -1,5 +1,6 @@
 package com.hyuk.flow_control.application.service;
 
+import com.hyuk.flow_control.domain.health.Baselines;
 import com.hyuk.flow_control.application.port.out.DryRunRepository;
 import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
 import com.hyuk.flow_control.application.port.out.ResponseJudge;
@@ -60,14 +61,14 @@ class DryRunMonitorTest {
         when(adjuster.serversOf(TARGET)).thenReturn(1);
         BaselineEstimator baselines = mock(BaselineEstimator.class);
         when(baselines.effective(eq(TARGET), any(TargetSystemPolicy.class)))
-                .thenAnswer(invocation -> BaselineEstimator.Baselines.of(invocation.getArgument(1)));
+                .thenAnswer(invocation -> Baselines.of(invocation.getArgument(1)));
 
         monitor = new DryRunMonitor(repository, policies, evaluator, adjuster, baselines,
                 mock(MaintenanceMonitor.class), mock(ResponseJudge.class),
                 mock(FlowControlMetrics.class),
                 new HealthProperties(Duration.ofSeconds(10), Duration.ofSeconds(1), 50, 0.10, 0.50, 2.0,
-                        Duration.ofSeconds(30)),
-                new LimitAdjustmentProperties(0.5));
+                        Duration.ofSeconds(30)).settings(),
+                new LimitAdjustmentProperties(0.5).settings());
     }
 
     @Test

@@ -16,19 +16,18 @@ import com.hyuk.flow_control.support.Policies;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.ObjectProvider;
+import com.hyuk.flow_control.application.port.out.RequestIntakeControlLookup;
 
+import java.util.Optional;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Executor;
-import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -257,15 +256,10 @@ class MaintenanceMonitorTest {
         return monitor(mode, probeInterval, Runnable::run);
     }
 
-    @SuppressWarnings("unchecked")
     private MaintenanceMonitor monitor(ControlMode mode, Duration probeInterval, Executor probes) {
-        ObjectProvider<RequestIntakeControl> provider = mock(ObjectProvider.class);
-        doAnswer(invocation -> {
-            ((Consumer<RequestIntakeControl>) invocation.getArgument(0)).accept(intake);
-            return null;
-        }).when(provider).ifAvailable(any());
+        RequestIntakeControlLookup provider = () -> Optional.of(intake);
 
         return new MaintenanceMonitor(policies, provider, client, metrics,
-                new MaintenanceProperties(probeInterval), new ControlProperties(mode), probes);
+                new MaintenanceProperties(probeInterval).settings(), new ControlProperties(mode).settings(), probes);
     }
 }

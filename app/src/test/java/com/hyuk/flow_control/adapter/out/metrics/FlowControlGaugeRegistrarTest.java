@@ -1,7 +1,11 @@
 package com.hyuk.flow_control.adapter.out.metrics;
 
+import com.hyuk.flow_control.domain.health.Baselines;
+import com.hyuk.flow_control.domain.health.BaselineBound;
+import com.hyuk.flow_control.domain.health.BaselineKind;
 import com.hyuk.flow_control.application.service.BaselineEstimator;
 import com.hyuk.flow_control.application.service.DryRunMonitor;
+import com.hyuk.flow_control.application.service.FlowControlStatusService;
 import com.hyuk.flow_control.application.service.MaintenanceMonitor;
 import com.hyuk.flow_control.application.service.PolicyRegistry;
 import com.hyuk.flow_control.application.service.TargetSystemHealthEvaluator;
@@ -64,7 +68,7 @@ class FlowControlGaugeRegistrarTest {
                 Duration.ofSeconds(10), Duration.ofSeconds(1), 50, 0.10, 0.50, 2.0, Duration.ofSeconds(30));
         when(evaluator.rules()).thenReturn(healthProperties.rules());
         when(baselines.effective(TARGET))
-                .thenAnswer(invocation -> BaselineEstimator.Baselines.of(policies.read(TARGET)));
+                .thenAnswer(invocation -> Baselines.of(policies.read(TARGET)));
         when(baselines.learned(eq(TARGET), any())).thenReturn(Optional.empty());
         when(baselines.clampedBound(eq(TARGET), any())).thenReturn(Optional.empty());
 
@@ -79,8 +83,9 @@ class FlowControlGaugeRegistrarTest {
         when(adjuster.serversOf(TARGET)).thenReturn(1);
         when(dryRuns.concurrencyLimitOf(TARGET)).thenReturn(Optional.empty());
 
-        new FlowControlGaugeRegistrar(registry, policies, evaluator, adjuster, semaphore, dryRuns, baselines,
-                maintenance, healthProperties, new ControlProperties(ControlMode.FIXED));
+        new FlowControlGaugeRegistrar(registry, policies,
+                new FlowControlStatusService(evaluator, adjuster, semaphore, dryRuns, baselines, maintenance),
+                healthProperties, new ControlProperties(ControlMode.FIXED));
     }
 
     @Test
@@ -111,7 +116,7 @@ class FlowControlGaugeRegistrarTest {
     @DisplayName("latency 기준선은 지금 쓰는 p95 baseline 에 배수를 곱한 값이고, baseline 은 평균과 p95 를 따로 낸다")
     void exposesRecoveryThreshold() {
         when(baselines.effective(TARGET))
-                .thenReturn(new BaselineEstimator.Baselines(Duration.ofMillis(80), Duration.ofMillis(120)));
+                .thenReturn(new Baselines(Duration.ofMillis(80), Duration.ofMillis(120)));
 
         assertThat(baselineGauge("flow.control.health.baseline.rtt", "mean")).isCloseTo(0.08, within(1e-9));
         assertThat(baselineGauge("flow.control.health.baseline.rtt", "p95")).isCloseTo(0.12, within(1e-9));
@@ -127,9 +132,9 @@ class FlowControlGaugeRegistrarTest {
         assertThat(baselineGauge("flow.control.health.baseline.learned", "p95")).isNaN();
         assertThat(clamped("p95", "upper")).isZero();
 
-        when(baselines.learned(TARGET, BaselineEstimator.Kind.P95)).thenReturn(Optional.of(Duration.ofMillis(400)));
-        when(baselines.clampedBound(TARGET, BaselineEstimator.Kind.P95))
-                .thenReturn(Optional.of(BaselineEstimator.Bound.UPPER));
+        when(baselines.learned(TARGET, BaselineKind.P95)).thenReturn(Optional.of(Duration.ofMillis(400)));
+        when(baselines.clampedBound(TARGET, BaselineKind.P95))
+                .thenReturn(Optional.of(BaselineBound.UPPER));
         when(baselines.sampleCount(TARGET)).thenReturn(150);
 
         assertThat(baselineGauge("flow.control.health.baseline.learned", "p95")).isCloseTo(0.4, within(1e-9));
@@ -328,8 +333,8 @@ class FlowControlGaugeRegistrarTest {
         SimpleMeterRegistry fresh = new SimpleMeterRegistry();
         when(evaluator.rules()).thenReturn(rules);
 
-        new FlowControlGaugeRegistrar(fresh, policies, evaluator, adjuster, semaphore, dryRuns, baselines,
-                maintenance,
+        new FlowControlGaugeRegistrar(fresh, policies,
+                new FlowControlStatusService(evaluator, adjuster, semaphore, dryRuns, baselines, maintenance),
                 new HealthProperties(Duration.ofSeconds(10), Duration.ofSeconds(1), 50, 0.10, 0.50, 2.0,
                         Duration.ofSeconds(30)),
                 new ControlProperties(ControlMode.FIXED));

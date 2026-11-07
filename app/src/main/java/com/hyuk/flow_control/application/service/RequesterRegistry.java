@@ -1,11 +1,11 @@
 package com.hyuk.flow_control.application.service;
 
-import com.hyuk.flow_control.application.port.out.RequesterChangeListener;
+import com.hyuk.flow_control.application.port.in.RequesterQuery;
+import com.hyuk.flow_control.application.port.out.RequesterChangeListeners;
 import com.hyuk.flow_control.application.port.out.RequesterRepository;
 import com.hyuk.flow_control.domain.requester.Requester;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
 import java.util.Collection;
@@ -14,15 +14,15 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Component
-public class RequesterRegistry {
+public class RequesterRegistry implements RequesterQuery {
     private static final Logger log = LoggerFactory.getLogger(RequesterRegistry.class);
 
     private final RequesterRepository repository;
-    private final ObjectProvider<RequesterChangeListener> listeners;
+    private final RequesterChangeListeners listeners;
     private final Map<String, Requester> current = new ConcurrentHashMap<>();
 
     public RequesterRegistry(RequesterRepository repository,
-                             ObjectProvider<RequesterChangeListener> listeners) {
+                             RequesterChangeListeners listeners) {
         this.repository = repository;
         this.listeners = listeners;
 
@@ -33,6 +33,7 @@ public class RequesterRegistry {
         return List.copyOf(current.values());
     }
 
+    @Override
     public List<String> requesterIdsOf(String targetSystemId) {
         return current.values().stream()
                 .filter(requester -> requester.canCall(targetSystemId))
@@ -41,6 +42,7 @@ public class RequesterRegistry {
                 .toList();
     }
 
+    @Override
     public List<String> enabledRequesterIdsOf(String targetSystemId) {
         return current.values().stream()
                 .filter(requester -> requester.enabled() && requester.canCall(targetSystemId))
@@ -72,7 +74,7 @@ public class RequesterRegistry {
         log.info("요청자를 반영했습니다 : {} 버전 {} (외부 서버 {}, 사용 {})", requester.requesterId(),
                 requester.version(), requester.targetSystemIds(), requester.enabled());
 
-        listeners.orderedStream().forEach(listener -> {
+        listeners.all().forEach(listener -> {
             try {
                 listener.onRequesterChanged(before, requester);
             } catch (RuntimeException e) {

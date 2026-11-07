@@ -61,7 +61,7 @@ class DryRunServiceTest {
         policies = mock(PolicyManagementUseCase.class);
         monitor = mock(DryRunMonitor.class);
         service = new DryRunService(dryRuns, policies, monitor,
-                new PolicyProperties(Duration.ofSeconds(5), Duration.ofMinutes(30)));
+                new PolicyProperties(Duration.ofSeconds(5), Duration.ofMinutes(30)).dryRunSettings());
         when(policies.get(TARGET)).thenReturn(new LoadedPolicy.Valid(CURRENT));
     }
 

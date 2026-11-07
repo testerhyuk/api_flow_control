@@ -8,6 +8,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
+import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.slices;
 
 class LayerDependencyTest {
 
@@ -62,17 +63,31 @@ class LayerDependencyTest {
     }
 
     @Test
+    @DisplayName("adapter 는 application.service 를 모르고 port 로만 쓴다")
+    void adapterUsesOnlyPorts() {
+        noClasses()
+                .that().resideInAPackage(BASE + ".adapter..")
+                .should().dependOnClassesThat()
+                .resideInAPackage(BASE + ".application.service..")
+                .check(classes);
+    }
+
+    @Test
+    @DisplayName("application 은 config 를 모른다")
+    void applicationDoesNotDependOnConfig() {
+        noClasses()
+                .that().resideInAPackage(BASE + ".application..")
+                .should().dependOnClassesThat()
+                .resideInAPackage(BASE + ".config..")
+                .check(classes);
+    }
+
+    @Test
     @DisplayName("adapter.out 의 구현체들은 서로를 모른다")
     void outboundAdaptersDoNotDependOnEachOther() {
-        noClasses()
-                .that().resideInAPackage(BASE + ".adapter.out.http..")
-                .should().dependOnClassesThat()
-                .resideInAnyPackage(
-                        BASE + ".adapter.out.redis..",
-                        BASE + ".adapter.out.kafka..",
-                        BASE + ".adapter.out.persistence..",
-                        BASE + ".adapter.out.metrics.."
-                )
+        slices()
+                .matching(BASE + ".adapter.out.(*)..")
+                .should().notDependOnEachOther()
                 .check(classes);
     }
 }

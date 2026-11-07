@@ -1,8 +1,8 @@
 package com.hyuk.flow_control.adapter.in.kafka;
 
 import com.hyuk.flow_control.adapter.kafka.RequestTopics;
-import com.hyuk.flow_control.application.service.PolicyRegistry;
-import com.hyuk.flow_control.application.service.RequesterRegistry;
+import com.hyuk.flow_control.application.port.in.PolicyQuery;
+import com.hyuk.flow_control.application.port.in.RequesterQuery;
 import com.hyuk.flow_control.config.IntakeProperties;
 import com.hyuk.flow_control.domain.policy.ManagedPolicy;
 import com.hyuk.flow_control.domain.retry.RetryStage;
@@ -40,8 +40,8 @@ public class KafkaLagMonitor implements SmartLifecycle {
     static final String REQUEST_STAGE = "request";
 
     private final KafkaAdmin kafkaAdmin;
-    private final PolicyRegistry policies;
-    private final RequesterRegistry requesters;
+    private final PolicyQuery policies;
+    private final RequesterQuery requesters;
     private final MeterRegistry meterRegistry;
     private final Duration interval;
     private final String requestGroupId;
@@ -54,8 +54,8 @@ public class KafkaLagMonitor implements SmartLifecycle {
 
     public KafkaLagMonitor(
             KafkaAdmin kafkaAdmin,
-            PolicyRegistry policies,
-            RequesterRegistry requesters,
+            PolicyQuery policies,
+            RequesterQuery requesters,
             MeterRegistry meterRegistry,
             IntakeProperties intakeProperties,
             @Value("${spring.kafka.consumer.group-id}") String requestGroupId,

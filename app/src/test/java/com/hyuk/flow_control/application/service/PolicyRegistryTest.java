@@ -13,13 +13,12 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InOrder;
-import org.springframework.beans.factory.ObjectProvider;
+import com.hyuk.flow_control.application.port.out.PolicyChangeListeners;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -46,17 +45,15 @@ class PolicyRegistryTest {
     private PolicyChangeListener first;
     private PolicyChangeListener second;
     private FlowControlMetrics metrics;
-    private ObjectProvider<PolicyChangeListener> listeners;
+    private PolicyChangeListeners listeners;
 
     @BeforeEach
-    @SuppressWarnings("unchecked")
     void setUp() {
         repository = mock(PolicyRepository.class);
         first = mock(PolicyChangeListener.class);
         second = mock(PolicyChangeListener.class);
         metrics = mock(FlowControlMetrics.class);
-        listeners = mock(ObjectProvider.class);
-        when(listeners.orderedStream()).thenAnswer(invocation -> Stream.of(first, second));
+        listeners = () -> List.of(first, second);
     }
 
     @Test
