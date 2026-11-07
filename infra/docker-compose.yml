@@ -16,7 +16,6 @@ x-kafka-env: &kafka-env
 services:
   prometheus:
     image: prom/prometheus:v3.13.4
-    container_name: flow-control-prometheus
     ports:
       - "9090:9090"
     volumes:
@@ -28,7 +27,6 @@ services:
 
   grafana:
     image: grafana/grafana:13.2.3
-    container_name: flow-control-grafana
     ports:
       - "3000:3000"
     environment:
@@ -42,7 +40,6 @@ services:
 
   kafka-1:
     image: apache/kafka:4.3.1
-    container_name: flow-control-kafka-1
     ports:
       - "9092:9092"
     environment:
@@ -53,7 +50,6 @@ services:
 
   kafka-2:
     image: apache/kafka:4.3.1
-    container_name: flow-control-kafka-2
     ports:
       - "9094:9094"
     environment:
@@ -64,7 +60,6 @@ services:
 
   kafka-3:
     image: apache/kafka:4.3.1
-    container_name: flow-control-kafka-3
     ports:
       - "9096:9096"
     environment:
@@ -75,7 +70,6 @@ services:
 
   postgres:
     image: postgres:18.4
-    container_name: flow-control-postgres
     ports:
       - "5432:5432"
     environment:
@@ -87,13 +81,11 @@ services:
 
   redis:
     image: redis:8.10.2
-    container_name: flow-control-redis
     ports:
       - "6379:6379"
 
   kafka-ui:
     image: kafbat/kafka-ui:v1.5.0
-    container_name: flow-control-kafka-ui
     ports:
       - "8090:8080"
     environment:
@@ -108,7 +100,6 @@ services:
     profiles: ["experiment"]
     build: ../app
     image: flow-control/app:local
-    container_name: flow-control-app
     ports:
       - "8080:8080"
       - "8081:8081"
@@ -129,7 +120,6 @@ services:
     profiles: ["experiment"]
     build: ../mock-target-system
     image: flow-control/mock-target:local
-    container_name: flow-control-mock-target-a
     command: ["--mock-target.target=target-a"]
     ports:
       - "9001:9001"
@@ -139,7 +129,6 @@ services:
   mock-target-b:
     profiles: ["experiment"]
     build: ../mock-target-system
-    container_name: flow-control-mock-target-b
     command: ["--mock-target.target=target-b"]
     ports:
       - "9002:9002"
@@ -149,7 +138,6 @@ services:
   mock-target-c:
     profiles: ["experiment"]
     build: ../mock-target-system
-    container_name: flow-control-mock-target-c
     command: ["--mock-target.target=target-c"]
     ports:
       - "9003:9003"
@@ -160,7 +148,6 @@ services:
     profiles: ["experiment"]
     build: ../record-ingestor
     image: flow-control/record-ingestor:local
-    container_name: flow-control-record-ingestor
     ports:
       - "8095:8095"
     environment:

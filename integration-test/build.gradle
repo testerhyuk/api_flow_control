@@ -1,0 +1,35 @@
+dependencies {
+    testImplementation 'org.testcontainers:testcontainers'
+    testImplementation 'org.apache.kafka:kafka-clients'
+    testImplementation 'tools.jackson.core:jackson-databind'
+    testRuntimeOnly 'ch.qos.logback:logback-classic'
+}
+
+// 컨테이너를 모두 띄워 오래 걸리므로 ./gradlew test 에서는 돌리지 않는다.
+tasks.named('test') {
+    enabled = false
+}
+
+tasks.register('integrationTest', Test) {
+    description = '전체 구성 요소를 Docker 로 띄워 통합 테스트를 돌린다. -PkeepContainers 를 주면 끝난 뒤 화면을 확인할 동안 컨테이너를 켜 둔다.'
+    group = 'verification'
+
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform()
+
+    // Dockerfile 이 build/libs 의 jar 를 복사만 하므로 jar 를 먼저 새로 만든다.
+    dependsOn ':app:bootJar', ':mock-target-system:bootJar', ':record-ingestor:bootJar'
+
+    systemProperty 'integration.composeFile', rootProject.file('infra/docker-compose.yml').absolutePath
+    systemProperty 'integration.keepContainers', project.hasProperty('keepContainers')
+    systemProperty 'integration.finishFile', layout.buildDirectory.file('finish-integration-test').get().asFile.absolutePath
+
+    outputs.upToDateWhen { false }
+    timeout = java.time.Duration.ofMinutes(90)
+    testLogging {
+        events 'started', 'passed', 'failed', 'skipped'
+        showStandardStreams = true
+        exceptionFormat = 'full'
+    }
+}
