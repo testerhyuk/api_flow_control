@@ -1,6 +1,7 @@
 package com.hyuk.flow_control.adapter.out.ratelimit;
 
 import com.hyuk.flow_control.adapter.out.redis.RedisAvailability;
+import com.hyuk.flow_control.adapter.out.redis.RedisSharedTokenBuckets;
 import com.hyuk.flow_control.adapter.out.redis.RedisTokenBuckets;
 import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
 import com.hyuk.flow_control.application.port.out.TargetSystemPolicyReader;
@@ -40,7 +41,8 @@ class FailoverTargetSystemRateLimiterTest {
                 "target-b", new TargetSystemPolicy(20, Duration.ofSeconds(1), 0.5, Duration.ofMillis(10))
         ));
 
-        rateLimiter = new FailoverTargetSystemRateLimiter(policyReader, shared, availability, metrics);
+        rateLimiter = new FailoverTargetSystemRateLimiter(policyReader,
+                new RedisSharedTokenBuckets(shared, availability), metrics);
     }
 
     @Test

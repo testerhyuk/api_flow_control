@@ -148,7 +148,8 @@ class SharedRateLimitRedisTest {
         when(policyReader.readAll()).thenReturn(Map.of(
                 target, new TargetSystemPolicy(20, Duration.ofSeconds(1), 0.5, Duration.ofSeconds(1))));
         FailoverTargetSystemRateLimiter limiter =
-                new FailoverTargetSystemRateLimiter(policyReader, buckets, availability, metrics);
+                new FailoverTargetSystemRateLimiter(policyReader,
+                        new RedisSharedTokenBuckets(buckets, availability), metrics);
 
         availability.start();
         return new Server(limiter, availability);
