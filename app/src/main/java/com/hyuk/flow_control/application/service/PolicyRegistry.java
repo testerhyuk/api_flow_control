@@ -1,5 +1,6 @@
 package com.hyuk.flow_control.application.service;
 
+import com.hyuk.flow_control.application.port.in.PolicyQuery;
 import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
 import com.hyuk.flow_control.application.port.out.PolicyChangeListener;
 import com.hyuk.flow_control.application.port.out.PolicyRepository;
@@ -22,7 +23,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Component
-public class PolicyRegistry implements TargetSystemPolicyReader {
+public class PolicyRegistry implements TargetSystemPolicyReader, PolicyQuery {
     private static final Logger log = LoggerFactory.getLogger(PolicyRegistry.class);
 
     private final PolicyRepository repository;
@@ -71,6 +72,7 @@ public class PolicyRegistry implements TargetSystemPolicyReader {
         return Map.copyOf(limits);
     }
 
+    @Override
     public ManagedPolicy policyOf(String targetSystemId) {
         ManagedPolicy policy = current.get(targetSystemId);
 
@@ -81,6 +83,7 @@ public class PolicyRegistry implements TargetSystemPolicyReader {
         return policy;
     }
 
+    @Override
     public Collection<ManagedPolicy> policies() {
         return List.copyOf(current.values());
     }

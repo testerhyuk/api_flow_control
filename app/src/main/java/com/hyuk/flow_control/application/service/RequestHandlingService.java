@@ -1,5 +1,6 @@
 package com.hyuk.flow_control.application.service;
 
+import com.hyuk.flow_control.application.port.in.IntakeInterruptedException;
 import com.hyuk.flow_control.application.port.in.RequestHandlingUseCase;
 import com.hyuk.flow_control.application.port.in.RequestIntakeUseCase;
 import com.hyuk.flow_control.application.port.out.FailedRequestPublisher;

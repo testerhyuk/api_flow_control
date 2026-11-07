@@ -1,5 +1,6 @@
 package com.hyuk.flow_control.application.service;
 
+import com.hyuk.flow_control.application.port.in.RequesterQuery;
 import com.hyuk.flow_control.application.port.out.RequesterChangeListener;
 import com.hyuk.flow_control.application.port.out.RequesterRepository;
 import com.hyuk.flow_control.domain.requester.Requester;
@@ -14,7 +15,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Component
-public class RequesterRegistry {
+public class RequesterRegistry implements RequesterQuery {
     private static final Logger log = LoggerFactory.getLogger(RequesterRegistry.class);
 
     private final RequesterRepository repository;
@@ -33,6 +34,7 @@ public class RequesterRegistry {
         return List.copyOf(current.values());
     }
 
+    @Override
     public List<String> requesterIdsOf(String targetSystemId) {
         return current.values().stream()
                 .filter(requester -> requester.canCall(targetSystemId))
@@ -41,6 +43,7 @@ public class RequesterRegistry {
                 .toList();
     }
 
+    @Override
     public List<String> enabledRequesterIdsOf(String targetSystemId) {
         return current.values().stream()
                 .filter(requester -> requester.enabled() && requester.canCall(targetSystemId))

@@ -1,5 +1,6 @@
 package com.hyuk.flow_control.application.service;
 
+import com.hyuk.flow_control.domain.health.Baselines;
 import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
 import com.hyuk.flow_control.application.port.out.TargetSystemPolicyReader;
 import com.hyuk.flow_control.application.port.out.TargetSystemRateLimiter;
@@ -578,7 +579,7 @@ class TargetSystemLimitAdjusterTest {
                 HealthMode.LOW_TRAFFIC, null, 0, null, null, newSamples);
     }
 
-    private static BaselineEstimator.Baselines meanBaseline(Duration mean) {
-        return new BaselineEstimator.Baselines(mean, mean.multipliedBy(2));
+    private static Baselines meanBaseline(Duration mean) {
+        return new Baselines(mean, mean.multipliedBy(2));
     }
 }

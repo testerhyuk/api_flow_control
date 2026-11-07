@@ -1,5 +1,6 @@
 package com.hyuk.flow_control.application.service;
 
+import com.hyuk.flow_control.application.port.in.IntakeInterruptedException;
 import com.hyuk.flow_control.application.port.in.OutboundCallUseCase;
 import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
 import com.hyuk.flow_control.domain.request.CallAttempt;

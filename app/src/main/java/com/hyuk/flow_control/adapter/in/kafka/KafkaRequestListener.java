@@ -4,7 +4,7 @@ import com.hyuk.flow_control.adapter.kafka.FailureHeaders;
 import com.hyuk.flow_control.adapter.kafka.RequestMessage;
 import com.hyuk.flow_control.adapter.kafka.RequestTopics;
 import com.hyuk.flow_control.application.port.in.RequestHandlingUseCase;
-import com.hyuk.flow_control.application.service.IntakeInterruptedException;
+import com.hyuk.flow_control.application.port.in.IntakeInterruptedException;
 import com.hyuk.flow_control.domain.retry.DeliveryContext;
 import com.hyuk.flow_control.domain.retry.RetryStage;
 import org.apache.kafka.clients.consumer.ConsumerRecord;

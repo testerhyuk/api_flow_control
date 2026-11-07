@@ -1,5 +1,6 @@
 package com.hyuk.flow_control.application.service;
 
+import com.hyuk.flow_control.domain.health.Baselines;
 import com.hyuk.flow_control.application.port.out.DryRunRepository;
 import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
 import com.hyuk.flow_control.application.port.out.ResponseJudge;
@@ -240,7 +241,7 @@ public class DryRunMonitor {
         log.info("dry-run 을 시작했습니다 : {} 버전 {} 기준, {} 까지", targetSystemId, dryRun.baseVersion(), dryRun.expiresAt());
     }
 
-    private BaselineEstimator.Baselines candidateBaseline(DryRun dryRun) {
+    private Baselines candidateBaseline(DryRun dryRun) {
         return baselines.effective(dryRun.targetSystemId(), dryRun.candidate().limits());
     }
 

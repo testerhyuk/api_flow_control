@@ -1,5 +1,6 @@
 package com.hyuk.flow_control.application.service;
 
+import com.hyuk.flow_control.domain.health.Baselines;
 import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
 import com.hyuk.flow_control.application.port.out.ResponseJudge;
 import com.hyuk.flow_control.domain.dryrun.DryRun;
@@ -247,7 +248,7 @@ class ShadowEvaluationTest {
         }
 
         evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1,
-                new BaselineEstimator.Baselines(Duration.ofMillis(100), Duration.ofMillis(100)));
+                new Baselines(Duration.ofMillis(100), Duration.ofMillis(100)));
 
         assertThat(evaluation.state()).isEqualTo(HealthState.HEALTHY);
         assertThat(evaluation.concurrencyLimit()).isEqualTo(10);
@@ -262,7 +263,7 @@ class ShadowEvaluationTest {
         }
 
         evaluation.evaluate(NOW.plusSeconds(1), 1_000_000_000L, 1,
-                new BaselineEstimator.Baselines(Duration.ofMillis(50), Duration.ofMillis(100)));
+                new Baselines(Duration.ofMillis(50), Duration.ofMillis(100)));
 
         assertThat(evaluation.state()).isEqualTo(HealthState.HEALTHY);
         assertThat(evaluation.concurrencyLimit()).isEqualTo(5);
@@ -552,11 +553,11 @@ class ShadowEvaluationTest {
     private ShadowEvaluation evaluation(ManagedPolicy candidate, double actualRate, HealthStatus actualStatus) {
         DryRun dryRun = new DryRun(candidate, 1, NOW, NOW.plus(Duration.ofMinutes(30)), new ChangeNote("hyuk", "test"));
         return new ShadowEvaluation(dryRun, BASE, actualStatus, actualRate, judge, RULES, LOW_TRAFFIC, RATE_RULE,
-                Duration.ofSeconds(10), 10, BaselineEstimator.Baselines.of(candidate.limits()), metrics, NOW, 0L);
+                Duration.ofSeconds(10), 10, Baselines.of(candidate.limits()), metrics, NOW, 0L);
     }
 
-    private static BaselineEstimator.Baselines baselineOf(ShadowEvaluation evaluation) {
-        return BaselineEstimator.Baselines.of(evaluation.dryRun().candidate().limits());
+    private static Baselines baselineOf(ShadowEvaluation evaluation) {
+        return Baselines.of(evaluation.dryRun().candidate().limits());
     }
 
     private static ManagedPolicy limits(int maxTps, long baselineMillis) {

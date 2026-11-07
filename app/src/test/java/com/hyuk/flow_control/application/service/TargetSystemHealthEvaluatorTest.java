@@ -1,5 +1,6 @@
 package com.hyuk.flow_control.application.service;
 
+import com.hyuk.flow_control.domain.health.Baselines;
 import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
 import com.hyuk.flow_control.application.port.out.TargetSystemPolicyReader;
 import com.hyuk.flow_control.config.HealthProperties;
@@ -61,8 +62,8 @@ class TargetSystemHealthEvaluatorTest {
         when(policyReader.readAll()).thenReturn(Map.of(TARGET_A, policyA, TARGET_B, policyB));
         when(policyReader.read(TARGET_A)).thenReturn(policyA);
         when(policyReader.read(TARGET_B)).thenReturn(policyB);
-        when(baselines.effective(TARGET_A)).thenReturn(new BaselineEstimator.Baselines(BASELINE_A, BASELINE_A));
-        when(baselines.effective(TARGET_B)).thenReturn(new BaselineEstimator.Baselines(BASELINE_B, BASELINE_B));
+        when(baselines.effective(TARGET_A)).thenReturn(new Baselines(BASELINE_A, BASELINE_A));
+        when(baselines.effective(TARGET_B)).thenReturn(new Baselines(BASELINE_B, BASELINE_B));
         when(recorder.window(TARGET_A)).thenReturn(OutcomeWindow.empty());
         when(recorder.window(TARGET_B)).thenReturn(OutcomeWindow.empty());
         when(recorder.drainEvents(any())).thenReturn(Set.of());
@@ -210,7 +211,7 @@ class TargetSystemHealthEvaluatorTest {
     @DisplayName("판정 기준 latency 는 정책 값이 아니라 지금 쓰는 p95 baseline 으로 계산한다")
     void usesEffectiveBaseline() {
         when(baselines.effective(TARGET_A))
-                .thenReturn(new BaselineEstimator.Baselines(Duration.ofMillis(100), Duration.ofMillis(150)));
+                .thenReturn(new Baselines(Duration.ofMillis(100), Duration.ofMillis(150)));
         when(recorder.window(TARGET_A)).thenReturn(successes(100, Duration.ofMillis(250)));
         TargetSystemHealthEvaluator evaluator = plainEvaluator();
 

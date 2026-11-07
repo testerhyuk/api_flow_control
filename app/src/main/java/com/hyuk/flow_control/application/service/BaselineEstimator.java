@@ -1,5 +1,8 @@
 package com.hyuk.flow_control.application.service;
 
+import com.hyuk.flow_control.domain.health.Baselines;
+import com.hyuk.flow_control.domain.health.BaselineBound;
+import com.hyuk.flow_control.domain.health.BaselineKind;
 import com.hyuk.flow_control.application.port.out.PolicyChangeListener;
 import com.hyuk.flow_control.application.port.out.TargetSystemPolicyReader;
 import com.hyuk.flow_control.config.HealthProperties;
@@ -26,52 +29,6 @@ import java.util.concurrent.ConcurrentLinkedDeque;
 @Order(0)
 public class BaselineEstimator implements PolicyChangeListener {
     private static final Logger log = LoggerFactory.getLogger(BaselineEstimator.class);
-
-    public enum Bound {
-        LOWER("lower"),
-        UPPER("upper");
-
-        private final String label;
-
-        Bound(String label) {
-            this.label = label;
-        }
-
-        public String label() {
-            return label;
-        }
-    }
-
-    public enum Kind {
-        MEAN("mean"),
-        P95("p95");
-
-        private final String label;
-
-        Kind(String label) {
-            this.label = label;
-        }
-
-        public String label() {
-            return label;
-        }
-
-        public Duration policyValueOf(TargetSystemPolicy limits) {
-            return this == MEAN ? limits.baselineRtt() : limits.baselineP95();
-        }
-    }
-
-    public record Baselines(Duration mean, Duration p95) {
-        public Baselines {
-            if (mean == null || !mean.isPositive() || p95 == null || !p95.isPositive()) {
-                throw new IllegalArgumentException("평소 응답 시간은 0보다 커야 합니다");
-            }
-        }
-
-        public static Baselines of(TargetSystemPolicy limits) {
-            return new Baselines(limits.baselineRtt(), limits.baselineP95());
-        }
-    }
 
     private final TargetSystemPolicyReader policyReader;
     private final boolean enabled;
@@ -129,7 +86,7 @@ public class BaselineEstimator implements PolicyChangeListener {
         learnings.forEach((targetSystemId, learning) -> {
             try {
                 learning.refresh(since, settings.minimumSamples());
-                for (Kind kind : Kind.values()) {
+                for (BaselineKind kind : BaselineKind.values()) {
                     warnIfClamped(targetSystemId, learning, kind);
                 }
             } catch (RuntimeException e) {
@@ -144,17 +101,17 @@ public class BaselineEstimator implements PolicyChangeListener {
 
     public Baselines effective(String targetSystemId, TargetSystemPolicy limits) {
         return new Baselines(
-                effective(targetSystemId, Kind.MEAN, limits.baselineRtt()),
-                effective(targetSystemId, Kind.P95, limits.baselineP95()));
+                effective(targetSystemId, BaselineKind.MEAN, limits.baselineRtt()),
+                effective(targetSystemId, BaselineKind.P95, limits.baselineP95()));
     }
 
-    private Duration effective(String targetSystemId, Kind kind, Duration policyValue) {
+    private Duration effective(String targetSystemId, BaselineKind kind, Duration policyValue) {
         return learned(targetSystemId, kind)
                 .map(learned -> clamp(learned, policyValue))
                 .orElse(policyValue);
     }
 
-    public Optional<Duration> learned(String targetSystemId, Kind kind) {
+    public Optional<Duration> learned(String targetSystemId, BaselineKind kind) {
         if (!enabled) {
             return Optional.empty();
         }
@@ -168,7 +125,7 @@ public class BaselineEstimator implements PolicyChangeListener {
         return learning == null ? 0 : learning.count;
     }
 
-    public Optional<Bound> clampedBound(String targetSystemId, Kind kind) {
+    public Optional<BaselineBound> clampedBound(String targetSystemId, BaselineKind kind) {
         return learned(targetSystemId, kind)
                 .flatMap(learned -> boundOf(learned, kind.policyValueOf(policyReader.read(targetSystemId))));
     }
@@ -179,24 +136,24 @@ public class BaselineEstimator implements PolicyChangeListener {
                 .orElse(learned);
     }
 
-    private Optional<Bound> boundOf(Duration learned, Duration policyValue) {
-        if (learned.compareTo(limitOf(Bound.LOWER, policyValue)) < 0) {
-            return Optional.of(Bound.LOWER);
+    private Optional<BaselineBound> boundOf(Duration learned, Duration policyValue) {
+        if (learned.compareTo(limitOf(BaselineBound.LOWER, policyValue)) < 0) {
+            return Optional.of(BaselineBound.LOWER);
         }
-        if (learned.compareTo(limitOf(Bound.UPPER, policyValue)) > 0) {
-            return Optional.of(Bound.UPPER);
+        if (learned.compareTo(limitOf(BaselineBound.UPPER, policyValue)) > 0) {
+            return Optional.of(BaselineBound.UPPER);
         }
         return Optional.empty();
     }
 
-    private Duration limitOf(Bound bound, Duration policyValue) {
-        double ratio = bound == Bound.LOWER ? settings.lowerRatio() : settings.upperRatio();
+    private Duration limitOf(BaselineBound bound, Duration policyValue) {
+        double ratio = bound == BaselineBound.LOWER ? settings.lowerRatio() : settings.upperRatio();
         return Duration.ofNanos(Math.round(policyValue.toNanos() * ratio));
     }
 
-    private void warnIfClamped(String targetSystemId, Learning learning, Kind kind) {
-        Optional<Bound> bound = clampedBound(targetSystemId, kind);
-        Bound before = learning.warnedBounds.get(kind);
+    private void warnIfClamped(String targetSystemId, Learning learning, BaselineKind kind) {
+        Optional<BaselineBound> bound = clampedBound(targetSystemId, kind);
+        BaselineBound before = learning.warnedBounds.get(kind);
         if (bound.isPresent()) {
             learning.warnedBounds.put(kind, bound.get());
         } else {
@@ -218,8 +175,8 @@ public class BaselineEstimator implements PolicyChangeListener {
 
     private static final class Learning {
         private final Deque<Sample> samples = new ConcurrentLinkedDeque<>();
-        private final Map<Kind, Duration> learned = new ConcurrentHashMap<>();
-        private final Map<Kind, Bound> warnedBounds = new EnumMap<>(Kind.class);
+        private final Map<BaselineKind, Duration> learned = new ConcurrentHashMap<>();
+        private final Map<BaselineKind, BaselineBound> warnedBounds = new EnumMap<>(BaselineKind.class);
         private volatile int count;
 
         private void refresh(Instant since, int minimumSamples) {
@@ -238,8 +195,8 @@ public class BaselineEstimator implements PolicyChangeListener {
             }
 
             Arrays.sort(latencies);
-            learned.put(Kind.MEAN, Duration.ofNanos(Math.round(Arrays.stream(latencies).average().orElseThrow())));
-            learned.put(Kind.P95, Duration.ofNanos(latencies[OutcomeStatistics.percentile95Index(latencies.length)]));
+            learned.put(BaselineKind.MEAN, Duration.ofNanos(Math.round(Arrays.stream(latencies).average().orElseThrow())));
+            learned.put(BaselineKind.P95, Duration.ofNanos(latencies[OutcomeStatistics.percentile95Index(latencies.length)]));
         }
     }
 }

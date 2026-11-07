@@ -1,7 +1,7 @@
 package com.hyuk.flow_control.adapter.out.http;
 
 import com.hyuk.flow_control.application.port.out.PolicyChangeListener;
-import com.hyuk.flow_control.application.service.PolicyRegistry;
+import com.hyuk.flow_control.application.port.in.PolicyQuery;
 import com.hyuk.flow_control.domain.policy.ConnectionSettings;
 import com.hyuk.flow_control.domain.policy.ManagedPolicy;
 import org.slf4j.Logger;
@@ -24,7 +24,7 @@ public class TargetSystemConnections implements PolicyChangeListener {
 
     private final Map<String, Connection> connections = new ConcurrentHashMap<>();
 
-    public TargetSystemConnections(PolicyRegistry policies) {
+    public TargetSystemConnections(PolicyQuery policies) {
         policies.policies().forEach(policy -> connections.put(policy.targetSystemId(), Connection.open(policy)));
     }
 

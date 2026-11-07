@@ -1,8 +1,9 @@
 package com.hyuk.flow_control.application.service;
 
+import com.hyuk.flow_control.domain.health.Baselines;
+import com.hyuk.flow_control.domain.health.BaselineBound;
+import com.hyuk.flow_control.domain.health.BaselineKind;
 import com.hyuk.flow_control.application.port.out.TargetSystemPolicyReader;
-import com.hyuk.flow_control.application.service.BaselineEstimator.Baselines;
-import com.hyuk.flow_control.application.service.BaselineEstimator.Kind;
 import com.hyuk.flow_control.config.HealthProperties;
 import com.hyuk.flow_control.domain.policy.ManagedPolicy;
 import com.hyuk.flow_control.domain.policy.TargetSystemPolicy;
@@ -43,8 +44,8 @@ class BaselineEstimatorTest {
         estimator.refresh();
 
         assertThat(estimator.effective(TARGET)).isEqualTo(POLICY_BASELINES);
-        assertThat(estimator.learned(TARGET, Kind.MEAN)).isEmpty();
-        assertThat(estimator.learned(TARGET, Kind.P95)).isEmpty();
+        assertThat(estimator.learned(TARGET, BaselineKind.MEAN)).isEmpty();
+        assertThat(estimator.learned(TARGET, BaselineKind.P95)).isEmpty();
         assertThat(estimator.sampleCount(TARGET)).isEqualTo(9);
     }
 
@@ -57,12 +58,12 @@ class BaselineEstimatorTest {
 
         estimator.refresh();
 
-        assertThat(estimator.learned(TARGET, Kind.MEAN)).contains(Duration.ofMillis(109));
-        assertThat(estimator.learned(TARGET, Kind.P95)).contains(Duration.ofMillis(190));
+        assertThat(estimator.learned(TARGET, BaselineKind.MEAN)).contains(Duration.ofMillis(109));
+        assertThat(estimator.learned(TARGET, BaselineKind.P95)).contains(Duration.ofMillis(190));
         assertThat(estimator.effective(TARGET))
                 .isEqualTo(new Baselines(Duration.ofMillis(109), Duration.ofMillis(190)));
-        assertThat(estimator.clampedBound(TARGET, Kind.MEAN)).isEmpty();
-        assertThat(estimator.clampedBound(TARGET, Kind.P95)).isEmpty();
+        assertThat(estimator.clampedBound(TARGET, BaselineKind.MEAN)).isEmpty();
+        assertThat(estimator.clampedBound(TARGET, BaselineKind.P95)).isEmpty();
     }
 
     @Test
@@ -77,8 +78,8 @@ class BaselineEstimatorTest {
         estimator.refresh();
 
         assertThat(estimator.sampleCount(TARGET)).isEqualTo(10);
-        assertThat(estimator.learned(TARGET, Kind.MEAN)).contains(Duration.ofMillis(90));
-        assertThat(estimator.learned(TARGET, Kind.P95)).contains(Duration.ofMillis(90));
+        assertThat(estimator.learned(TARGET, BaselineKind.MEAN)).contains(Duration.ofMillis(90));
+        assertThat(estimator.learned(TARGET, BaselineKind.P95)).contains(Duration.ofMillis(90));
     }
 
     @Test
@@ -89,11 +90,11 @@ class BaselineEstimatorTest {
 
         estimator.refresh();
 
-        assertThat(estimator.learned(TARGET, Kind.MEAN)).contains(Duration.ofMillis(400));
+        assertThat(estimator.learned(TARGET, BaselineKind.MEAN)).contains(Duration.ofMillis(400));
         assertThat(estimator.effective(TARGET))
                 .isEqualTo(new Baselines(Duration.ofMillis(150), Duration.ofMillis(300)));
-        assertThat(estimator.clampedBound(TARGET, Kind.MEAN)).contains(BaselineEstimator.Bound.UPPER);
-        assertThat(estimator.clampedBound(TARGET, Kind.P95)).contains(BaselineEstimator.Bound.UPPER);
+        assertThat(estimator.clampedBound(TARGET, BaselineKind.MEAN)).contains(BaselineBound.UPPER);
+        assertThat(estimator.clampedBound(TARGET, BaselineKind.P95)).contains(BaselineBound.UPPER);
     }
 
     @Test
@@ -106,8 +107,8 @@ class BaselineEstimatorTest {
 
         assertThat(estimator.effective(TARGET))
                 .isEqualTo(new Baselines(Duration.ofMillis(50), Duration.ofMillis(100)));
-        assertThat(estimator.clampedBound(TARGET, Kind.MEAN)).contains(BaselineEstimator.Bound.LOWER);
-        assertThat(estimator.clampedBound(TARGET, Kind.P95)).contains(BaselineEstimator.Bound.LOWER);
+        assertThat(estimator.clampedBound(TARGET, BaselineKind.MEAN)).contains(BaselineBound.LOWER);
+        assertThat(estimator.clampedBound(TARGET, BaselineKind.P95)).contains(BaselineBound.LOWER);
     }
 
     @Test
@@ -145,8 +146,8 @@ class BaselineEstimatorTest {
         ManagedPolicy before = Policies.withLimits(Policies.policy(TARGET), POLICY);
         estimator.onPolicyChanged(before, Policies.withLimits(before, limits(200, 200)));
 
-        assertThat(estimator.learned(TARGET, Kind.MEAN)).isEmpty();
-        assertThat(estimator.learned(TARGET, Kind.P95)).isEmpty();
+        assertThat(estimator.learned(TARGET, BaselineKind.MEAN)).isEmpty();
+        assertThat(estimator.learned(TARGET, BaselineKind.P95)).isEmpty();
         assertThat(estimator.sampleCount(TARGET)).isZero();
     }
 
@@ -158,7 +159,7 @@ class BaselineEstimatorTest {
         ManagedPolicy before = Policies.withLimits(Policies.policy(TARGET), POLICY);
         estimator.onPolicyChanged(before, Policies.withLimits(before, limits(100, 300)));
 
-        assertThat(estimator.learned(TARGET, Kind.P95)).isEmpty();
+        assertThat(estimator.learned(TARGET, BaselineKind.P95)).isEmpty();
         assertThat(estimator.sampleCount(TARGET)).isZero();
     }
 
@@ -172,7 +173,7 @@ class BaselineEstimatorTest {
                 200, POLICY.baselineRtt(), POLICY.baselineP95(), 0.95, Duration.ofMillis(10)));
         estimator.onPolicyChanged(before, after);
 
-        assertThat(estimator.learned(TARGET, Kind.MEAN)).contains(Duration.ofMillis(120));
+        assertThat(estimator.learned(TARGET, BaselineKind.MEAN)).contains(Duration.ofMillis(120));
     }
 
     @Test
@@ -185,8 +186,8 @@ class BaselineEstimatorTest {
 
         assertThat(estimator.isEnabled()).isFalse();
         assertThat(estimator.effective(TARGET)).isEqualTo(POLICY_BASELINES);
-        assertThat(estimator.learned(TARGET, Kind.MEAN)).isEmpty();
-        assertThat(estimator.learned(TARGET, Kind.P95)).isEmpty();
+        assertThat(estimator.learned(TARGET, BaselineKind.MEAN)).isEmpty();
+        assertThat(estimator.learned(TARGET, BaselineKind.P95)).isEmpty();
         assertThat(estimator.sampleCount(TARGET)).isZero();
     }
 

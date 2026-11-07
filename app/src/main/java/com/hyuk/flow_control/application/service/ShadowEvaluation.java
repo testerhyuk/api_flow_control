@@ -1,5 +1,6 @@
 package com.hyuk.flow_control.application.service;
 
+import com.hyuk.flow_control.domain.health.Baselines;
 import com.hyuk.flow_control.application.port.out.FlowControlMetrics;
 import com.hyuk.flow_control.application.port.out.ResponseJudge;
 import com.hyuk.flow_control.domain.dryrun.CountingTokenBucket;
@@ -80,7 +81,7 @@ class ShadowEvaluation {
 
     ShadowEvaluation(DryRun dryRun, ManagedPolicy base, HealthStatus actualStatus, double actualRate,
                      ResponseJudge judge, HealthRules rules, LowTrafficRules lowTraffic, RateAdjustmentRule rateRule,
-                     Duration window, int maxSamples, BaselineEstimator.Baselines baselines, FlowControlMetrics metrics,
+                     Duration window, int maxSamples, Baselines baselines, FlowControlMetrics metrics,
                      Instant now, long nowNanos) {
         if (base.version() != dryRun.baseVersion()) {
             throw new IllegalArgumentException("dry-run 기준 버전과 지금 정책 버전이 다릅니다");
@@ -191,11 +192,11 @@ class ShadowEvaluation {
         metrics.recordDryRunWaited(dryRun.targetSystemId());
     }
 
-    synchronized void evaluate(Instant now, long nowNanos, int servers, BaselineEstimator.Baselines baselines) {
+    synchronized void evaluate(Instant now, long nowNanos, int servers, Baselines baselines) {
         evaluate(now, nowNanos, servers, baselines, false);
     }
 
-    synchronized void evaluate(Instant now, long nowNanos, int servers, BaselineEstimator.Baselines baselines,
+    synchronized void evaluate(Instant now, long nowNanos, int servers, Baselines baselines,
                                boolean underMaintenance) {
         Duration elapsed = Duration.between(lastEvaluatedAt, now);
         if (servers > 1) {
